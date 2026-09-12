@@ -9,7 +9,7 @@ dado novo.
 
 ## ADR-001 — Forkar `mutonby/openshorts` e apagar `cloud/` no primeiro commit
 
-**Data:** 2026-09-12 · **Status:** aceita
+**Data:** 2026-09-12 · **Status:** **implementada** (Fase 0.1)
 
 O veredito do §2 do Plano Técnico se mantém: forkar o `openshorts` não pelo conjunto
 de features, mas pela tração (~4.0k ★ · ~1.0k forks), que é o acervo de bugs de
@@ -25,6 +25,60 @@ outra, e registro no `NOTICE`. O restante do fork fica MIT puro.
 
 **Revisão se:** o projeto abandonar definitivamente a hipótese SaaS — e mesmo aí a
 remoção não custa nada, porque o `cloud/` não serve ao self-hosted.
+
+### O que a execução encontrou
+
+A licença confere com o auditado, textualmente. A cláusula que morde é a primeira
+das proibições: *"Offer the Commercial Software, or any modified version or derivative
+of it, to third parties as a hosted, managed, or paid service"*.
+
+A remoção não foi um `git rm` isolado. O `cloud/` tinha 25 arquivos e outros quatro
+artefatos existiam só para servi-lo:
+
+| Removido | Por quê |
+|---|---|
+| `cloud/` | o carve-out comercial em si |
+| `requirements-billing.txt` | instalava a stack exclusiva do modo pago |
+| `docker-compose.cloud.yml` | composição do modo pago |
+| `alembic/` e `alembic.ini` | migrações cujo alvo era `cloud.models`; `versions/` estava vazio |
+
+O `Dockerfile` foi corrigido, porque copiava e instalava o `requirements-billing.txt`
+em toda build — a remoção sem isso quebraria a imagem.
+
+**O núcleo não quebrou, e isso não foi sorte.** O upstream já isolava o modo pago
+atrás da flag `BILLING_ENABLED`, que é **falsa por padrão**: os 28 imports de `cloud`
+em `app.py` e `mcp_server.py` são todos locais, dentro de blocos guardados — nenhum em
+nível de módulo — e havia um `else: cloud = None` com dependência no-op para o modo
+self-host. Self-host já era o caminho padrão do upstream.
+
+Uma alteração própria foi feita: a guarda `if BILLING_ENABLED:` agora levanta
+`RuntimeError` com mensagem explicando a remoção, em vez de deixar o `ImportError`
+estourar três frames abaixo. É o que impede a decisão de ser desfeita por engano com
+uma variável de ambiente.
+
+### O que a remoção custou
+
+Duas coisas, registradas para não serem descobertas por surpresa depois.
+
+**130 testes saíram junto.** Doze arquivos em `tests/` tinham import de `cloud` no
+topo e deixariam de coletar; todos testavam o módulo comercial (billing, metering,
+proxy ledger, OAuth, política de e-mail, apagamento de conta). Um treze avo arquivo,
+`test_mcp_endpoint.py`, era misto: a classe `TestCloudModeAuth` saiu e os 11 testes de
+núcleo continuam. Restam 54 arquivos de teste, nenhum importando `cloud`.
+
+**Perdeu-se a classificação de falha.** A função `cloud.alerts._classify_failure`
+traduzia erro de pipeline em causa legível — distinguia falha de download de falha de
+`ffmpeg`, reconhecia upload sem áudio, não culpava o `ffmpeg` por um erro do Gemini.
+É comportamento de núcleo útil, mas morava no módulo comercial e portá-lo traria a
+licença comercial de volta para a árvore MIT, o que anularia o propósito desta ADR.
+
+Fica para reimplementar do zero, e o lugar natural já existe no plano: a tabela `jobs`
+do §7 tem coluna `error`. Entra junto com ela, na Fase 0.5.
+
+> Não mover código de `cloud/` para a árvore MIT, em nenhuma hipótese — nem "só uma
+> função". É a regra que faz esta ADR valer algo. O código segue alcançável no
+> histórico do git, sob a licença original, para consulta e referência.
+
 
 ---
 
@@ -195,9 +249,33 @@ mais tabelas dentro.
 O schema herdado do fork não tem `tenant_id`, e o plano não aloca tempo para colocá-lo.
 
 **Decisão:** inserir uma etapa curta entre a Fase 0 e a Fase 1 — chamada aqui de
-**Fase 0.5** — que leva o schema herdado ao desenho do §7, com `tenant_id` em toda
-tabela e um tenant fixo no seed. Sem auth, que segue na Fase 4 conforme o plano. Duas
-a três tabelas e um seed; dois a três dias.
+**Fase 0.5** — que leva o schema ao desenho do §7, com `tenant_id` em toda tabela e um
+tenant fixo no seed. Sem auth, que segue na Fase 4 conforme o plano.
 
 É a correção de sequenciamento que mais economiza trabalho no plano inteiro, e ela não
 aparece como tarefa em nenhuma fase do §9.
+
+### Revisão após a Fase 0.1 — não há schema herdado
+
+A premissa desta ADR era "levar o schema herdado ao desenho do §7". A Fase 0.1 mostrou
+que **não existe schema herdado no caminho MIT**: `sqlalchemy`, `asyncpg` e `alembic`
+estavam só no `requirements-billing.txt`; o Postgres, só no `docker-compose.cloud.yml`;
+e todo o ORM morava em `cloud.models`. O `docker-compose.yml` do self-host não tem
+serviço de banco, e o `alembic/env.py` se descrevia como ambiente "for cloud-mode
+migrations".
+
+Ou seja: a camada de persistência inteira era do módulo comercial e saiu com ele.
+
+Isso **não invalida a ADR — reforça**. A assimetria que a justificava era "adicionar
+tenant sobre um schema que não tem é uma migração que quebra tudo". Agora não há
+migração a fazer: as nove tabelas do §7 nascem escritas, com `tenant_id` na primeira
+delas. O risco que a ADR queria evitar desaparece por completo.
+
+O que muda é a **natureza e o tamanho** da fase. Deixa de ser migração de duas ou três
+tabelas e passa a ser autoria da camada de persistência: escolher a stack (o §3 admite
+PostgreSQL ou SQLite local), inicializar alembic do zero, escrever as nove tabelas e
+ligar ao estado de job que o pipeline mantém hoje por outro meio.
+
+**Estimativa revisada:** 3–5 dias, contra os 2–3 originais. A incerteza está em onde o
+caminho self-host guarda estado de job hoje — e dimensionar isso é exatamente o
+entregável da Fase 0.2, que manda ler o código enquanto ele roda.

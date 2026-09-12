@@ -1,0 +1,84 @@
+Automated Multi-Source Short-Form Video Processing and Publishing System
+========================================================================
+
+Este projeto e um fork de OpenShorts e se mantem sob a MIT License
+(ver LICENSE). Este arquivo credita a origem do codigo e registra as
+alteracoes de licenca feitas no fork.
+
+
+Obras de origem
+---------------
+
+OpenShorts
+  https://github.com/mutonby/openshorts
+  Copyright (c) 2024 OpenShorts
+  MIT License
+
+  Base direta deste fork. O historico completo do upstream (420 commits
+  no momento do fork) esta preservado neste repositorio, e atualizacoes
+  continuam sendo incorporadas por "git fetch upstream".
+
+Autocrop-vertical
+  https://github.com/kamilstanuch/Autocrop-vertical
+  Obra da qual o proprio OpenShorts descende.
+
+
+Codigo removido por incompatibilidade de licenca
+------------------------------------------------
+
+O diretorio "cloud/" do upstream NAO estava coberto pela MIT License. Ele
+era licenciado sob a OpenShorts Commercial License, cujos termos proibem,
+sem acordo comercial em separado:
+
+  "Offer the Commercial Software, or any modified version or derivative
+   of it, to third parties as a hosted, managed, or paid service"
+
+Este projeto preve a possibilidade de operar como servico hospedado, o que
+e incompativel com esses termos. O diretorio foi portanto removido no
+inicio do fork, em vez de ser arrastado adiante e entrelacado no codigo.
+Ver docs/DECISOES.md, ADR-001.
+
+Removidos junto, por serem dependentes ou exclusivos daquele modulo:
+
+  cloud/                      modulo comercial (25 arquivos)
+  requirements-billing.txt    dependencias exclusivas do modo pago
+  docker-compose.cloud.yml    composicao do modo pago
+  alembic/ e alembic.ini      migracoes que tinham cloud.models como alvo
+
+Nenhum codigo sob a OpenShorts Commercial License permanece neste
+repositorio em sua arvore de trabalho. Ele continua alcancavel no
+historico do git, herdado do upstream, onde permanece sob a licenca
+original.
+
+
+Repositorios doadores
+---------------------
+
+Modulos portados destes projetos sao creditados aqui conforme forem
+incorporados. Ver docs/DECISOES.md, ADR-002.
+
+clippyme
+  https://github.com/fralapo/clippyme
+  MIT License. Fork do OpenShorts, logo com ancestral comum a este.
+  Previsto: compositor de segunda passada e presets de legenda (Fase 2).
+
+opensource-clipping
+  https://github.com/NaufalRizqullah/opensource-clipping
+  Previsto: adapter de Google Drive, sistema de hook e B-roll (Fases 1-2).
+
+autoclip
+  https://github.com/artbyjazi/autoclip
+  Doador de ideia, nao de codigo: deteccao de momento retornando indice
+  de palavra em vez de timestamp.
+
+
+Dependencias com licenca a observar
+-----------------------------------
+
+Ultralytics YOLOv8 (AGPL-3.0), herdado do upstream. A AGPL exige publicar
+o codigo-fonte de qualquer software oferecido por rede. Enquanto o uso for
+self-hosted pessoal ela nao dispara. Por ADR-003, o tracking padrao deste
+fork e MediaPipe (Apache 2.0) e o YOLOv8 fica atras de flag desligada.
+
+ffmpeg compilado com libx264 e GPL. Para self-hosted nao muda nada; muda
+se um dia um binario for distribuido.

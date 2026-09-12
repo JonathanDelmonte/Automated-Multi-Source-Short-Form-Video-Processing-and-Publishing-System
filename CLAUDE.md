@@ -2,6 +2,65 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## Convencoes deste fork (precedem a orientacao do upstream, abaixo)
+
+Este repositorio e um fork de OpenShorts. A secao "Project Overview" e as
+seguintes descrevem o upstream e seguem validas para navegar o codigo, mas as
+regras abaixo sao deste projeto e tem precedencia.
+
+### Atribuicao de commits -- obrigatorio
+
+Autor de todo commit: **Jonathan Delmonte <claudetharc@gmail.com>**.
+
+Nao adicionar trailers de co-autoria de assistente (`Co-Authored-By:` de
+Claude, `Claude-Session:` ou equivalentes) em mensagens de commit, descricoes
+de pull request ou qualquer artefato versionado. O trabalho e creditado ao
+autor do projeto.
+
+### Idioma
+
+Documentacao, mensagens de commit e comentarios novos em portugues. Codigo
+herdado do upstream permanece como esta -- nao traduzir em massa.
+
+### Onde esta o planejamento
+
+| Arquivo | Papel |
+|---|---|
+| `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
+| `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
+| `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
+| `docs/DECISOES.md` | ADR-001 a 008 |
+| `docs/upstream/README-openshorts.md` | README do upstream, preservado para consulta |
+
+Antes de alterar arquitetura, ler `docs/DECISOES.md`. Varias escolhas que
+parecem arbitrarias no codigo estao justificadas la.
+
+### Divergencias deliberadas do upstream
+
+- **`cloud/` foi removido** (ADR-001). Estava sob OpenShorts Commercial
+  License, nao sob MIT. `BILLING_ENABLED=1` agora falha com erro explicito em
+  `app.py` em vez de `ImportError` -- e intencional, nao um bug a consertar.
+  Removidos junto: `requirements-billing.txt`, `docker-compose.cloud.yml`,
+  `alembic/`, `alembic.ini`.
+- **Sem banco de dados no caminho self-host.** Todo o ORM pertencia ao modulo
+  comercial. O schema do projeto (`docs/PLANO-TECNICO.md` secao 7) sera escrito
+  do zero na Fase 0.5, com `tenant_id` desde a primeira tabela.
+- **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
+  flag desligada.
+- **Dependencias pagas sao para remover, nao configurar** (Fase 0.3): fal.ai
+  (`saasshorts.py`), ElevenLabs, Upload-Post, AWS S3 (`s3_uploader.py`).
+
+### Fluxo de git
+
+Desenvolvimento em `claude/loving-fermat-c84xtd`. O upstream fica como remote
+`upstream`; correcoes de terceiros chegam por `git fetch upstream` e merge --
+por isso as alteracoes proprias ficam atras das interfaces (`SourceAdapter`,
+`Publisher`, `FaceTracker`) em vez de espalhadas no codigo herdado.
+
+---
+
 ## Project Overview
 
 OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini 3.1 Flash-Lite (`gemini-3.1-flash-lite`, overridable with `GEMINI_MODEL`) for viral moment detection and title generation.

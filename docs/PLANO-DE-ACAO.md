@@ -15,9 +15,9 @@ e *onde o plano original precisava de ajuste*.
 
 | Item | Situação |
 |---|---|
-| Repositório | vazio — zero commits. O ponto de partida que o Plano Técnico descreve. |
-| Código próprio | nenhum |
-| Fase | anterior à Fase 0 |
+| Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
+| Licença | MIT limpo. `cloud/` removido (ADR-001) |
+| Fase | **0.1 concluída.** Próximo: 0.2 — subir e mapear os estágios |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -84,7 +84,7 @@ Reconfirmar os limites de free tier dos provedores de LLM — o próprio §3 man
 tabela incompleta. Verificar Groq, Google AI Studio e Cerebras: RPM, requisições/dia
 e **tokens/dia**, que é a coluna que faltava.
 
-### 0.1 — Fork e higiene de licença · meio dia
+### 0.1 — Fork e higiene de licença · meio dia · ✅ CONCLUÍDA
 
 O repositório de destino já existe e está vazio, então o fork entra como histórico
 de upstream em vez de repositório separado. Isso é o que preserva o ativo que
@@ -104,6 +104,20 @@ remoção do `cloud/` e o motivo.
 
 **Pronto quando:** `cloud/` não existe, `NOTICE` existe, `git log` mostra o histórico
 do upstream, e `git fetch upstream` traz atualizações.
+
+**Resultado.** Os quatro critérios atendidos. A remoção foi maior que o previsto:
+além do `cloud/` (25 arquivos), saíram `requirements-billing.txt`,
+`docker-compose.cloud.yml`, `alembic/` e `alembic.ini` — todos exclusivos do modo pago
+— e o `Dockerfile` foi corrigido, porque instalava o requirements de billing em toda
+build.
+
+O núcleo não quebrou: o upstream já isolava o modo pago atrás da flag
+`BILLING_ENABLED`, falsa por padrão, com os 28 imports de `cloud` todos locais e
+guardados. A guarda agora levanta erro explicativo em vez de `ImportError`, para que a
+decisão não seja desfeita por uma variável de ambiente.
+
+Um achado com efeito na Fase 0.5: **não há banco de dados no caminho self-host** — todo
+o ORM pertencia ao módulo comercial. Ver ADR-008.
 
 ### 0.2 — Subir · 1 dia
 
@@ -167,18 +181,27 @@ O do §9, mais uma condição:
 
 ---
 
-## Fase 0.5 — `tenant_id` no schema · 2–3 dias
+## Fase 0.5 — `tenant_id` no schema · 3–5 dias
 
 Introduzida por ADR-008; não existe no §9.
 
-Levar o schema herdado ao desenho do §7: `tenant_id` em toda tabela, tenant fixo no
-seed, `credentials_ref` apontando para cofre em vez de guardar token na linha.
-**Sem auth** — isso segue na Fase 4, conforme o plano.
+**Revisada após a Fase 0.1.** A premissa era migrar um schema herdado. Não há schema
+herdado: `sqlalchemy`, `asyncpg` e `alembic` estavam só no `requirements-billing.txt`,
+o Postgres só no compose de cloud, e todo o ORM em `cloud.models`. A camada de
+persistência inteira era do módulo comercial e saiu com ele.
 
-As tabelas do §7 que ainda não existem (`templates`, `publications`, `metrics`) não
-precisam ser criadas agora; precisam apenas nascer com `tenant_id` quando as Fases 1
-a 3 as criarem. O que esta fase entrega é o padrão estabelecido e as tabelas herdadas
-migradas.
+O efeito líquido é favorável — não existe migração que quebre, e o `tenant_id` entra na
+primeira tabela escrita, que é exatamente o que o §7 pede. Mas a fase deixa de ser
+adaptação e passa a ser autoria: escolher a stack (o §3 admite PostgreSQL ou SQLite
+local), inicializar alembic do zero, escrever as nove tabelas do §7 e ligar ao estado
+de job que o pipeline mantém hoje por outro meio.
+
+`credentials_ref` aponta para cofre, nunca guarda o token na linha. **Sem auth** — isso
+segue na Fase 4, conforme o plano.
+
+A incerteza restante é onde o caminho self-host guarda estado de job hoje.
+Dimensionar isso é entregável da Fase 0.2, que manda ler o código enquanto ele roda —
+outra razão para 0.2 vir antes.
 
 **Pronto quando:** toda tabela tem `tenant_id`, o seed cria um tenant fixo, e nenhuma
 consulta do código ignora a coluna.
@@ -270,7 +293,7 @@ fechar o ADR-006 com dado. A instrumentação da Fase 0.5 é o que alimenta isso
 | Fase | Original §9 | Ajustado | Delta |
 |---|---|---|---|
 | 0 — fork rodando | ~1 sem | ~1 sem | — |
-| 0.5 — `tenant_id` no schema | *(ausente)* | 2–3 dias | **+3 dias** |
+| 0.5 — `tenant_id` no schema | *(ausente)* | 3–5 dias | **+5 dias** |
 | 1 — ingestão + pré-filtro | 1–2 sem | 1–2 sem | — |
 | 2 — motor de template | ~2 sem | ~1 sem | **−1 sem** |
 | 3 — Publisher | ~2 sem | ~2 sem | — |
@@ -278,7 +301,9 @@ fechar o ADR-006 com dado. A instrumentação da Fase 0.5 é o que alimenta isso
 | 5 — calibração | contínuo | contínuo | — |
 | **Total até Fase 4** | **~8 sem** | **~7,5 sem** | a correção se paga |
 
-A Fase 0.5, que é a que remove o maior risco do plano, sai de graça.
+A Fase 0.5, que é a que remove o maior risco do plano, ainda sai de graça: cresceu de
+3 para 5 dias com o achado da Fase 0.1, e continua coberta pela semana que a descoberta
+sobre o `clippyme` economiza na Fase 2.
 
 ---
 

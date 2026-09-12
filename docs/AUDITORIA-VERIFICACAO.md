@@ -6,8 +6,12 @@
 
 O Plano Técnico v2 foi escrito em estado pré-código e pede explicitamente confirmação
 de dois pontos antes de codar ("confirme antes de codar, isso muda toda hora", §3).
-Este documento registra o que a verificação encontrou. Sete itens divergem do documento
-original; três deles mudam o plano de ação.
+Este documento registra o que a verificação encontrou. **Oito itens divergem** do
+documento original; quatro deles mudam o plano de ação.
+
+Os itens 1 a 7 vêm da auditoria documental, anterior a qualquer código. O item 8 foi
+encontrado durante a execução da Fase 0.1 e está registrado aqui por pertencer ao mesmo
+assunto.
 
 ---
 
@@ -22,6 +26,7 @@ original; três deles mudam o plano de ação.
 | 5 | Groq: "30 RPM, 1.000/dia — cobre com folga" | Também há teto de **100.000 tokens/dia** | **Alto** — inverte a conclusão |
 | 6 | `clippyme` 0 ★ · 473 commits | 36 ★ · 611 commits | Baixo |
 | 7 | `clippyme` como doador de stack gratuita | `clippyme` usa Deepgram e ElevenLabs Scribe (pagos) na transcrição | Médio — filtrar ao portar |
+| 8 | §7 fala em "levar o schema herdado" ao desenho multi-tenant | **não há schema no caminho MIT** — todo o ORM era do módulo comercial | **Alto** — muda a Fase 0.5 |
 
 Confirmados sem divergência: limite de upload de 2GB do `openshorts`; custo de
 1.600 unidades do `videos.insert` contra 10.000 unidades/dia gratuitas do YouTube
@@ -147,6 +152,27 @@ custo zero do Plano Técnico.
 Não é impedimento — o `faster-whisper` está lá junto e é o caminho que o §3 escolhe.
 É um alerta de que o cherry-pick do item 3 precisa ser seletivo: trazer o compositor
 e os presets de legenda, deixar os caminhos de transcrição paga para trás.
+
+## 8. Não existe banco de dados no caminho self-host
+
+*Encontrado durante a execução da Fase 0.1, não na auditoria documental.*
+
+O §7 do plano define nove tabelas e o §9 trata multi-tenancy como adaptação de algo
+existente. Na prática, o caminho MIT do upstream não persiste nada em banco:
+
+- `sqlalchemy`, `asyncpg` e `alembic` aparecem só no `requirements-billing.txt`,
+  nunca no `requirements.txt`.
+- O `docker-compose.yml` do self-host não declara serviço de banco. O Postgres existe
+  apenas no `docker-compose.cloud.yml`.
+- Todo o ORM morava em `cloud.models`, e o `alembic/env.py` se identificava como
+  ambiente "for cloud-mode migrations", com `versions/` vazio.
+
+A camada de persistência inteira pertencia ao módulo comercial e saiu com ele na
+remoção da ADR-001.
+
+**Consequência:** a Fase 0.5 deixa de ser migração e passa a ser autoria. Ver ADR-008,
+seção de revisão. O efeito líquido é favorável — não há migração que quebre, e o
+`tenant_id` entra na primeira tabela escrita —, mas a fase cresce de 2–3 para 3–5 dias.
 
 ## 7. Aviso de segurança do `clippyme` confirmado
 

@@ -115,9 +115,18 @@ SOURCE_RETENTION_SECONDS = int(
 DEBUG_LOGS = os.environ.get("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
 
 if BILLING_ENABLED:
-    import cloud
-    from cloud import managed_keys, metering as _metering, config as _cloud_config, alerts as _alerts
-    from cloud.auth import get_current_user_optional
+    # O modulo cloud/ foi removido deste fork (ver docs/DECISOES.md, ADR-001):
+    # estava sob OpenShorts Commercial License, que proibe oferecer o software
+    # a terceiros como servico hospedado pago. Este projeto preve essa virada,
+    # entao o carve-out foi retirado em vez de arrastado adiante. Falhar aqui
+    # com mensagem clara e melhor que um ImportError cru tres stack frames
+    # abaixo, e evita que a decisao seja desfeita por uma variavel de ambiente.
+    raise RuntimeError(
+        "BILLING_ENABLED esta ligado, mas o modulo cloud/ nao existe neste "
+        "fork -- foi removido por decisao de licenca (ADR-001). Rode em modo "
+        "self-host (BILLING_ENABLED vazio), que e o padrao. A camada de "
+        "publicacao propria e multi-tenancy entram nas Fases 3 e 4."
+    )
 else:
     cloud = None
     managed_keys = None

@@ -98,31 +98,6 @@ class TestSelfHostQuota:
         assert result["structuredContent"]["self_host_or_anonymous"] is True
 
 
-class TestCloudModeAuth:
-    """mcp_server reads BILLING_ENABLED per request (unlike app.py, which
-    freezes it at import), so cloud-mode gating is testable by env patch."""
-
-    def test_401_without_credentials(self, monkeypatch):
-        monkeypatch.setenv("BILLING_ENABLED", "1")
-        resp = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-        assert resp.status_code == 401
-        # OAuth-capable clients discover the login flow from this header.
-        assert resp.headers.get("www-authenticate").startswith("Bearer resource_metadata=")
-        assert "/.well-known/oauth-protected-resource" in resp.headers.get("www-authenticate")
-        assert "osk_" in resp.json()["error"]  # the fix is named in the message
-
-    def test_resolvable_user_passes(self, monkeypatch):
-        monkeypatch.setenv("BILLING_ENABLED", "1")
-        import cloud.auth as cloud_auth
-
-        async def fake_user(request):
-            return object()
-        monkeypatch.setattr(cloud_auth, "get_current_user_optional", fake_user)
-        resp = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-        assert resp.status_code == 200
-        assert resp.json()["result"]["serverInfo"]["name"] == "openshorts"
-
-
 class TestWebhookSigning:
     def test_signature_is_deterministic_hmac(self):
         import hashlib

@@ -15,6 +15,7 @@ São quatro coisas, e só a terceira demora:
 
 | # | O quê | Tempo |
 |---|---|---|
+| 0 | Baixar o projeto para o seu computador | 3 min |
 | 1 | Pegar as chaves de API (grátis) | 5 min |
 | 2 | Criar o arquivo `.env` e colar as chaves | 2 min |
 | 3 | `docker compose up --build` | 15–40 min **na primeira vez**, segundos depois |
@@ -36,6 +37,57 @@ removeu as integrações que pediriam uma.
 - **~15 GB de disco.** A imagem com torch e as libs de CUDA é gorda.
 - **GPU NVIDIA é opcional.** Sem ela tudo roda em CPU, só mais devagar: a
   transcrição de um vídeo de 10 min leva minutos em vez de segundos.
+
+---
+
+## Passo 0 — Baixar o projeto
+
+**O guia presumia que o projeto já estava na sua máquina, e não dizia como
+colocá-lo lá.** Se você ainda não baixou, é aqui que se começa: sem a pasta do
+projeto, o `.env` do passo 2 não tem onde morar.
+
+Primeiro confira se você tem o **git**. Abra o **Prompt de Comando** (tecla
+Windows → digite `cmd` → Enter — **não precisa ser como Administrador**) e rode:
+
+```bat
+git --version
+```
+
+Se responder algo como `git version 2.x`, siga. Se responder
+`'git' não é reconhecido`, instale de **git-scm.com/download/win** (next, next,
+finish serve), feche o Prompt de Comando, abra de novo e repita.
+
+Agora baixe o projeto. **Estas quatro linhas são pra copiar e colar como estão**
+— aqui não tem nada para substituir:
+
+```bat
+cd /d C:\
+git clone https://github.com/JonathanDelmonte/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System.git cortes
+cd /d C:\cortes
+dir .env.example
+```
+
+O `cortes` no fim do `git clone` é de propósito: sem ele a pasta ficaria com o
+nome inteiro do repositório, e você teria de digitá-lo em todo comando daqui
+para frente. Assim o projeto mora em **`C:\cortes`**, e é esse o caminho de
+todos os passos seguintes.
+
+O `dir .env.example` é a conferência: se listar o arquivo, você está na pasta
+certa. Se disser `Arquivo não encontrado`, o clone não terminou ou você está em
+outra pasta — rode `cd /d C:\cortes` de novo.
+
+Não é preciso trocar de branch: `claude/loving-fermat-c84xtd` é a branch padrão
+do repositório, então o `clone` já traz ela.
+
+**Para atualizar depois**, quando eu subir mudanças novas:
+
+```bat
+cd /d C:\cortes
+git pull
+```
+
+O `git pull` não mexe no seu `.env` — ele não está versionado, justamente para
+as suas chaves nunca irem parar no GitHub.
 
 ---
 
@@ -111,22 +163,31 @@ pasta inteira do projeto é montada dentro do container em `/app` (a linha
 **Ou seja: o arquivo `.env` na raiz do projeto é o painel de controle.** É lá
 que as chaves moram, e é o único lugar.
 
-Abra o **Prompt de Comando** (tecla Windows → digite `cmd` → Enter) e rode uma
-linha de cada vez:
+No **Prompt de Comando**, rode uma linha de cada vez (com o projeto em
+`C:\cortes`, como no passo 0):
 
 ```bat
-cd C:\caminho\para\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
-git checkout claude/loving-fermat-c84xtd
+cd /d C:\cortes
 copy .env.example .env
 notepad .env
 ```
 
-> **Não crie o `.env` pelo Explorer** (botão direito → Novo → Documento de
-> Texto). O Windows esconde a extensão e você fica com `.env.txt`, que o
-> programa não lê e você não vê. O `copy` acima cria com o nome certo.
+> ### Duas formas de criar o `.env` no lugar errado
 >
-> Não sabe o caminho? Abra a pasta do projeto no Explorer, clique na barra de
-> endereço, copie, e cole depois do `cd `.
+> **Pelo Explorer** (botão direito → Novo → Documento de Texto): o Windows
+> esconde a extensão e você fica com `.env.txt`, que o programa não lê e você
+> não vê no nome.
+>
+> **Rodando `notepad .env` fora da pasta do projeto.** Esta é a pior das duas,
+> porque nada dá erro: o Notepad simplesmente abre um arquivo novo e vazio, e
+> ao salvar cria o `.env` na pasta em que o Prompt de Comando estava — muitas
+> vezes `C:\Windows\system32`, que é a pasta de sistema do Windows. O arquivo
+> fica perfeito e no lugar errado, e o container nunca vai lê-lo.
+>
+> As duas se evitam com a mesma disciplina: **`cd /d C:\cortes` primeiro**, e
+> `copy .env.example .env` antes do `notepad` — assim o Notepad abre um arquivo
+> que já existe, com o conteúdo do exemplo dentro. Se ele abrir **vazio**, você
+> está na pasta errada: feche sem salvar e volte ao `cd`.
 
 O Notepad abre um arquivo com muito comentário. **Não precisa mexer em nada do
 que já está lá.** Vá até o **fim do arquivo**, dê Enter, e cole estas três
@@ -161,9 +222,12 @@ fora até você pegar a chave certa.
 
 ## Passo 3 — Subir
 
-No mesmo Prompt de Comando, na mesma pasta:
+No mesmo Prompt de Comando. O `cd` está repetido de propósito: `docker compose`
+procura o `docker-compose.yml` na pasta em que você está, e de outra pasta ele
+não acha nada.
 
 ```bat
+cd /d C:\cortes
 docker compose up --build
 ```
 
@@ -285,9 +349,10 @@ certa.
 
 Nada do pipeline usa o banco ainda (`sources` e `jobs` passam a ser escritas na
 Fase 1), mas vale confirmar que funciona na sua máquina. Com o stack no ar,
-abra **outro** Prompt de Comando na mesma pasta:
+abra **outro** Prompt de Comando (o primeiro está ocupado mostrando o log):
 
 ```bat
+cd /d C:\cortes
 docker compose exec backend alembic upgrade head
 docker compose exec backend python db_seed.py --no-ddl
 ```
@@ -301,6 +366,9 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | Sintoma | Causa | Solução |
 |---|---|---|
 | `'-H' não é reconhecido como um comando interno` | comando de Linux quebrado em várias linhas com `\` | não existe mais neste guia; cada linha aqui é um comando inteiro |
+| `O sistema não pode encontrar o caminho especificado` num `cd` | o caminho era um exemplo, ou o projeto não foi baixado | passo 0: o projeto vai para `C:\cortes` e é esse o caminho literal |
+| `notepad .env` abre um arquivo **vazio** | você não está na pasta do projeto; o Notepad vai criar um `.env` onde o CMD estiver (`C:\Windows\system32`, por exemplo) | feche **sem salvar**, `cd /d C:\cortes`, `copy .env.example .env`, e só então `notepad .env` |
+| `'git' não é reconhecido` | git não instalado | git-scm.com/download/win, depois feche e reabra o Prompt de Comando |
 | `the docker daemon is not running` | Docker Desktop fechado | abra o Docker Desktop e espere o ícone parar de dizer "starting" |
 | `.env` não tem efeito, `localLlm: null` | o arquivo virou `.env.txt`, ou tem `#`/espaços na linha | passo 2; depois reinicie o `docker compose` |
 | Notepad não acha o `.env` | o Explorer esconde arquivos que começam com ponto | abra pelo comando `notepad .env` dentro da pasta |
@@ -339,6 +407,21 @@ do orçamento diário (`output/.llm_budget.json`).
 `model_decommissioned` (o Groq trocou o nome do modelo — veja a tabela de
 armadilhas).
 
+### E a do Gemini
+
+Esta é um GET simples, sem corpo — ela só pergunta ao Google quais modelos a
+chave enxerga, que é o teste mais barato de "a chave é válida":
+
+```powershell
+$g = "AIza_COLE_A_SUA_CHAVE_AQUI"
+Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models?key=$g"
+```
+
+**Funcionou** se vier uma lista de modelos (vários `gemini-...`). **Não
+funcionou** se vier `API_KEY_INVALID` — e é esse o erro que aparece quando o
+que se colou foi um token de sessão (`AQ.`, `ya29.`, `1//`) em vez da chave da
+API.
+
 ---
 
 ## Apêndice B — macOS e Linux
@@ -346,8 +429,8 @@ armadilhas).
 Os mesmos passos; muda só a forma dos comandos.
 
 ```bash
-cd ~/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
-git checkout claude/loving-fermat-c84xtd
+git clone https://github.com/JonathanDelmonte/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System.git cortes
+cd cortes
 cp .env.example .env
 nano .env          # ou o editor que preferir
 docker compose up --build

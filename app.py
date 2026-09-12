@@ -2559,6 +2559,25 @@ def _presented_status(job_id, job):
     return job['status']
 
 
+def _job_timings(job_id: str) -> Optional[dict]:
+    """Custo do job por estagio, do sidecar que o main.py grava (bloco 0.5).
+
+    Segundos e tokens por estagio, mais tokens por minuto falado. O resumo ja
+    aparece no log do job porque o main.py o imprime no stdout; isto e a versao
+    legivel por maquina, com a mesma forma que a coluna `jobs.timings_json` da
+    secao 7 vai ter quando a tabela nascer.
+    """
+    if not _JOB_ID_RE.match(job_id or ""):
+        return None
+    for path in glob.glob(os.path.join(OUTPUT_DIR, job_id, "*.timings.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return None
+    return None
+
+
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str, request: Request):
     job = jobs.get(job_id)
@@ -2571,7 +2590,8 @@ async def get_status(job_id: str, request: Request):
     return {
         "status": _presented_status(job_id, job),
         "logs": _visible_logs(job['logs']),
-        "result": job.get('result')
+        "result": job.get('result'),
+        "timings": _job_timings(job_id),
     }
 
 

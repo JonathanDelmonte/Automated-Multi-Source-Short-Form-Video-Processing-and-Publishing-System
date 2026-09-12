@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **0.1 a 0.4 concluídas.** Próximo: 0.5 — instrumentar tokens e tempo |
+| Fase | **Fase 0 completa em código** (blocos 0.1 a 0.5). Próximo: Fase 0.5 — o schema |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -299,7 +299,7 @@ antes de qualquer decisão. Então o passivo AGPL não está atrás de flag nenh
 e o ADR-003 exige tornar esse import lazy, não só adicionar um toggle. Apareceu ao
 stubar dependências para verificar a ligação.
 
-### 0.5 — Instrumentar antes de otimizar · meio dia · ◀ PRÓXIMA
+### 0.5 — Instrumentar antes de otimizar · meio dia · ✅ CONCLUÍDA
 
 Registrar por job, no campo `timings_json` que o §7 já prevê no schema: tokens por
 chamada, chamadas por estágio, tempo de parede por estágio, e duração falada da fonte.
@@ -311,12 +311,68 @@ vídeo de 40 min?" não tem resposta.
 **Pronto quando:** um job processado responde, por número, quantos tokens e quantos
 segundos cada estágio custou.
 
+**Resultado.** `job_metrics.py` + 22 testes. O que o upstream tinha era fragmentado e
+não sobrevivia ao job: `stage_seconds` só de `detect`/`write` dentro do laço de
+reframe, e prints soltos de download. Agora há um coletor por job, com o resumo no
+stdout — que *é* o log que o `/api/status` devolve — e o dict no sidecar
+`<base>.timings.json`, **com a mesma forma que a coluna `jobs.timings_json` do §7 vai
+ter**. Quando a tabela nascer, é um INSERT lendo este dict.
+
+```
+📊 Custo deste job:
+   01_ingest               0.1s
+   03_transcribe           0.1s
+   04_detect               0.0s    4 chamada(s)    73600 tokens  [gemini]
+   05_06_render            0.1s
+   TOTAL                   0.3s    4 chamada(s)    73600 tokens
+   90.0 min de fala → 818 tokens/min falado
+```
+
+Duas decisões:
+
+**A atribuição de tokens a estágio é automática.** O coletor mantém a pilha de
+estágios abertos, então `add_llm` credita a chamada a quem está por cima. É o que
+permitiu instrumentar o LLM num lugar só — `_run_llm_stage` — em vez de em cada sítio
+de chamada.
+
+**Mede duração falada, não duração do arquivo.** O §4 é explícito: "o custo de
+processar cresce com a duração falada, não com o tamanho do arquivo". `tokens por
+minuto falado` é o número que a Fase 1 vai usar para calibrar o pré-filtro, e uma live
+de 4h com metade de silêncio custa metade.
+
+**Uma quebra que eu causei e os testes pegaram:** inseri o helper `_job_timings` entre
+o decorador `@app.get("/api/status/{job_id}")` e a função `get_status`, então o
+decorador passou a registrar o *helper* como handler da rota — `/api/status` de um job
+inexistente devolvia 200 com corpo nulo em vez de 404. Seis testes de MCP falharam e o
+meu próprio `curl` confirmou. Helper movido para antes do decorador.
+
+> **Nota sobre os números acima:** são de uma simulação, com custo por chamada
+> inventado. O que está provado é que a forma existe e reporta; o custo real de um
+> vídeo é o que falta medir, e é justamente o que este bloco passa a permitir.
+
 ### Critério de saída da Fase 0
 
 O do §9, mais uma condição:
 
 > Um corte vertical legendado sai na sua máquina, sem nenhuma chave de API paga
 > configurada — **e existe medição de tokens e tempo por estágio de um vídeo real.**
+
+**Estado: completa em código, pendente de uma execução real.** Os cinco blocos estão
+feitos e verificados no que este ambiente permite: 637 testes passando, backend e
+painel subindo, build limpo, nenhuma dependência paga em caminho ativo, cascata
+roteando e degradando, e a medição reportando. O que falta é fora do meu alcance aqui:
+
+| Pendente | Por quê |
+|---|---|
+| `docker compose up --build` | gateway deste container nega o CDN do Docker Hub (403 de política) |
+| Uma chamada HTTP real ao Groq | não há chave neste ambiente |
+| Um vídeo de verdade atravessando o pipeline | precisa da stack de ML (torch, ~2GB) e do `ffmpeg` |
+
+São os três primeiros testes a fazer na sua máquina, e juntos fecham o critério.
+
+> **Cuidado com o nome:** o **bloco 0.5** (instrumentar, acima) é parte da Fase 0. A
+> **Fase 0.5** (o schema com `tenant_id`, abaixo) é outra coisa, inserida por ADR-008.
+> A colisão de numeração é minha; mantive por já estar referenciada nos commits.
 
 ---
 

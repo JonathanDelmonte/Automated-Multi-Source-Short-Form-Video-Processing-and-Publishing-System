@@ -26,6 +26,7 @@ import hook_grounding
 import layout_picker
 import llm_backend
 import llm_cascade
+import job_metrics
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -1560,13 +1561,17 @@ def _run_llm_stage(client, model_name, prompt, schema, duration_seconds=None):
     servidor proprio.
     """
     if not llm_cascade.cascade(duration_seconds):
-        return _run_gemini_stage(client, model_name, prompt, schema)
+        parsed, cost = _run_gemini_stage(client, model_name, prompt, schema)
+        job_metrics.add_llm(cost)
+        return parsed, cost
 
     def _call(pr, sc, provider):
         return _run_gemini_stage(client, provider.model, pr, sc, provider=provider)
 
-    return llm_cascade.run(prompt, schema, call=_call,
-                           duration_seconds=duration_seconds)
+    parsed, cost = llm_cascade.run(prompt, schema, call=_call,
+                                   duration_seconds=duration_seconds)
+    job_metrics.add_llm(cost)
+    return parsed, cost
 
 
 def _run_stage_split(client, model_name, items, build_prompt, schema, key, costs, label,
@@ -1896,6 +1901,7 @@ if __name__ == '__main__':
     output_format = args.format
 
     script_start_time = time.time()
+    job_metrics.reset()   # o diretorio e o nome-base chegam depois de resolvidos
     
     def _ensure_dir(path: str) -> str:
         """Create directory if missing and return the same path."""
@@ -1918,7 +1924,8 @@ if __name__ == '__main__':
             else:
                 output_dir = "."
         
-        input_video, video_title = download_youtube_video(args.url, output_dir)
+        with job_metrics.stage("01_ingest"):
+            input_video, video_title = download_youtube_video(args.url, output_dir)
     else:
         input_video = args.input
         video_title = os.path.splitext(os.path.basename(input_video))[0]
@@ -1938,6 +1945,10 @@ if __name__ == '__main__':
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")
         exit(1)
+
+    # Primeiro ponto em que diretorio e titulo existem nos dois caminhos (URL e
+    # arquivo local), entao e aqui que o coletor aprende onde gravar.
+    job_metrics.set_destination(output_dir, video_title)
 
     # Layout choice is per SOURCE video, not per clip: one upload and one call
     # instead of one per clip, and the answer is a property of the material
@@ -2006,7 +2017,8 @@ if __name__ == '__main__':
                       f"({len(transcript['segments'])} segments) — skipping transcription.")
         if transcript is None:
             try:
-                transcript = transcribe_video(input_video)
+                with job_metrics.stage("03_transcribe"):
+                    transcript = transcribe_video(input_video)
                 save_transcript_checkpoint(output_dir, transcript, input_video, duration)
             except NoAudioError as e:
                 print(f"🔇 {e} — switching to visual analysis.")
@@ -2020,10 +2032,17 @@ if __name__ == '__main__':
             transcript = None
 
         # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
-        if transcript is not None:
-            clips_data = get_viral_clips(transcript, duration)
-        else:
-            clips_data = get_visual_clips(input_video, duration)
+        # A duracao FALADA e a grandeza que governa o custo, nao a do arquivo
+        # (secao 4 do Plano Tecnico). Registrada antes da deteccao porque e o
+        # denominador de "tokens por minuto falado", que a Fase 1 vai usar para
+        # calibrar o pre-filtro.
+        job_metrics.fact("source_seconds", round(float(duration or 0), 1))
+        job_metrics.fact("spoken_seconds", job_metrics.spoken_seconds_from(transcript))
+        with job_metrics.stage("04_detect"):
+            if transcript is not None:
+                clips_data = get_viral_clips(transcript, duration)
+            else:
+                clips_data = get_visual_clips(input_video, duration)
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path
@@ -2063,9 +2082,10 @@ if __name__ == '__main__':
 
                 try:
                     # ffmpeg cut — re-encoding for precision on strict seconds
-                    cut_clip(input_video, clip_temp_path, start, end, i + 1)
+                    with job_metrics.stage("05_06_render"):
+                        cut_clip(input_video, clip_temp_path, start, end, i + 1)
 
-                    success = render_clip(clip_temp_path, clip_final_path, output_format)
+                        success = render_clip(clip_temp_path, clip_final_path, output_format)
                     # Layer order: watermark burns into the canonical (so any
                     # later hook replacement, which re-derives from it, keeps
                     # the branding), the hook is a derived hooked_ file, and
@@ -2136,3 +2156,13 @@ if __name__ == '__main__':
 
     total_time = time.time() - script_start_time
     print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+
+    # Custo do job: por estagio, em segundos e em tokens. O resumo vai para o
+    # stdout, que E o log do job que o app.py captura, e o dict vai para
+    # <base>.timings.json -- com a forma que a coluna jobs.timings_json da
+    # secao 7 vai ter quando a tabela nascer (Fase 0.5).
+    job_metrics.fact("clips", len(clips_data.get("shorts") or []) if isinstance(clips_data, dict) else 0)
+    resumo = job_metrics.summary_line()
+    if resumo:
+        print("\n" + resumo)
+    job_metrics.write()

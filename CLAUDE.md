@@ -80,6 +80,13 @@ parecem arbitrarias no codigo estao justificadas la.
   cada job). Provedor entra so com sua chave presente; o Ollama e opt-in via
   `OLLAMA_BASE_URL`. Sem nenhuma chave, o comportamento e o antigo. Variaveis
   documentadas no `.env.example`.
+- **Custo por job instrumentado** (`job_metrics.py`, bloco 0.5 concluido). Um
+  coletor por job mede tempo de parede e tokens por estagio, credita a chamada
+  de LLM ao estagio aberto pela pilha (por isso o LLM e instrumentado num lugar
+  so, `main._run_llm_stage`), e mede **duracao falada**, nao a do arquivo. O
+  resumo vai para o stdout, que e o log que o `/api/status` devolve, e o dict
+  para o sidecar `<base>.timings.json`, com a forma que a coluna
+  `jobs.timings_json` da secao 7 vai ter.
 - **Dependencias pagas removidas** (Fase 0.3 concluida). Sairam os modulos
   `saasshorts.py` (fal.ai), `translate.py` (ElevenLabs) e `s3_uploader.py`
   (AWS S3), 22 endpoints (`/api/translate`, `/api/social/*`,

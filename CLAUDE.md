@@ -12,12 +12,34 @@ regras abaixo sao deste projeto e tem precedencia.
 
 ### Atribuicao de commits -- obrigatorio
 
-Autor de todo commit: **Jonathan Delmonte <claudetharc@gmail.com>**.
+Autor de todo commit: **Jonathan Delmonte <jonathanpdelmon@gmail.com>**.
+
+Esse e o e-mail, sem excecao. E o que o GitHub usa para ligar o commit ao
+perfil do autor: com qualquer outro, o commit aparece como texto simples, sem
+foto e sem link para a conta.
 
 Nao adicionar trailers de co-autoria de assistente (`Co-Authored-By:` de
 Claude, `Claude-Session:` ou equivalentes) em mensagens de commit, descricoes
 de pull request ou qualquer artefato versionado. O trabalho e creditado ao
 autor do projeto.
+
+### Para onde se empurra -- e para onde NAO
+
+`origin` e **o repositorio do autor**:
+`JonathanDelmonte/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System`.
+Todo push vai para la, na branch `claude/loving-fermat-c84xtd`.
+
+`upstream` e `mutonby/openshorts`, o projeto de terceiros que serviu de base.
+**E somente leitura.** A URL de push dele foi desabilitada de proposito
+(`git remote set-url --push upstream DISABLED_no_push_to_upstream`), para que
+nem um comando errado consiga enviar nada para o repositorio deles. Nunca
+reabilitar, nunca abrir pull request contra eles, nunca empurrar branch para
+la. A relacao com o upstream e de uma via: `git fetch upstream` para receber
+correcoes, e nada no sentido inverso.
+
+Os 427 commits e os 9 contribuidores deste repositorio sao esperados: 420 vem
+do historico do upstream, incorporado na Fase 0.1 para que as correcoes deles
+cheguem por `git fetch` (ADR-001). O credito a eles esta no `NOTICE`.
 
 ### Idioma
 

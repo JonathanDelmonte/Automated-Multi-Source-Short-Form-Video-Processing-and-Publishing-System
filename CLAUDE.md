@@ -50,8 +50,20 @@ parecem arbitrarias no codigo estao justificadas la.
   do zero na Fase 0.5, com `tenant_id` desde a primeira tabela.
 - **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
   flag desligada.
-- **Dependencias pagas sao para remover, nao configurar** (Fase 0.3): fal.ai
-  (`saasshorts.py`), ElevenLabs, Upload-Post, AWS S3 (`s3_uploader.py`).
+- **Dependencias pagas removidas** (Fase 0.3 concluida). Sairam os modulos
+  `saasshorts.py` (fal.ai), `translate.py` (ElevenLabs) e `s3_uploader.py`
+  (AWS S3), 22 endpoints (`/api/translate`, `/api/social/*`,
+  `/api/saasshorts/*`, `/api/thumbnail/publish*`, `/gallery`,
+  `/video/{id}`), a ferramenta MCP `publish_clip` e, no painel, as abas
+  AI Shorts e UGC Gallery, o modal de dublagem, o de publicacao e o de
+  agendamento semanal. **As secoes do upstream abaixo descrevem features que
+  nao existem mais neste fork** -- a lista de "Key Files", o pipeline de 11
+  passos e a tabela de endpoints estao corrigidas, mas trate qualquer outra
+  mencao a fal.ai, ElevenLabs, Upload-Post ou S3 como historica.
+- **Pendente**: a superficie de marketing e SEO (`Landing.jsx`,
+  `PricingPage.jsx`, `PricingSection.jsx`, `dashboard/seo/*`, `index.html`) e
+  `examples/n8n/`, `ops/`, `design.md` ainda anunciam essas features. E copy,
+  nao caminho de codigo; ver o fim da Fase 0.3 no plano de acao.
 
 ### Fluxo de git
 
@@ -101,9 +113,10 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 6. **AI Cropping** - Vertical reframing with subject tracking
 7. **Effects/Subtitles** - Optional AI-generated FFmpeg filters
 8. **Hook Overlay** - Text overlays with styled fonts
-9. **Voice Dubbing** - Optional ElevenLabs AI translation (30+ languages)
-10. **S3 Backup** - Silent background upload
-11. **Social Distribution** - Upload-Post API (async upload)
+
+(Os passos 9 a 11 do upstream -- dublagem ElevenLabs, backup em S3 e
+distribuicao via Upload-Post -- foram removidos na Fase 0.3. A publicacao
+propria entra na Fase 3.)
 
 ### Key Files
 | File | Purpose |
@@ -112,11 +125,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | `app.py` | FastAPI server with async job queue and REST endpoints |
 | `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
 | `hooks.py` | Hook text overlay generation with font rendering |
-| `s3_uploader.py` | AWS S3 upload with caching |
 | `subtitles.py` | SRT generation, FFmpeg subtitle burning, and dubbed video transcription |
-| `translate.py` | ElevenLabs dubbing API for AI voice translation |
 | `dashboard/src/App.jsx` | Main React component with state management |
-| `dashboard/src/components/TranslateModal.jsx` | Voice dubbing UI with language selection |
 | `dashboard/vite-plugin-seo.js` | Build-time SEO surface: injects crawler-visible homepage content, emits static pages, sitemap.xml and llms.txt |
 | `dashboard/seo/data.js` | Single source of truth for pricing, pipeline and competitor facts used by every generated page |
 
@@ -313,10 +323,7 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/edit` | Apply AI video effects |
 | POST | `/api/subtitle` | Generate and apply subtitles (auto-transcribes dubbed videos) |
 | POST | `/api/hook` | Add text hook overlays |
-| POST | `/api/translate` | AI voice dubbing via ElevenLabs |
-| GET | `/api/translate/languages` | List supported dubbing languages |
-| POST | `/api/social/post` | Post to social media (async upload) |
-| POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools |
+| POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
 

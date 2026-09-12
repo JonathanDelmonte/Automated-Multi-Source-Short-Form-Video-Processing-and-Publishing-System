@@ -17,14 +17,12 @@ endpoints, forwarding your auth headers, so the two paths cannot drift.
   "plan": "free",
   "entitled": false,
   "minutes": { "plan_allowance": 20, "plan_used": 4, "plan_remaining": 16,
-               "topup_remaining": 0, "remaining": 16 },
-  "upload_post_profile": null
+               "topup_remaining": 0, "remaining": 16 }
 }
 ```
 
-`upload_post_profile` is null when no social account is connected, which means
-publishing will fail. On a self-hosted instance this endpoint is not mounted at
-all and returns 404, which simply means there is no quota to report.
+On a self-hosted instance this endpoint is not mounted at all and returns 404,
+which simply means there is no quota to report.
 
 ## Start a job
 
@@ -144,22 +142,9 @@ and needs the retained source video.
 
 ## Publish
 
-`POST /api/social/post`
-
-```json
-{ "job_id": "...", "clip_index": 0, "platforms": ["tiktok", "instagram", "youtube"],
-  "title": "...", "description": "...",
-  "scheduled_date": "2026-08-25T18:00:00Z", "timezone": "Europe/Madrid" }
-```
-
-Omit `scheduled_date` to post now. Uploads are asynchronous. TikTok arrives as a
-draft in the app; Instagram and YouTube publish directly.
-
-Queue: `GET /api/social/scheduled`, and
-`DELETE /api/social/scheduled/{job_id}` to cancel one before it goes out.
-
-Analytics of what was published: `GET /api/social/analytics` (profile totals),
-`GET /api/social/analytics/posts` (per post), and
-`GET /api/social/analytics/impressions` (windowed, e.g. `?period=last_week`).
+Nao existe neste fork. Os endpoints `/api/social/*` foram removidos junto com a
+dependencia do Upload-Post (ver `docs/DECISOES.md`, ADR-001 e a Fase 0.3 do
+plano de acao). A camada de publicacao propria, com drivers intercambiaveis,
+entra na Fase 3.
 
 Full generated API docs: <https://api.openshorts.app/docs>.

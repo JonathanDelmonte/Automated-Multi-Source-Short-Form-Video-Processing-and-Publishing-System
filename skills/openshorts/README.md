@@ -16,9 +16,8 @@ Create an API key (`osk_...`) in your account page at
 that host stores credentials (`OPENSHORTS_API_KEY` where an env var is the
 convention). The hosted free tier includes 20 minutes of source video per month
 with a watermark; paid plans start at $12/month without one. OpenShorts is also
-MIT-licensed and self-hostable, which needs a GPU machine, your own Google
-Gemini key, and your own [Upload-Post](https://www.upload-post.com/) account for
-the publishing steps.
+MIT-licensed and self-hostable, which needs a GPU machine and your own Google
+Gemini key.
 
 If the host speaks MCP, add the server too so the agent gets typed tools instead
 of raw HTTP:

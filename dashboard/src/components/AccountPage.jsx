@@ -6,7 +6,6 @@ import { track } from '../lib/analytics';
 import ApiKeysCard from './ApiKeysCard';
 import McpConnectCard from './McpConnectCard';
 import DeleteAccountCard from './DeleteAccountCard';
-import SocialAnalyticsCard from './SocialAnalyticsCard';
 import InvoicesCard from './InvoicesCard';
 
 const fmt1 = (n) => Math.round((n || 0) * 10) / 10;
@@ -187,8 +186,6 @@ export default function AccountPage() {
 
       {/* Only accounts that ever had a Stripe relationship can have invoices. */}
       {me.has_billing_account && <InvoicesCard />}
-
-      <SocialAnalyticsCard />
 
       {topups.length > 0 && (
         <div className="card p-6">

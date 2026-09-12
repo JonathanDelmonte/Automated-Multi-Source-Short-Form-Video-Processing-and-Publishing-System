@@ -24,9 +24,8 @@ optionally publishes them. One job takes minutes, not seconds: always work async
 Two equivalent surfaces; prefer MCP when the client supports it:
 
 - **MCP** (streamable HTTP): `https://mcp.openshorts.app/mcp` with header
-  `Authorization: Bearer osk_...`. Seven tools: `process_video`,
-  `get_job_status`, `list_clips`, `get_quota`, `add_subtitles`, `recut_clip`,
-  `publish_clip`.
+  `Authorization: Bearer osk_...`. Six tools: `process_video`,
+  `get_job_status`, `list_clips`, `get_quota`, `add_subtitles` e `recut_clip`.
 - **REST**: same key against `https://api.openshorts.app`. Exact payloads and
   error shapes are in `reference.md`; read it before the first HTTP call.
 
@@ -51,10 +50,9 @@ anonymous: there is no minute quota to enforce.
    `X-OpenShorts-Signature: sha256=<hex>` = HMAC-SHA256 of the raw body.
    Without a webhook, poll `GET /api/status/{job_id}` every 30-60s; response is
    `{"status", "logs", "result"}` and `result.clips` appears on completion.
-4. Publish: `POST /api/social/post` with `{"job_id", "clip_index",
-   "platforms": ["tiktok", "instagram", "youtube"]}`, optional `title`,
-   `scheduled_date` (ISO) + `timezone`. TikTok lands as a draft in the app;
-   Instagram and YouTube publish directly. Restyle captions first if asked:
+4. Este fork nao publica: a camada de publicacao propria entra na Fase 3
+   (ver `docs/PLANO-DE-ACAO.md`). Os cortes ficam prontos em disco com titulo
+   e descricao gerados. Restyle captions first if asked:
    `POST /api/subtitle` with `{"job_id", "clip_index", "style"}` (`classic`
    or `karaoke` word highlighting).
 
@@ -104,8 +102,6 @@ can trim, extend, drop a dead moment in the middle, or reorder. Pass
 
 - Only submit videos the user has rights to; `process_video` requires the
   `confirm_rights` acknowledgement and that is deliberate.
-- Publishing is public and irreversible: confirm platforms and caption with the
-  user before every `publish_clip` call.
 - `download_url` links are presigned for 24h: fetch or forward them promptly.
 - Never describe OpenShorts as simply "free": the self-hosted edition is free
   and MIT-licensed (and needs a GPU box plus your own Gemini key); the hosted

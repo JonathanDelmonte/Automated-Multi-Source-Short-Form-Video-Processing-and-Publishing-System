@@ -43,8 +43,25 @@ removeu as integrações que pediriam uma.
 ## Passo 0 — Baixar o projeto
 
 **O guia presumia que o projeto já estava na sua máquina, e não dizia como
-colocá-lo lá.** Se você ainda não baixou, é aqui que se começa: sem a pasta do
-projeto, o `.env` do passo 2 não tem onde morar.
+colocá-lo lá.** Sem a pasta do projeto, o `.env` do passo 2 não tem onde morar.
+
+### Se você já tem o projeto
+
+Pelo **GitHub Desktop** ou por um clone anterior, então **não clone de novo** —
+um segundo clone vira uma segunda cópia, e você acaba editando o `.env` de uma
+enquanto o Docker sobe a outra.
+
+O que você precisa é só do caminho dela. No GitHub Desktop:
+**Repository → Show in Explorer**, e o caminho está na barra de endereço. O
+padrão do GitHub Desktop é
+`C:\Users\<seu usuário>\Documents\GitHub\<nome do repositório>`.
+
+Guarde esse caminho: é ele que vai depois de todo `cd /d` deste guia, no lugar
+de `C:\cortes`. Confirme que está atualizado (**Fetch origin**, e depois
+**Pull origin** se aparecer — o Fetch sozinho baixa mas não aplica) e siga
+para o passo 1.
+
+### Se você ainda não tem
 
 Primeiro confira se você tem o **git**. Abra o **Prompt de Comando** (tecla
 Windows → digite `cmd` → Enter — **não precisa ser como Administrador**) e rode:
@@ -121,16 +138,30 @@ pipeline inteiro de ponta a ponta.
 
 ### 1b. Gemini (Google) — opcional, mas você vai querer
 
-> ### A chave do Gemini começa com `AIza`
+> ### A chave começa com `AQ.` ou com `AIza` — as duas são válidas
 >
-> Se o que você copiou começa com outra coisa — `AQ.`, `ya29.`, `1//` — **não é
-> a chave da API.** São tokens de sessão/login do Google, que aparecem quando
-> se copia da URL ou de uma tela de autorização em vez do botão certo. Eles não
-> funcionam aqui e não dá para converter um no outro.
+> O Google está trocando o formato das chaves do Gemini: as antigas começam com
+> `AIza`, e as novas, emitidas pelo AI Studio desde meados de 2026, começam com
+> **`AQ.`**. Não há botão para escolher: a conta emite uma ou outra, e a que o
+> AI Studio te der é a certa.
 >
-> O caminho certo é: **aistudio.google.com/apikey** → botão
-> **"Criar chave de API"** → copiar o valor que aparece, que começa com `AIza` e
-> tem ~39 caracteres, sem pontos no meio.
+> O caminho é **aistudio.google.com/apikey** → **"Criar chave de API"** →
+> **"Copiar chave"**. O valor que aparece no campo "Chave de API" é a chave,
+> comece ele como começar.
+>
+> **Uma ressalva que importa para este projeto, e ela é boa notícia:** as chaves
+> `AQ.` funcionam no endpoint nativo do Gemini
+> (`generativelanguage.googleapis.com`) e dão 401 nas rotas
+> "compatíveis com OpenAI". Este projeto fala com o Gemini pelo SDK oficial
+> (`from google import genai`, `main.py:21`), que é o caminho nativo — a
+> ramificação está em `main.py:1499`, onde só provedor **com** `base_url` vai
+> ao caminho compatível com OpenAI, e o Gemini é justamente o que tem
+> `base_url=None` (`llm_cascade.py:101`). Groq e Cerebras é que usam a rota
+> compatível, e as chaves deles não têm esse problema.
+>
+> Onde isso morde: se alguém apontar `LLM_BASE_URL` para o endpoint
+> compatível-com-OpenAI do Google usando uma chave `AQ.`, o 401 é esperado e
+> não é bug deste repositório. Use o caminho nativo.
 
 Três estágios do pipeline **só falam Gemini** e degradam sem a chave: a escolha
 de layout, o detector de conteúdo em tela e o caminho para vídeo sem fala. A
@@ -194,8 +225,8 @@ que já está lá.** Vá até o **fim do arquivo**, dê Enter, e cole estas trê
 linhas:
 
 ```
-GROQ_API_KEY=gsk_cole_a_sua_aqui
-GEMINI_API_KEY=AIza_cole_a_sua_aqui
+GROQ_API_KEY=cole_a_sua_do_groq_aqui
+GEMINI_API_KEY=cole_a_sua_do_gemini_aqui
 MIN_SOURCE_SECONDS=20
 ```
 
@@ -378,7 +409,9 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | Upload acima de 2 GB recusado | `MAX_FILE_SIZE_MB=2048` | limite do upstream. A Fase 1 sobe para 10 GB |
 | Transcrição travada minutos na 1ª vez | está baixando o modelo whisper | normal, só na primeira |
 | "no usable clips" | fala esparsa, ou nenhum trecho passou do piso de score | vídeo com mais fala contínua |
-| `invalid_api_key` no log | chave errada ou revogada | crie outra no console do provedor |
+| `invalid_api_key` no log | chave do Groq errada ou revogada | crie outra em console.groq.com |
+| `401` ou `API_KEY_INVALID` no Gemini | chave errada, **ou** uma chave `AQ.` mandada para uma rota compatível-com-OpenAI | o projeto usa o SDK nativo e não tem esse problema; se você apontou `LLM_BASE_URL` para o Google, tire |
+| Um segundo clone do projeto | clonei de novo tendo o GitHub Desktop | use uma pasta só: o `.env` fica na que o `docker compose` sobe |
 | `model_decommissioned` no log | o Groq trocou o nome do modelo | `GROQ_MODEL=<nome novo>` no `.env` resolve na hora; me avise que eu corrijo no `llm_cascade.py` |
 | `BILLING_ENABLED` dá erro na subida | **é intencional** (ADR-001): o módulo comercial foi removido | não ligue essa flag |
 | Build morre sem espaço | a imagem com torch é gorda | `docker system prune -a` e ~15 GB livres |
@@ -413,14 +446,18 @@ Esta é um GET simples, sem corpo — ela só pergunta ao Google quais modelos a
 chave enxerga, que é o teste mais barato de "a chave é válida":
 
 ```powershell
-$g = "AIza_COLE_A_SUA_CHAVE_AQUI"
-Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models?key=$g"
+$g = "COLE_A_SUA_CHAVE_AQUI"
+Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent" -Method Post -Headers @{ "x-goog-api-key" = $g } -ContentType "application/json" -Body '{"contents":[{"parts":[{"text":"responda apenas: ok"}]}]}' | ConvertTo-Json -Depth 8
 ```
 
-**Funcionou** se vier uma lista de modelos (vários `gemini-...`). **Não
-funcionou** se vier `API_KEY_INVALID` — e é esse o erro que aparece quando o
-que se colou foi um token de sessão (`AQ.`, `ya29.`, `1//`) em vez da chave da
-API.
+**Funcionou** se vier um JSON com `"text": "ok"`.
+
+Este teste chama `generateContent` de propósito, e não a listagem de modelos.
+Listar modelos é mais curto, mas passa em casos em que gerar falha — e gerar é
+o que o pipeline faz. Testar o que se vai usar custa a mesma linha.
+
+O `x-goog-api-key` no cabeçalho é o mesmo mecanismo que o SDK oficial usa por
+dentro, então este teste percorre o caminho real do projeto.
 
 ---
 

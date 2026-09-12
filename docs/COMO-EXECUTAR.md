@@ -28,15 +28,45 @@ removeu as integrações que pediriam uma.
 
 ## Antes de começar
 
-- **Docker Desktop** instalado **e aberto**. Ele precisa estar rodando (o ícone
-  da baleia perto do relógio, sem "starting"). Se o Docker estiver fechado,
-  todo comando `docker` responde
-  `error during connect: the docker daemon is not running` — e isso não é
-  problema do projeto.
+- **Docker Desktop** instalado **e aberto** — veja o quadro abaixo se ainda não
+  tem. Ele precisa estar rodando (o ícone da baleia perto do relógio, sem
+  "starting"). Com o Docker fechado, todo comando `docker` responde
+  `error during connect: the docker daemon is not running`; com ele **não
+  instalado**, a resposta é outra: `'docker' não é reconhecido como um comando
+  interno`. Nenhuma das duas é problema do projeto.
 - **8 GB de RAM livres.** É o que o estágio de transcrição pede.
 - **~15 GB de disco.** A imagem com torch e as libs de CUDA é gorda.
 - **GPU NVIDIA é opcional.** Sem ela tudo roda em CPU, só mais devagar: a
   transcrição de um vídeo de 10 min leva minutos em vez de segundos.
+
+### Instalando o Docker Desktop
+
+**O Docker não é "só para o backend": é o que roda tudo.** Os três serviços
+(backend Python, painel React, renderer em Node) sobem por ele. A alternativa
+seria instalar na mão Python 3.11, Node, `ffmpeg` e a stack de ML inteira —
+torch, torchvision, ultralytics, mediapipe, faster-whisper, uns 2 GB de
+bibliotecas — e acertar as versões de todas. O Docker é o atalho, não um
+requisito a mais.
+
+1. Baixe em **docker.com/products/docker-desktop** (Windows, AMD64).
+2. Rode o instalador e deixe **"Use WSL 2 instead of Hyper-V"** marcado.
+3. **Reinicie o computador** quando ele pedir. Não pule: o WSL 2 não fica
+   ativo antes disso.
+4. Abra o Docker Desktop e espere o ícone da baleia parar de dizer "starting".
+5. **Feche e reabra o Prompt de Comando** — sem isso ele não enxerga o
+   `docker`, porque o `PATH` só é lido na abertura da janela.
+6. Confira: `docker --version` deve responder algo como `Docker version 2x.x`.
+
+O que a sua máquina precisa ter:
+
+| Requisito | Detalhe |
+|---|---|
+| Windows 10 **22H2 (build 19045)** ou maior | **Home serve.** No WSL 2 o Home é suportado — em Home é, aliás, o único backend possível |
+| Virtualização ligada na BIOS/UEFI | Confira no Gerenciador de Tarefas → Desempenho → CPU: "Virtualização: Ativado". Se estiver desativada, é uma opção da BIOS (`Intel VT-x` ou `AMD-V`) |
+| Processador 64-bit com SLAT | Qualquer CPU dos últimos ~12 anos tem |
+
+Para descobrir a sua versão do Windows: tecla Windows → digite `winver` →
+Enter.
 
 ---
 
@@ -232,14 +262,25 @@ MIN_SOURCE_SECONDS=20
 
 Salve (Ctrl+S) e feche.
 
-Três detalhes que quebram isso na prática:
+**Só uma coisa quebra de verdade: o `#` no começo da linha.** O `#` é
+comentário, e a linha vira decoração — é por isso que colar no fim do arquivo
+é mais seguro do que caçar a linha comentada lá no meio.
 
-- **Sem espaço em volta do `=`.** `GROQ_API_KEY=gsk_...`, não
-  `GROQ_API_KEY = gsk_...`.
-- **Sem aspas** em volta da chave.
-- **Sem `#` no começo da linha.** O `#` é comentário: a linha vira decoração.
-  É por isso que colar no fim do arquivo é mais seguro do que caçar a linha
-  comentada lá no meio.
+O resto o parser tolera. Medido com o `python-dotenv==1.2.2` que o
+`requirements.txt` fixa, que é o mesmo que o `load_dotenv()` do `app.py` usa:
+
+| O que você escreveu | Vale? |
+|---|---|
+| `GROQ_API_KEY=gsk_123` | sim |
+| `GROQ_API_KEY= gsk_123` (espaço depois do `=`) | **sim** |
+| `GROQ_API_KEY = gsk_123` (espaço dos dois lados) | **sim** |
+| `GROQ_API_KEY=gsk_123   ` (espaço no fim) | sim, é aparado |
+| `GROQ_API_KEY="gsk_123"` (com aspas) | sim, as aspas saem |
+| `#GROQ_API_KEY=gsk_123` | **não** — é a única que falha |
+
+Colar sem espaço continua sendo o hábito melhor, porque nem todo programa que
+lê `.env` é tão tolerante quanto este. Mas se você já colou com espaço, **não
+precisa voltar para arrumar**: aqui funciona.
 
 **Por que `MIN_SOURCE_SECONDS=20`:** o padrão é 45, e o código rejeita qualquer
 fonte mais curta que isso **antes de começar** (`app.py:61`). É a armadilha
@@ -400,6 +441,8 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | `O sistema não pode encontrar o caminho especificado` num `cd` | o caminho era um exemplo, ou o projeto não foi baixado | passo 0: o projeto vai para `C:\cortes` e é esse o caminho literal |
 | `notepad .env` abre um arquivo **vazio** | você não está na pasta do projeto; o Notepad vai criar um `.env` onde o CMD estiver (`C:\Windows\system32`, por exemplo) | feche **sem salvar**, `cd /d C:\cortes`, `copy .env.example .env`, e só então `notepad .env` |
 | `'git' não é reconhecido` | git não instalado | git-scm.com/download/win, depois feche e reabra o Prompt de Comando |
+| `'docker' não é reconhecido` | Docker Desktop não instalado (≠ fechado) | instale (quadro em "Antes de começar") e **reabra o Prompt** — o `PATH` só é lido na abertura |
+| Docker Desktop não inicia, fala em virtualização | virtualização desligada na BIOS | Gerenciador de Tarefas → Desempenho → CPU mostra o estado; ligar é opção da BIOS |
 | `the docker daemon is not running` | Docker Desktop fechado | abra o Docker Desktop e espere o ícone parar de dizer "starting" |
 | `.env` não tem efeito, `localLlm: null` | o arquivo virou `.env.txt`, ou tem `#`/espaços na linha | passo 2; depois reinicie o `docker compose` |
 | Notepad não acha o `.env` | o Explorer esconde arquivos que começam com ponto | abra pelo comando `notepad .env` dentro da pasta |

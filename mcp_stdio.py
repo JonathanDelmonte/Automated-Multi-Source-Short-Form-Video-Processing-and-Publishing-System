@@ -43,7 +43,6 @@ _ENV_HEADERS = {
         if os.environ.get("OPENSHORTS_API_KEY") else None
     ),
     "x-gemini-key": lambda: os.environ.get("GEMINI_API_KEY"),
-    "x-upload-post-key": lambda: os.environ.get("UPLOAD_POST_API_KEY"),
 }
 
 

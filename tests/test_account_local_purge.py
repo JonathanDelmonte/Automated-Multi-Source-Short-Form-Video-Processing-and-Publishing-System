@@ -35,7 +35,6 @@ def workdir(tmp_path, monkeypatch):
     os.makedirs("output/thumbnails", exist_ok=True)
     os.makedirs("uploads", exist_ok=True)
     monkeypatch.setattr(app, "jobs", {})
-    monkeypatch.setattr(app, "saas_jobs", {})
     monkeypatch.setattr(app, "thumbnail_sessions", {})
     return tmp_path
 
@@ -82,15 +81,6 @@ class TestClipJobs:
 
 
 class TestOtherStores:
-    def test_erases_saasshorts_output(self, workdir):
-        _write("output/saas_s1/final.mp4")
-        app.saas_jobs["s1"] = {"user_id": MINE, "output_dir": "output/saas_s1"}
-
-        app._purge_local_jobs_for_user(MINE)
-
-        assert not os.path.exists("output/saas_s1")
-        assert "s1" not in app.saas_jobs
-
     def test_erases_generated_thumbnails_and_their_source(self, workdir):
         # Nothing else ever deletes these: the hourly sweep skips the whole
         # thumbnails directory, and they are served publicly at /thumbnails/.
@@ -133,10 +123,13 @@ class TestPathTraversal:
 
         assert os.path.exists("secret.txt")
 
-    def test_a_poisoned_output_dir_deletes_nothing(self, workdir):
+    def test_a_poisoned_job_id_deletes_nothing(self, workdir):
+        # O purge apaga por id de job (``_rm_under(OUTPUT_DIR, job_id)``), logo
+        # o id e o vetor de travessia. Antes este teste usava o campo
+        # ``output_dir`` do ``saas_jobs``, que saiu com o modulo pago; a
+        # cobertura passa a apontar para o laco que de fato existe.
         _write("secret.txt", "keep me")
-        app.saas_jobs["evil"] = {
-            "user_id": MINE, "output_dir": "output/../../secret.txt"}
+        app.jobs["../../secret.txt"] = {"user_id": MINE, "status": "completed"}
 
         app._purge_local_jobs_for_user(MINE)
 

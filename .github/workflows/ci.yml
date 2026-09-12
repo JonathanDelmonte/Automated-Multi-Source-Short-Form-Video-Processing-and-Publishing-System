@@ -17,13 +17,15 @@ jobs:
       # heavy ML stack (torch/ultralytics/mediapipe/faster-whisper) — the
       # pipeline modules import those lazily behind their feature gates, and
       # the tests exercise the gated-off paths. numpy+opencv cover the layout
-      # modules, fastapi/boto3/PyJWT/python-multipart cover importing app.py
-      # for the MCP endpoint tests, google-genai covers gemini_worker.
+      # modules, fastapi/python-multipart cover importing app.py for the MCP
+      # endpoint tests, google-genai covers gemini_worker.
+      # boto3, sqlalchemy, PyJWT e email-validator sairam com as dependencias
+      # pagas e com o modulo cloud/ (ver docs/DECISOES.md, ADR-001).
       - name: Install test dependencies
         run: >
-          pip install pytest pillow httpx pydantic sqlalchemy numpy
-          opencv-python-headless python-dotenv google-genai fastapi boto3
-          PyJWT email-validator python-multipart
+          pip install pytest pillow httpx pydantic numpy
+          opencv-python-headless python-dotenv google-genai fastapi
+          python-multipart
       - name: Run tests
         run: pytest tests/ -v
 

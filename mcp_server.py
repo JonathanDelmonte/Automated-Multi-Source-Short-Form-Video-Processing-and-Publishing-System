@@ -43,14 +43,14 @@ INSTRUCTIONS = (
     "reach the video and it is not needed. Typical flow: process_video -> "
     "poll get_job_status until 'completed' (a job takes minutes; poll every "
     "30-60s or pass webhook_url) -> list_clips -> optionally add_subtitles / "
-    "recut_clip / publish_clip. Check get_quota before large jobs. The user "
+    "recut_clip. Check get_quota before large jobs. The user "
     "must own the content or hold the rights: ask once, then pass "
     "confirm_rights=true."
 )
 
 # Headers an MCP caller may use to authenticate / bring their own keys; they are
 # forwarded verbatim to the internal endpoints so every existing auth path works.
-_FORWARD_HEADERS = ("authorization", "x-api-key", "x-gemini-key", "x-upload-post-key")
+_FORWARD_HEADERS = ("authorization", "x-api-key", "x-gemini-key")
 
 _LOG_TAIL = 10  # status logs are for humans; agents only need the tail
 
@@ -290,32 +290,6 @@ TOOLS = [
             "required": ["job_id", "clip_index", "segments"],
         },
     },
-    {
-        "name": "publish_clip",
-        "title": "Publish a clip to social platforms",
-        "description": (
-            "Post one clip to the user's connected accounts (TikTok lands as a "
-            "draft in the app; Instagram and YouTube publish directly). Requires "
-            "a connected social profile (cloud) or an Upload-Post key (self-host). "
-            "Optionally schedule with an ISO-8601 scheduled_date."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "job_id": {"type": "string"},
-                "clip_index": {"type": "integer"},
-                "platforms": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["tiktok", "instagram", "youtube"]},
-                },
-                "title": {"type": "string"},
-                "description": {"type": "string"},
-                "scheduled_date": {"type": "string", "description": "ISO-8601; omit to post now."},
-                "timezone": {"type": "string"},
-            },
-            "required": ["job_id", "clip_index", "platforms"],
-        },
-    },
 ]
 
 
@@ -440,8 +414,7 @@ async def _tool_get_quota(client, args):
         return _api_error(resp), True
     data = resp.json()
     return {"plan": data.get("plan"), "entitled": data.get("entitled"),
-            "minutes": data.get("minutes"),
-            "upload_post_profile": data.get("upload_post_profile")}, False
+            "minutes": data.get("minutes")}, False
 
 
 async def _tool_add_subtitles(client, args):
@@ -468,16 +441,6 @@ async def _tool_recut_clip(client, args):
     return resp.json(), False
 
 
-async def _tool_publish_clip(client, args):
-    body = {"job_id": args["job_id"], "clip_index": args["clip_index"],
-            "platforms": args["platforms"]}
-    for k in ("title", "description", "scheduled_date", "timezone"):
-        if args.get(k) is not None:
-            body[k] = args[k]
-    resp = await client.post("/api/social/post", json=body)
-    if resp.status_code >= 400:
-        return _api_error(resp), True
-    return resp.json(), False
 
 
 _TOOL_IMPLS = {
@@ -488,7 +451,6 @@ _TOOL_IMPLS = {
     "get_quota": _tool_get_quota,
     "add_subtitles": _tool_add_subtitles,
     "recut_clip": _tool_recut_clip,
-    "publish_clip": _tool_publish_clip,
 }
 
 

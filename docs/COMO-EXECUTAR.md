@@ -66,12 +66,25 @@ requisito a mais.
    backend. Windows Containers and the Hyper-V backend require an all-users
    installation."*
 
-3. **Reinicie o computador** quando ele pedir. Não pule: o WSL 2 não fica
-   ativo antes disso.
+3. **Reinicie o computador** se ele pedir — mas confira antes se precisa
+   mesmo (passo 6). O reboot só é necessário quando o instalador teve de
+   **ligar recursos do Windows** que estavam desligados (Virtual Machine
+   Platform e WSL): recurso recém-ativado só vale depois do boot. Se já
+   estavam ligados, não há o que esperar.
 4. Abra o Docker Desktop e espere o ícone da baleia parar de dizer "starting".
 5. **Feche e reabra o Prompt de Comando** — sem isso ele não enxerga o
    `docker`, porque o `PATH` só é lido na abertura da janela.
-6. Confira: `docker --version` deve responder algo como `Docker version 2x.x`.
+6. Confira com **`docker ps`**, não com `docker --version`.
+
+   `docker --version` só imprime a versão do cliente e **não fala com o
+   motor** — ele responde certinho com o engine parado, então não detecta
+   justamente a falha que o reboot conserta. Já o `docker ps` precisa
+   conversar com o engine dentro do WSL 2.
+
+   - Respondeu uma lista vazia (só o cabeçalho `CONTAINER ID  IMAGE …`):
+     está tudo no ar, **sem precisar reiniciar**.
+   - `cannot connect to the Docker daemon`, ou reclamação de WSL: abra o
+     Docker Desktop e espere a baleia. Se persistir, **aí** reinicie.
 
 O que a sua máquina precisa ter:
 

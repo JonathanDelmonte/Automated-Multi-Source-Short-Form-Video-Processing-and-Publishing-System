@@ -54,8 +54,17 @@ requisito a mais.
    | Opção | O que marcar | Por quê |
    |---|---|---|
    | Per-user / All-users | **Per-user (Recommended)** | não pede senha de administrador, e já usa o WSL 2 sozinho. All-users também funciona — serve para quem precisa de Windows Containers ou do backend Hyper-V, e este projeto não precisa de nenhum dos dois |
-   | Use WSL 2 instead of Hyper-V | **marcado** | é o backend que roda os containers Linux do projeto. Aparece só na opção All-users; no Per-user o WSL 2 é automático |
+   | Use WSL 2 instead of Hyper-V | **marcado** | é o backend que roda os containers Linux do projeto |
    | Allow Windows Containers | **desmarcado** | o projeto roda containers **Linux**. O próprio instalador avisa do risco, e ligar isso não traz nada aqui |
+
+   **Ao marcar Per-user, as duas caixas ficam cinzas — e isso está certo.**
+   Cinza ali não é "desligado", é "não há o que decidir": o Per-user só sabe
+   usar o WSL 2 (a caixa fica cinza **e marcada**) e não suporta Windows
+   Containers (cinza e desmarcada). A escolha entre WSL 2 e Hyper-V só existe
+   no All-users, que é por isso que as caixas aparecem embaixo dele. O texto
+   do próprio instalador diz: *"Per-user installation… Uses the WSL 2
+   backend. Windows Containers and the Hyper-V backend require an all-users
+   installation."*
 
 3. **Reinicie o computador** quando ele pedir. Não pule: o WSL 2 não fica
    ativo antes disso.

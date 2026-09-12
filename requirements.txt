@@ -17,3 +17,11 @@ python-multipart==0.0.27
 httpx==0.28.1
 Pillow==12.2.0
 beautifulsoup4==4.14.3
+
+# Schema do projeto (secao 7 do Plano Tecnico, Fase 0.5). Voltaram na Fase 0.5
+# depois de sairem na 0.3: lá pertenciam ao modulo comercial cloud/, aqui sao
+# deste schema. SQLite e o default; para Postgres, acrescente asyncpg==0.30.0
+# e aponte DATABASE_URL.
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+alembic==1.20.0

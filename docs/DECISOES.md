@@ -324,6 +324,45 @@ ligar ao estado de job que o pipeline mantém hoje por outro meio.
 
 **Estimativa revisada:** 3–5 dias, contra os 2–3 originais.
 
+### Implementada na Fase 0.5
+
+**Status: implementada.** Nove tabelas, `tenant_id` em oito delas (`tenants` *é* o
+tenant), seed com tenant fixo, alembic do zero. Quatro decisões que valem registro:
+
+**Stack: SQLAlchemy 2.x async, SQLite por padrão, Postgres por `DATABASE_URL`.**
+SQLite porque o escopo declarado é uso pessoal self-hosted — zero operação, um
+arquivo. Async porque o `app.py` é async de ponta a ponta e uma consulta bloqueante
+num handler `async def` trava o event loop, o que com o semáforo de jobs do upstream
+para a fila inteira. O `sqlalchemy` e o `alembic` voltaram ao `requirements.txt` aqui
+depois de saírem na Fase 0.3 — lá pertenciam ao `cloud/`, aqui são deste schema.
+
+**Isolamento garantido pelo banco, com chave estrangeira composta.** `clips.job_id →
+jobs.id` permitiria, por bug de consulta, um corte de um tenant referenciar o job de
+outro. A FK composta `(tenant_id, job_id) → jobs(tenant_id, id)` torna isso
+**impossível**, não desencorajado. Custa um índice único por tabela-pai.
+
+**O critério "nenhuma consulta ignora a coluna" virou estrutura, não disciplina.**
+Duas peças: `TenantScope` (`db.tenant()`), que filtra e preenche `tenant_id`
+automaticamente e *recusa* objeto de outro tenant; e um teste que quebra se um modelo
+novo nascer sem a coluna — o mesmo padrão que o upstream usava em
+`test_account_erasure.py`, onde o teste falha se uma tabela nova referencia
+`users.id` sem entrar na lista.
+
+**Um vazamento real que só apareceu porque testei.** O SQLite ignora chave
+estrangeira por padrão, e meu listener de `PRAGMA foreign_keys=ON` farejava
+`type(conn).__module__.startswith(("sqlite3","aiosqlite"))`. Com aiosqlite o que chega
+ao evento é `sqlalchemy.dialects.sqlite.aiosqlite.AsyncAdapt_aiosqlite_connection`: a
+checagem dava `False`, o pragma nunca rodava, e **o banco aceitou um job do tenant B
+apontando para a fonte do tenant A** — as FKs compostas eram decoração. Corrigido
+ligando o listener ao engine e decidindo pelo nome do dialeto, que é determinístico.
+`TestIsolamentoEntreTenants::test_o_pragma_de_fk_do_sqlite_esta_ligado` impede a volta.
+
+**O banco mora em `data/`, não em `output/`.** O `output/` é barrido pela limpeza por
+idade e pelo teto de tamanho. Hoje as duas só apagam diretórios, então um arquivo ali
+sobreviveria — mas por um detalhe de código herdado que um `git fetch upstream` pode
+mudar sem aviso. Tirar o banco do caminho da vassoura troca "sobrevive porque testei"
+por "não está lá".
+
 ### A incerteza, resolvida na Fase 0.2
 
 A pergunta em aberto era onde o caminho self-host guarda estado de job hoje. Resposta:

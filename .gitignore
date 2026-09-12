@@ -18,6 +18,9 @@ uploads/
 downloads/
 videos/
 output/
+# Banco do projeto (Fase 0.5). Fora de output/ para nao ser barrido
+# pela limpeza por idade nem pelo teto de tamanho.
+data/
 
 # OS / IDE
 .DS_Store

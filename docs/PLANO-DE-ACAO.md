@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 completa em código** (blocos 0.1 a 0.5). Próximo: Fase 0.5 — o schema |
+| Fase | **Fase 0 e Fase 0.5 completas em código.** Próximo: Fase 1 — ingestão |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -376,7 +376,7 @@ São os três primeiros testes a fazer na sua máquina, e juntos fecham o crité
 
 ---
 
-## Fase 0.5 — `tenant_id` no schema · 3–5 dias
+## Fase 0.5 — `tenant_id` no schema · 3–5 dias · ✅ CONCLUÍDA
 
 Introduzida por ADR-008; não existe no §9.
 
@@ -401,11 +401,55 @@ outra razão para 0.2 vir antes.
 **Pronto quando:** toda tabela tem `tenant_id`, o seed cria um tenant fixo, e nenhuma
 consulta do código ignora a coluna.
 
+**Resultado.** As nove tabelas do §7 em `db_models.py`, conexão e escopo em `db.py`,
+seed em `db_seed.py`, alembic do zero, e 32 testes. Os três critérios atendidos.
+
+| Peça | Escolha |
+|---|---|
+| ORM | SQLAlchemy 2.x, async — o `app.py` é async e consulta bloqueante trava o event loop |
+| Banco | SQLite em `data/cortes.db`; `DATABASE_URL` aponta para Postgres |
+| Migração | alembic do zero, com `render_as_batch` (o SQLite não tem `ALTER TABLE` completo) |
+| Tenant | fixo, `00000000-…-0001`, criado pelo seed. Auth segue na Fase 4 |
+
+**O terceiro critério virou estrutura, não disciplina.** "Nenhuma consulta ignora a
+coluna" não se consegue prometendo; se consegue com duas peças: `db.tenant()`, que
+filtra e preenche `tenant_id` sozinho e *recusa* objeto de outro tenant; e um teste que
+quebra se um modelo novo nascer sem a coluna — o mesmo padrão que o upstream usava em
+`test_account_erasure.py`.
+
+**Isolamento garantido pelo banco.** Usei chave estrangeira **composta** com
+`tenant_id`: `(tenant_id, job_id) → jobs(tenant_id, id)`. Um corte referenciar o job de
+outro tenant deixa de ser "bug improvável" e passa a ser `IntegrityError`.
+
+**E foi aí que achei um vazamento de verdade.** O SQLite ignora FK por padrão, e meu
+listener de `PRAGMA foreign_keys=ON` testava o tipo da conexão. Com aiosqlite o que
+chega ao evento é um `AsyncAdapt_aiosqlite_connection` da própria SQLAlchemy — a
+checagem dava `False`, o pragma nunca rodava, e o teste mostrou **o banco aceitando um
+job do tenant B apontando para a fonte do tenant A**. As FKs compostas eram decoração.
+Corrigido ligando o listener ao engine e decidindo pelo dialeto. Se eu tivesse só
+escrito o schema e seguido, isso teria ficado lá — parecendo correto.
+
+**Uma precaução que não estava no plano:** o banco mora em `data/`, não em `output/`.
+O `output/` é barrido pela limpeza por idade e pelo teto de tamanho; hoje as duas só
+apagam diretórios, então um arquivo sobreviveria — mas por um detalhe de código
+herdado que um `git fetch upstream` pode mudar. Melhor não estar no caminho.
+
+Comandos: `alembic upgrade head` (produção, sabe evoluir banco com dados) ou
+`python db_seed.py` (cria o schema e semeia). Verificado que a migração produz
+**exatamente** o mesmo schema que o metadata — há um teste comparando os dois, porque
+sem ele `create_all` (usado em teste) e `alembic upgrade` (usado em produção) divergem
+em silêncio e o bug aparece no deploy.
+
+> **Nada do pipeline usa o banco ainda**, e é de propósito: as tabelas `sources` e
+> `jobs` passam a ser escritas na Fase 1, quando o `SourceAdapter` nascer. O que esta
+> fase entrega é o lugar, com o `tenant_id` já dentro — que era exatamente o ponto de
+> fazê-la antes das fases que criam tabelas.
+
 ---
 
 ## Fases 1 a 5 — ajustes sobre o §9
 
-### Fase 1 — camada de ingestão · 1–2 semanas
+### Fase 1 — camada de ingestão · 1–2 semanas · ◀ PRÓXIMA
 
 Conforme o §9, com duas adições:
 

@@ -67,9 +67,25 @@ parecem arbitrarias no codigo estao justificadas la.
   `app.py` em vez de `ImportError` -- e intencional, nao um bug a consertar.
   Removidos junto: `requirements-billing.txt`, `docker-compose.cloud.yml`,
   `alembic/`, `alembic.ini`.
-- **Sem banco de dados no caminho self-host.** Todo o ORM pertencia ao modulo
-  comercial. O schema do projeto (`docs/PLANO-TECNICO.md` secao 7) sera escrito
-  do zero na Fase 0.5, com `tenant_id` desde a primeira tabela.
+- **Schema proprio** (`db_models.py`, `db.py`, `db_seed.py`, `alembic/`, Fase
+  0.5 concluida, ADR-008). Todo o ORM do upstream pertencia ao modulo comercial
+  e saiu com ele, entao as nove tabelas da secao 7 nasceram escritas, com
+  `tenant_id` em todas menos `tenants`. SQLAlchemy 2.x async; SQLite em
+  `data/cortes.db` por padrao (FORA de `output/`, que e barrido pela limpeza) e
+  Postgres por `DATABASE_URL`. Migracao: `alembic upgrade head`. Seed:
+  `python db_seed.py`.
+  - **Leia e escreva por `db.tenant()`**, nao por `db.session()`: ele filtra e
+    preenche `tenant_id` sozinho e recusa objeto de outro tenant. Sessao crua e
+    para quem precisa de SQL que o escopo nao cobre, e ai a responsabilidade e
+    explicita.
+  - **FK composta com `tenant_id`** em toda referencia entre tabelas, entao
+    vazamento entre tenants e `IntegrityError`, nao bug improvavel. No SQLite
+    isso depende de `PRAGMA foreign_keys=ON`, ligado por engine em `db.py` --
+    nao desfazer: sem ele as FKs compostas sao decoracao (ja aconteceu).
+  - `tests/test_db_schema.py` quebra se uma tabela nova nascer sem `tenant_id`.
+  - **Auth e a Fase 4.** Ate la tudo pertence ao tenant fixo
+    `00000000-0000-0000-0000-000000000001`, e nada do pipeline usa o banco
+    ainda: `sources` e `jobs` passam a ser escritas na Fase 1.
 - **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
   flag desligada. **Ainda nao feito**: `main.py:88` instancia `YOLO(...)` em
   nivel de modulo, em todo job. Tornar isso lazy e trabalho da Fase 1.

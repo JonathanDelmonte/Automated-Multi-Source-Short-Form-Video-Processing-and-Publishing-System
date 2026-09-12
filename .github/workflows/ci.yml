@@ -19,13 +19,14 @@ jobs:
       # the tests exercise the gated-off paths. numpy+opencv cover the layout
       # modules, fastapi/python-multipart cover importing app.py for the MCP
       # endpoint tests, google-genai covers gemini_worker.
-      # boto3, sqlalchemy, PyJWT e email-validator sairam com as dependencias
-      # pagas e com o modulo cloud/ (ver docs/DECISOES.md, ADR-001).
+      # boto3, PyJWT e email-validator sairam com as dependencias pagas e com
+      # o modulo cloud/ (ver docs/DECISOES.md, ADR-001). sqlalchemy e alembic
+      # voltaram na Fase 0.5, agora para o schema proprio, com aiosqlite.
       - name: Install test dependencies
         run: >
           pip install pytest pillow httpx pydantic numpy
           opencv-python-headless python-dotenv google-genai fastapi
-          python-multipart
+          python-multipart 'sqlalchemy[asyncio]' aiosqlite alembic
       - name: Run tests
         run: pytest tests/ -v
 

@@ -49,7 +49,14 @@ bibliotecas — e acertar as versões de todas. O Docker é o atalho, não um
 requisito a mais.
 
 1. Baixe em **docker.com/products/docker-desktop** (Windows, AMD64).
-2. Rode o instalador e deixe **"Use WSL 2 instead of Hyper-V"** marcado.
+2. Rode o instalador. Ele abre uma tela **Configuration** com três escolhas:
+
+   | Opção | O que marcar | Por quê |
+   |---|---|---|
+   | Per-user / All-users | **Per-user (Recommended)** | não pede senha de administrador, e já usa o WSL 2 sozinho. All-users também funciona — serve para quem precisa de Windows Containers ou do backend Hyper-V, e este projeto não precisa de nenhum dos dois |
+   | Use WSL 2 instead of Hyper-V | **marcado** | é o backend que roda os containers Linux do projeto. Aparece só na opção All-users; no Per-user o WSL 2 é automático |
+   | Allow Windows Containers | **desmarcado** | o projeto roda containers **Linux**. O próprio instalador avisa do risco, e ligar isso não traz nada aqui |
+
 3. **Reinicie o computador** quando ele pedir. Não pule: o WSL 2 não fica
    ativo antes disso.
 4. Abra o Docker Desktop e espere o ícone da baleia parar de dizer "starting".

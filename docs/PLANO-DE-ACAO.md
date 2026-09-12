@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **0.1 e 0.2 concluídas.** Próximo: 0.3 — extirpar dependências pagas |
+| Fase | **0.1, 0.2 e 0.3 concluídas.** Próximo: 0.4 — cascata de LLM gratuita |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -170,7 +170,7 @@ Os dois pontos que pareciam problema e não são:
 A suíte verde é a validação prática da Fase 0.1: a remoção do `cloud/` não quebrou o
 que ficou.
 
-### 0.3 — Extirpar as dependências pagas · 1 dia · ◀ PRÓXIMA
+### 0.3 — Extirpar as dependências pagas · 1 dia · ✅ CONCLUÍDA
 
 Conforme a tabela do §2. Remover, não desativar:
 
@@ -198,7 +198,49 @@ configuradas.
 | AWS S3 | `s3_uploader.py`, importado **no topo** do `app.py` (linha 31) | import de módulo, não lazy: editar a linha 31 e os seis nomes que ela traz |
 | Mídia de demo | `churchil_queen_vertical.gif` (63 MB) e outros ~85 MB | o GitHub já avisa no push; todo clone carrega |
 
-### 0.4 — Cascata de LLM gratuita · 1–2 dias
+**Resultado.** Os dois critérios atendidos: a busca não retorna nada em caminho de
+código ativo e a aplicação sobe com zero chaves pagas. Saiu mais do que a tabela
+acima previa, porque nenhuma das quatro dependências estava isolada.
+
+| Onde | Antes | Depois |
+|---|---|---|
+| `app.py` | 6221 l. · 60 rotas | 4947 l. · **38 rotas** |
+| `dashboard/src/App.jsx` | 2184 l. | 1750 l. |
+| `ResultCard.jsx` | 1169 l. | 838 l. |
+| `ThumbnailStudio.jsx` | 1243 l. | 1036 l. |
+| Módulos Python | — | 3 removidos (2226 l.) |
+| Componentes React | — | 6 removidos (~2150 l.) |
+| Endpoints | — | 22 removidos |
+| Ferramentas MCP | 7 | 6 (`publish_clip` saiu) |
+
+Três coisas que valem registro:
+
+**A remoção por regex foi descartada a meio caminho.** Os endpoints que devolvem
+`HTMLResponse` têm `@media` em coluna zero dentro da f-string, e qualquer varredura
+por linha lê isso como decorador e corta o bloco no meio — `/video/{video_id}`
+apareceu como 53 linhas quando tem 80. Refeita sobre a AST, que dá os limites exatos
+de cada nó de topo. A lição vale para as próximas fases: este código tem HTML embutido
+em Python e JSX de mil linhas, então edição estrutural pede parser, não `sed`.
+
+**Duas quebras que nem o build nem o lint pegam.** Um botão "Next: Publish" continuava
+navegando para o passo 4 do Thumbnail Studio, que deixou de existir — levaria a uma
+tela vazia. E `skills/openshorts/`, que descreve a API para agentes, documentava
+`publish_clip` e `/api/social/*`: não é marketing, é contrato, e um agente seguindo
+aquilo chamaria 404. Ambos corrigidos. O sinal automatizado cobre referência quebrada,
+não navegação para lugar nenhum.
+
+**Uma funcionalidade foi preservada em vez de cair por tabela.** O botão "create clips
+from this video" vivia dentro do passo de publicação, atrás do sucesso do upload.
+Removido o passo, ele seria perdido junto — sem ter relação alguma com dependência
+paga. Foi re-alojado no passo de descrição, que agora é o último.
+
+> **Pendente, e fora do escopo desta fase:** a superfície de marketing e SEO
+> (`Landing.jsx`, `PricingPage.jsx`, `PricingSection.jsx`, `dashboard/seo/*`,
+> `index.html`) mais `examples/n8n/`, `ops/` e `design.md` ainda anunciam dublagem,
+> UGC e publicação automática. É *copy*, não caminho de código — e a decisão de fundo
+> é maior que reescrever texto. Ver `DECISOES.md`, ADR-009.
+
+### 0.4 — Cascata de LLM gratuita · 1–2 dias · ◀ PRÓXIMA
 
 O `openshorts` chama o Gemini direto no código. Extrair para o `Protocol
 LLMProvider` do §3 e implementar a ordenação por duração de fonte do ADR-005.

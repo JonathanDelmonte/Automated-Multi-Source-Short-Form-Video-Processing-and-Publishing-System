@@ -309,3 +309,47 @@ migrar: as tabelas `jobs` e `sources` do §7 nascem espelhando o que esses arqui
 dizem, e os arquivos podem seguir existindo durante a transição. A estimativa de 3–5
 dias fica, mas agora a faixa é por volume de tabelas, não por incerteza. Detalhe em
 `docs/MAPA-DOS-ESTAGIOS.md`.
+
+
+---
+
+## ADR-009 — A superfície de marketing e SEO sai inteira, não reescrita
+
+**Data:** 2026-09-12 · **Status:** proposta
+**Aberta pela Fase 0.3**
+
+A Fase 0.3 removeu as dependências pagas do código. Sobrou um resíduo que ela
+deliberadamente não tocou: `Landing.jsx`, `PricingPage.jsx`, `PricingSection.jsx`,
+`dashboard/seo/*` (incluindo `legal.js`, com 1619 linhas), `index.html`, mais
+`examples/n8n/`, `ops/` e `design.md`. Tudo isso anuncia dublagem em 30+ idiomas,
+UGC com atores sintéticos e publicação automática — features que não existem mais.
+
+A tentação é corrigir o texto. É a saída errada, por três motivos.
+
+**Não há produto a divulgar.** O plano define o escopo como uso pessoal, self-hosted.
+Uma landing page com tabela de preços, página de planos, cluster de `/alternatives` e
+comparativo de concorrentes serve a um SaaS — e o `CLAUDE.md` do upstream chega a
+instruir que nada no site diga "OpenShorts é grátis" sem citar o preço do Cloud na
+mesma frase. Manter essa superfície é manter a obrigação de mantê-la coerente.
+
+**Ela é grande e cara de manter correta.** O `vite-plugin-seo.js` gera páginas
+estáticas, `sitemap.xml` e `llms.txt` a partir de `seo/pages.js`, e o `seo/data.js` é
+descrito como fonte única de verdade de preço e pipeline. Reescrever a copy significa
+manter esse gerador alinhado com um produto que não existe, a cada mudança.
+
+**Ela carrega marca de terceiro.** É o marketing do OpenShorts, não deste projeto.
+Um fork pessoal que publica a landing page do upstream com preços do upstream não é
+só inútil: é enganoso.
+
+**Proposta:** remover a superfície inteira — landing, pricing, páginas de SEO,
+`legal.js`, o plugin gerador e os textos de marketing do `index.html` — deixando o
+painel entrar direto na ferramenta. O `NOTICE` continua creditando o upstream, que é
+a obrigação real da licença MIT.
+
+**Não decidido ainda** porque não é urgente (nada disso roda no caminho da
+ferramenta) e porque toca ~4.000 linhas, o que merece um commit próprio em vez de
+pegar carona na Fase 0.3. Candidata natural à Fase 4, junto de auth — que é quando o
+painel deixa de ser de uma pessoa só e a tela de entrada volta a importar.
+
+**Revisão se:** o projeto virar SaaS. Aí a superfície volta a ter função — mas escrita
+para este produto, não herdada.

@@ -71,10 +71,10 @@ def _timeout() -> float:
         return DEFAULT_TIMEOUT
 
 
-def _headers() -> dict:
+def _headers(api_key: Optional[str] = None) -> dict:
     # Ollama ignores the key but the OpenAI client convention (and vLLM with
     # --api-key) wants the header present; "ollama" is the documented placeholder.
-    key = (os.environ.get("LLM_API_KEY") or "ollama").strip()
+    key = (api_key or os.environ.get("LLM_API_KEY") or "ollama").strip() or "ollama"
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
@@ -100,6 +100,8 @@ def _is_format_rejection(resp: httpx.Response) -> bool:
 
 
 def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = None,
+                  base_url_override: Optional[str] = None,
+                  api_key: Optional[str] = None,
                   ) -> Tuple[dict, Optional[dict]]:
     """One chat completion that must come back as JSON matching ``schema``.
 
@@ -107,10 +109,18 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
     ``main._run_gemini_stage`` returns, so the caller does not branch on the
     provider. Raises on HTTP errors, empty bodies and schema violations; the
     retry policy lives in the caller, same as for Gemini.
+
+    ``base_url_override`` e ``api_key`` existem para a cascata
+    (``llm_cascade``), que precisa falar com um provedor por chamada em vez do
+    unico endpoint global de ``LLM_BASE_URL``. Sem eles o comportamento e o
+    de antes: le o env.
     """
     import gemini_worker  # local import: keeps this module free of the google SDK
 
-    url = f"{base_url()}/chat/completions"
+    base = (base_url_override or base_url() or "").rstrip("/")
+    if not base:
+        raise RuntimeError("Nenhum endpoint compativel com OpenAI configurado")
+    url = f"{base}/chat/completions"
     model = model or model_name()
     messages = [
         {"role": "system", "content": "You answer with a single JSON object and nothing else."},
@@ -122,7 +132,7 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
             body = {"model": model, "messages": messages, "temperature": 0.2, "stream": False}
             if fmt is not None:
                 body["response_format"] = fmt
-            resp = client.post(url, json=body, headers=_headers())
+            resp = client.post(url, json=body, headers=_headers(api_key))
             if fmt is not None and _is_format_rejection(resp):
                 # The server does not know this response_format flavour; the
                 # next loop iteration asks for a looser one.

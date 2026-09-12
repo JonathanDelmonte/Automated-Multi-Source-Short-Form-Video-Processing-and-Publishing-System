@@ -25,6 +25,7 @@ import gemini_worker
 import hook_grounding
 import layout_picker
 import llm_backend
+import llm_cascade
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -1478,7 +1479,7 @@ def transcribe_video(video_path):
 
     return transcript
 
-def _run_gemini_stage(client, model_name, prompt, schema):
+def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
     """One schema-enforced model call with transient-error backoff.
     Returns (parsed_dict, cost_analysis).
 
@@ -1486,8 +1487,15 @@ def _run_gemini_stage(client, model_name, prompt, schema):
     the call goes there instead of Gemini and ``client`` is unused; the
     retry policy is shared because a local server has the same failure
     shapes (connection refused while the model loads, a truncated body,
-    a 5xx from a busy vLLM)."""
-    use_local = llm_backend.active()
+    a 5xx from a busy vLLM).
+
+    ``provider`` (um ``llm_cascade.Provider``) forca o destino desta
+    tentativa: com ``base_url`` vai ao caminho compativel com OpenAI usando a
+    chave daquele provedor, sem ``base_url`` vai ao Gemini. E o que permite a
+    cascata reusar esta funcao como "uma tentativa", com o backoff que ela ja
+    tinha, em vez de reimplementar retry por provedor. Sem ``provider``, o
+    comportamento e o antigo: ``llm_backend.active()`` decide."""
+    use_local = provider.base_url is not None if provider is not None else llm_backend.active()
     config = None if use_local else genai_types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=schema,
@@ -1496,6 +1504,10 @@ def _run_gemini_stage(client, model_name, prompt, schema):
     for attempt in range(1, max_attempts + 1):
         try:
             if use_local:
+                if provider is not None:
+                    return llm_backend.generate_json(
+                        prompt, schema, model=model_name,
+                        base_url_override=provider.base_url, api_key=provider.api_key())
                 return llm_backend.generate_json(prompt, schema, model=model_name)
             response = client.models.generate_content(model=model_name, contents=prompt, config=config)
             # Policy blocks are deterministic — retrying only burns quota and
@@ -1529,12 +1541,36 @@ def _run_gemini_stage(client, model_name, prompt, schema):
             if attempt == max_attempts or not transient:
                 raise
             wait = 5 * (2 ** (attempt - 1))
-            who = "LLM server" if use_local else "Gemini"
+            who = (provider.label if provider is not None
+                   else ("LLM server" if use_local else "Gemini"))
             print(f"⚠️ {who} transient error (attempt {attempt}/{max_attempts}), retrying in {wait}s: {msg[:150]}")
             time.sleep(wait)
 
 
-def _run_stage_split(client, model_name, items, build_prompt, schema, key, costs, label):
+def _run_llm_stage(client, model_name, prompt, schema, duration_seconds=None):
+    """A chamada de transcricao, atravessando a cascata de provedores gratuitos.
+
+    `_run_gemini_stage` continua sendo **uma tentativa** contra **um**
+    provedor, com o backoff que ja tinha; a cascata (`llm_cascade`) decide
+    quem tenta, em que ordem e se ainda ha orcamento diario (ADR-004 e
+    ADR-005). Esgotado um provedor, o proximo assume sem intervencao.
+
+    Sem nenhum provedor da cascata configurado, cai no caminho antigo, para
+    nao mudar o comportamento de quem so tem `LLM_BASE_URL` apontado para um
+    servidor proprio.
+    """
+    if not llm_cascade.cascade(duration_seconds):
+        return _run_gemini_stage(client, model_name, prompt, schema)
+
+    def _call(pr, sc, provider):
+        return _run_gemini_stage(client, provider.model, pr, sc, provider=provider)
+
+    return llm_cascade.run(prompt, schema, call=_call,
+                           duration_seconds=duration_seconds)
+
+
+def _run_stage_split(client, model_name, items, build_prompt, schema, key, costs, label,
+                     duration_seconds=None):
     """Run a Gemini stage over ``items``; on a policy block, bisect.
 
     Google's prompt filter (PROHIBITED_CONTENT) fires on some COMBINATIONS of
@@ -1548,7 +1584,8 @@ def _run_stage_split(client, model_name, items, build_prompt, schema, key, costs
         return []
     prompt = build_prompt(items)
     try:
-        parsed, cost = _run_gemini_stage(client, model_name, prompt, schema)
+        parsed, cost = _run_llm_stage(client, model_name, prompt, schema,
+                                      duration_seconds=duration_seconds)
         if cost:
             costs.append(cost)
         return list(parsed.get(key) or [])
@@ -1558,19 +1595,29 @@ def _run_stage_split(client, model_name, items, build_prompt, schema, key, costs
             return []
         mid = len(items) // 2
         print(f"   🚫 {label}: Gemini blocked a batch of {len(items)}; retrying as {mid} + {len(items) - mid}")
-        return (_run_stage_split(client, model_name, items[:mid], build_prompt, schema, key, costs, label)
-                + _run_stage_split(client, model_name, items[mid:], build_prompt, schema, key, costs, label))
+        return (_run_stage_split(client, model_name, items[:mid], build_prompt, schema, key, costs,
+                                 label, duration_seconds=duration_seconds)
+                + _run_stage_split(client, model_name, items[mid:], build_prompt, schema, key, costs,
+                                   label, duration_seconds=duration_seconds))
 
 
-def score_batch_size():
-    """Transcript windows per scoring call: ``LLM_SCORE_BATCH`` if set, else
-    8 for Gemini (1M context) and 3 for an OpenAI-compatible server."""
+def score_batch_size(duration_seconds=None):
+    """Janelas de transcricao por chamada de score.
+
+    ``LLM_SCORE_BATCH`` manda, se estiver setado. Sem ela, quem decide e o
+    **contexto do primeiro provedor da cascata** para esta fonte, nao um
+    booleano global: 8 no Gemini (1M), 6 em Groq e Cerebras (128k), 3 no
+    Ollama (8k, onde um prompt truncado pontua lixo em silencio). Com a
+    cascata vazia, cai na regra antiga do upstream.
+    """
     raw = os.environ.get("LLM_SCORE_BATCH", "").strip()
     if raw:
         try:
             return max(1, int(raw))
         except ValueError:
             pass
+    if llm_cascade.cascade(duration_seconds):
+        return llm_cascade.batch_size_for(duration_seconds)
     return 3 if llm_backend.active() else 8
 
 
@@ -1583,7 +1630,23 @@ def get_viral_clips(transcript_result, video_duration):
     word boundaries so clips don't start/end mid-word.
     """
     language = str(transcript_result.get('language') or 'unknown')
-    if llm_backend.active():
+    chain = llm_cascade.cascade(video_duration)
+    if chain:
+        # Cascata de provedores gratuitos (ADR-005): a ordem ja veio resolvida
+        # pela duracao da fonte. O cliente do Gemini so e construido se houver
+        # chave -- uma cascata de Groq + Ollama nao precisa de nenhuma, e era
+        # aqui que o caminho antigo abortava exigindo GEMINI_API_KEY.
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        client = genai.Client(api_key=gemini_key) if gemini_key else None
+        model_name = chain[0].model
+        ordem = " → ".join(f"{p.label}" for p in chain)
+        print(f"\U0001f916  Analyzing with a cascata: {ordem} (2-pass: score → detail)...")
+        if any(p.trains_on_data for p in chain):
+            # Alerta de privacidade do Plano Tecnico, secao 3: o free tier do
+            # Google treina com o que recebe fora da UE/UK/EEA, Brasil incluido.
+            treina = ", ".join(p.label for p in chain if p.trains_on_data)
+            print(f"   \u26a0\ufe0f  {treina}: free tier usa o conteudo enviado para treino.")
+    elif llm_backend.active():
         # Self-hosted text model: no Google key needed for this stage.
         client = None
         model_name = llm_backend.model_name()
@@ -1592,8 +1655,9 @@ def get_viral_clips(transcript_result, video_duration):
         print("\U0001f916  Analyzing with Gemini (2-pass: score → detail)...")
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            print("❌ Error: GEMINI_API_KEY not found in environment variables "
-                  "(set it, or point LLM_BASE_URL at an OpenAI-compatible server).")
+            print("❌ Error: nenhum provedor de LLM configurado. Defina GEMINI_API_KEY, "
+                  "GROQ_API_KEY ou CEREBRAS_API_KEY, suba um Ollama local, ou aponte "
+                  "LLM_BASE_URL para um servidor compativel com OpenAI.")
             return None
         client = genai.Client(api_key=api_key)
         model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
@@ -1622,7 +1686,7 @@ def get_viral_clips(transcript_result, video_duration):
         # Local models usually run with a 4-8k context (Ollama defaults to
         # 4096 unless OLLAMA_CONTEXT_LENGTH says otherwise) and 8 windows of
         # transcript do not fit; a silently truncated prompt scores garbage.
-        SCORE_BATCH = score_batch_size()
+        SCORE_BATCH = score_batch_size(video_duration)
         def _payload(ws):
             return [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in ws]
 
@@ -1634,7 +1698,8 @@ def get_viral_clips(transcript_result, video_duration):
         for b in range(0, len(windows), SCORE_BATCH):
             scored.extend(_run_stage_split(
                 client, model_name, windows[b:b + SCORE_BATCH], _score_prompt,
-                gemini_worker.ScoreResponse, "windows", costs, "score"))
+                gemini_worker.ScoreResponse, "windows", costs, "score",
+                duration_seconds=video_duration))
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
@@ -1659,7 +1724,8 @@ def get_viral_clips(transcript_result, video_duration):
                 windows_json=json.dumps(_payload(ws), ensure_ascii=False))
 
         shorts = _run_stage_split(client, model_name, shortlist, _detail_prompt,
-                                  gemini_worker.DetailResponse, "shorts", costs, "detail")
+                                  gemini_worker.DetailResponse, "shorts", costs, "detail",
+                                  duration_seconds=video_duration)
         if len(shorts) > max_clips:
             # By score, never by position: the results arrive in transcript
             # order, so slicing kept the earliest clips and silently dropped

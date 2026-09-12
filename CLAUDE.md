@@ -71,7 +71,15 @@ parecem arbitrarias no codigo estao justificadas la.
   comercial. O schema do projeto (`docs/PLANO-TECNICO.md` secao 7) sera escrito
   do zero na Fase 0.5, com `tenant_id` desde a primeira tabela.
 - **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
-  flag desligada.
+  flag desligada. **Ainda nao feito**: `main.py:88` instancia `YOLO(...)` em
+  nivel de modulo, em todo job. Tornar isso lazy e trabalho da Fase 1.
+- **Cascata de LLM gratuita** (`llm_cascade.py`, Fase 0.4 concluida, ADR-004 e
+  ADR-005). O detector de momentos atravessa Groq / Gemini / Cerebras / Ollama
+  em ordem que depende da duracao falada da fonte, com orcamento diario em
+  `output/.llm_budget.json` (em disco porque o `main.py` e subprocesso novo a
+  cada job). Provedor entra so com sua chave presente; o Ollama e opt-in via
+  `OLLAMA_BASE_URL`. Sem nenhuma chave, o comportamento e o antigo. Variaveis
+  documentadas no `.env.example`.
 - **Dependencias pagas removidas** (Fase 0.3 concluida). Sairam os modulos
   `saasshorts.py` (fal.ai), `translate.py` (ElevenLabs) e `s3_uploader.py`
   (AWS S3), 22 endpoints (`/api/translate`, `/api/social/*`,

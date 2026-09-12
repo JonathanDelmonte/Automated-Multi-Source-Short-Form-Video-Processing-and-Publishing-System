@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **0.1, 0.2 e 0.3 concluídas.** Próximo: 0.4 — cascata de LLM gratuita |
+| Fase | **0.1 a 0.4 concluídas.** Próximo: 0.5 — instrumentar tokens e tempo |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -240,7 +240,7 @@ paga. Foi re-alojado no passo de descrição, que agora é o último.
 > UGC e publicação automática. É *copy*, não caminho de código — e a decisão de fundo
 > é maior que reescrever texto. Ver `DECISOES.md`, ADR-009.
 
-### 0.4 — Cascata de LLM gratuita · 1–2 dias · ◀ PRÓXIMA
+### 0.4 — Cascata de LLM gratuita · 1–2 dias · ✅ CONCLUÍDA
 
 O `openshorts` chama o Gemini direto no código. Extrair para o `Protocol
 LLMProvider` do §3 e implementar a ordenação por duração de fonte do ADR-005.
@@ -253,7 +253,53 @@ o Ollama como piso. Cerebras pode esperar.
 **Pronto quando:** um vídeo atravessa o pipeline inteiro com zero chave paga, e
 desligar o provedor primário faz o secundário assumir sem intervenção.
 
-### 0.5 — Instrumentar antes de otimizar · meio dia
+**Resultado.** `llm_cascade.py` (~350 l.) + 31 testes. A cascata decide **ordem e
+orçamento**, e nada mais — não importa o SDK do Google nem cliente HTTP. Quem sabe
+falar com cada provedor continua sendo o `main.py`, que já tinha os dois caminhos, e
+`_run_gemini_stage` segue sendo *uma tentativa contra um provedor*, com o backoff que
+já tinha. Confirmado o que a Fase 0.2 previu: `llm_backend.py` já abstraía o
+endpoint, então o trabalho foi a lista ordenada, o `available()` e a escolha por
+duração.
+
+Roteamento verificado pelo `main.py`, com a chamada ao provedor injetada:
+
+| Cenário | Tentou | Lote |
+|---|---|---|
+| Fonte curta, Groq + Gemini | `groq` | 6 janelas |
+| Fonte longa, 4h | `gemini` | 8 janelas |
+| **Primário derrubado** | `groq` → **`gemini` assumiu** | 6 |
+| Só Groq, sem chave do Google | `groq` | 6 |
+| Nenhum provedor | caminho antigo | 8 |
+
+Duas integrações que faltavam e teriam quebrado na prática, encontradas ao ligar:
+
+- **`get_viral_clips` abortava exigindo `GEMINI_API_KEY`.** Com uma cascata de Groq
+  só, `llm_backend.active()` é falso, então o código caía no `else` que exige a chave
+  do Google e devolvia `None`. O cliente do Gemini agora é construído só se houver
+  chave.
+- **`/api/process` rejeitava a requisição**, e o painel escondia a opção, pelo mesmo
+  motivo. Ambos passam a aceitar a cascata: com `GROQ_API_KEY`, `/api/config` devolve
+  `localLlm: cascade / llama-3.3-70b-versatile` e o painel para de pedir chave do
+  Google.
+
+**Um bug de desenho que os testes pegaram:** o Ollama tinha default para
+`http://localhost:11434/v1`, então entrava em *toda* cascata mesmo sem nada
+escutando, e cada job gastaria uma tentativa de conexão para descobrir. Virou
+opt-in — detalhe em ADR-005.
+
+> **Não verificado aqui:** uma chamada HTTP real ao Groq (não há chave neste
+> ambiente) e um vídeo de verdade atravessando o pipeline, que precisa da stack de ML
+> e do `ffmpeg`. Está provado o roteamento, o orçamento e a degradação; a chamada real
+> é o primeiro teste a fazer na sua máquina, junto do `docker compose` que a Fase 0.2
+> deixou pendente.
+
+**Achado para a Fase 1, sobre o ADR-003:** `main.py:88` não só importa o YOLOv8 —
+ele **instancia o modelo em nível de módulo** (`model = YOLO(...)`), em todo job,
+antes de qualquer decisão. Então o passivo AGPL não está atrás de flag nenhuma hoje,
+e o ADR-003 exige tornar esse import lazy, não só adicionar um toggle. Apareceu ao
+stubar dependências para verificar a ligação.
+
+### 0.5 — Instrumentar antes de otimizar · meio dia · ◀ PRÓXIMA
 
 Registrar por job, no campo `timings_json` que o §7 já prevê no schema: tokens por
 chamada, chamadas por estágio, tempo de parede por estágio, e duração falada da fonte.

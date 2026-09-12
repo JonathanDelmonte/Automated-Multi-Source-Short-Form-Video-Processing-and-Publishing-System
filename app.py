@@ -1,5 +1,6 @@
 import os
 import llm_backend
+import llm_cascade
 import re
 import sys
 import uuid
@@ -1925,6 +1926,24 @@ async def health_ready():
         return JSONResponse({"status": "stopping"}, status_code=503)
     return {"status": "ready"}
 
+def _cascade_config() -> Optional[dict]:
+    """Resumo da cascata de LLM para o painel, ou None quando nao ha nenhuma.
+
+    O painel usa `config.localLlm` para decidir se ainda precisa pedir a chave
+    do Gemini (`geminiOk` em App.jsx). Com a cascata configurada por
+    GROQ_API_KEY ou CEREBRAS_API_KEY, ele nao precisa.
+    """
+    try:
+        d = llm_cascade.describe()
+    except Exception:
+        return None
+    if not d.get("providers"):
+        return None
+    first = d["providers"][0]
+    return {"provider": "cascade", "model": first["model"],
+            "baseUrl": first["label"], "cascade": d}
+
+
 @app.get("/api/config")
 async def get_config():
     return {
@@ -1934,7 +1953,8 @@ async def get_config():
         "jobRetentionSeconds": JOB_RETENTION_SECONDS,
         # Self-host only: tells the dashboard the Gemini key is optional
         # because the moment picker runs on an OpenAI-compatible server.
-        "localLlm": None if BILLING_ENABLED else llm_backend.describe(),
+        "localLlm": None if BILLING_ENABLED else (
+            llm_backend.describe() or _cascade_config()),
     }
 
 async def _probe_youtube_quality(url: str) -> dict:
@@ -2172,11 +2192,14 @@ async def process_endpoint(
     upload_id: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
-    if not api_key and not (llm_backend.active() and not BILLING_ENABLED):
+    text_llm_ok = (llm_backend.active() or llm_cascade.has_text_provider()) and not BILLING_ENABLED
+    if not api_key and not text_llm_ok:
         # Self-host with an OpenAI-compatible server configured needs no
         # Google key for the core pipeline: the moment picker runs there and
         # the frame-based stages degrade on their own (layout_picker returns
         # "none", silent videos fail with a message that says why).
+        # Vale igual para a cascata (llm_cascade): com GROQ_API_KEY ou
+        # CEREBRAS_API_KEY o detector roda sem chave do Google.
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")

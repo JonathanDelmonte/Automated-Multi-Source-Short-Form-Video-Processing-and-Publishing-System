@@ -183,6 +183,35 @@ longas. O substituto precisa estar mapeado antes da virada, não durante.
 
 **Revisão se:** os limites mudarem. Reconfirmar antes da Fase 0.
 
+### Implementada na Fase 0.4 — `llm_cascade.py`
+
+**Status: implementada.** O módulo decide **ordem e orçamento**, e nada mais: não
+importa o SDK do Google nem cliente HTTP. Quem sabe falar com cada provedor é o
+`main.py`, que já tinha os dois caminhos, e recebe um `Provider` por tentativa.
+
+Três decisões de implementação que valem registro:
+
+**O orçamento vive em disco, não em memória.** É consequência direta do achado da
+Fase 0.2: o `main.py` roda como subprocesso novo a cada job, então um contador em
+memória zeraria entre vídeos e o teto diário nunca valeria nada. Fica em
+`output/.llm_budget.json`, junto dos outros arquivos de estado que o caminho
+self-host já mantém ali, com escrita atômica (`os.replace`) para dois jobs em
+paralelo.
+
+**O Gemini não é chamado por HTTP.** Ele entra na cascata como provedor, mas a
+chamada continua pelo SDK que já existia, porque o caminho do SDK carrega duas
+coisas que HTTP genérico não reproduz: `response_schema` server-side e o
+`GeminiBlockedError` que o `_run_stage_split` usa para bissectar batch bloqueado
+por PROHIBITED_CONTENT. Não verifiquei o endpoint OpenAI-compatível do Google, e
+não preciso.
+
+**O Ollama é opt-in, sem default para localhost.** A primeira versão adivinhava
+`http://localhost:11434/v1`, e os testes pegaram o efeito: o Ollama entrava em
+*toda* cascata mesmo sem nada escutando, e cada job gastaria uma tentativa de
+conexão para descobrir. Pior, o plano o chama de "rede de segurança que nunca
+falha", e isso só é verdade se ele estiver rodando — quem sabe é quem instalou.
+Agora entra só com `OLLAMA_BASE_URL`.
+
 ### Achado da Fase 0.2 — a cascata não parte do zero
 
 `llm_backend.py` (165 linhas) já existe no upstream e já desacopla o detector do

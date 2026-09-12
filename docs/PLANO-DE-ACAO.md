@@ -563,6 +563,7 @@ sobre o `clippyme` economiza na Fase 2.
 
 | Arquivo | Papel |
 |---|---|
+| `docs/COMO-EXECUTAR.md` | passo a passo para fechar as três execuções pendentes na sua máquina |
 | `docs/PLANO-TECNICO.md` | documento de origem, v2 — o *que* e o *porquê*. Preservado íntegro. |
 | `docs/AUDITORIA-VERIFICACAO.md` | o que a verificação confirmou e o que divergiu, com fontes |
 | `docs/DECISOES.md` | ADR-001 a 008 — decisões travadas e o que faria revê-las |

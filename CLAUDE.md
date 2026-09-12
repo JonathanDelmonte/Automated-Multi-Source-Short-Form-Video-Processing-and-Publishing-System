@@ -55,6 +55,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
 | `docs/DECISOES.md` | ADR-001 a 009 |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
+| `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
 | `docs/upstream/README-openshorts.md` | README do upstream, preservado para consulta |
 
 Antes de alterar arquitetura, ler `docs/DECISOES.md`. Varias escolhas que

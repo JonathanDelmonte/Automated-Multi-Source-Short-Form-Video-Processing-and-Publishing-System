@@ -34,7 +34,8 @@ Comece pelo plano de ação.
 
 | Documento | Papel |
 |---|---|
-| [`docs/PLANO-DE-ACAO.md`](docs/PLANO-DE-ACAO.md) | **ponto de entrada** — ordem de execução, fases e critérios de pronto |
+| [`docs/COMO-EXECUTAR.md`](docs/COMO-EXECUTAR.md) | **para rodar agora** — passo a passo, com as armadilhas do código |
+| [`docs/PLANO-DE-ACAO.md`](docs/PLANO-DE-ACAO.md) | ordem de execução, fases e critérios de pronto |
 | [`docs/PLANO-TECNICO.md`](docs/PLANO-TECNICO.md) | documento de origem v2 — arquitetura, o *que* e o *porquê* |
 | [`docs/AUDITORIA-VERIFICACAO.md`](docs/AUDITORIA-VERIFICACAO.md) | verificação das premissas do plano, com fontes |
 | [`docs/DECISOES.md`](docs/DECISOES.md) | ADR-001 a 008 — decisões travadas |

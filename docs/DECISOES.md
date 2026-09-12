@@ -183,6 +183,23 @@ longas. O substituto precisa estar mapeado antes da virada, não durante.
 
 **Revisão se:** os limites mudarem. Reconfirmar antes da Fase 0.
 
+### Achado da Fase 0.2 — a cascata não parte do zero
+
+`llm_backend.py` (165 linhas) já existe no upstream e já desacopla o detector do
+Gemini: `LLM_BASE_URL` + `LLM_MODEL` + `LLM_API_KEY` roteiam as duas passadas de
+`get_viral_clips` para qualquer endpoint compatível com OpenAI
+`/chat/completions`, validando a resposta com os mesmos schemas pydantic que o Gemini
+usa server-side, de modo que `main.py` vê uma forma só. Groq, Cerebras e Ollama falam
+esse dialeto.
+
+Ou seja, o bloco 0.4 não precisa escrever a abstração — ela está feita para **um**
+provedor configurável. O que falta é a lista ordenada, a checagem de rate limit antes
+de chamar (`available()` do §3) e a escolha por duração da fonte desta ADR.
+
+Uma restrição a registrar: os estágios que trabalham por frames — `layout_picker`,
+`screencast_layout` e `get_visual_clips` — continuam presos ao Gemini e degradam sem
+chave. A cascata cobre o detector sobre transcrição, não esses.
+
 ---
 
 ## ADR-006 — Quantidade de cortes por vídeo é configuração, não constante
@@ -276,6 +293,19 @@ tabelas e passa a ser autoria da camada de persistência: escolher a stack (o §
 PostgreSQL ou SQLite local), inicializar alembic do zero, escrever as nove tabelas e
 ligar ao estado de job que o pipeline mantém hoje por outro meio.
 
-**Estimativa revisada:** 3–5 dias, contra os 2–3 originais. A incerteza está em onde o
-caminho self-host guarda estado de job hoje — e dimensionar isso é exatamente o
-entregável da Fase 0.2, que manda ler o código enquanto ele roda.
+**Estimativa revisada:** 3–5 dias, contra os 2–3 originais.
+
+### A incerteza, resolvida na Fase 0.2
+
+A pergunta em aberto era onde o caminho self-host guarda estado de job hoje. Resposta:
+**em disco, em cinco arquivos com semântica clara**, e nenhum é banco —
+`<job>.resume.json` (manifesto de retomada, com heartbeat a cada 10 s), o arquivo
+`.owner`, `output/.instance` (id da instância, para handover entre containers),
+`<clip>.layout.json` e `.transcript_checkpoint.json`. A leitura é centralizada em
+`_recover_jobs_from_disk` (`app.py:621`).
+
+Isso **reduz** o risco da fase. Não há estado em memória a resgatar nem schema a
+migrar: as tabelas `jobs` e `sources` do §7 nascem espelhando o que esses arquivos já
+dizem, e os arquivos podem seguir existindo durante a transição. A estimativa de 3–5
+dias fica, mas agora a faixa é por volume de tabelas, não por incerteza. Detalhe em
+`docs/MAPA-DOS-ESTAGIOS.md`.

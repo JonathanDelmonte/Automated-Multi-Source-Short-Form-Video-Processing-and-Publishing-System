@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **0.1 concluída.** Próximo: 0.2 — subir e mapear os estágios |
+| Fase | **0.1 e 0.2 concluídas.** Próximo: 0.3 — extirpar dependências pagas |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -119,7 +119,7 @@ decisão não seja desfeita por uma variável de ambiente.
 Um achado com efeito na Fase 0.5: **não há banco de dados no caminho self-host** — todo
 o ORM pertencia ao módulo comercial. Ver ADR-008.
 
-### 0.2 — Subir · 1 dia
+### 0.2 — Subir · 1 dia · ✅ CONCLUÍDA (com ressalva de ambiente)
 
 `docker compose up` e nada mais. Sem alterar código. Percorrer a UI e mapear onde
 mora cada um dos sete estágios do §4 — este é o entregável real da fase, mesmo que
@@ -128,7 +128,49 @@ não seja um arquivo.
 **Pronto quando:** UI carrega, healthcheck verde, e existe uma nota própria dizendo
 em que arquivo mora cada estágio de 01 a 07.
 
-### 0.3 — Extirpar as dependências pagas · 1 dia
+**Resultado.** O mapa dos estágios está em `docs/MAPA-DOS-ESTAGIOS.md` — o entregável
+real da fase. UI e healthcheck verificados, mas **não por `docker compose`**.
+
+> **Ressalva de ambiente.** O `docker compose up` não roda no container remoto desta
+> sessão: o gateway de rede responde `403` de política ao CDN de blobs do Docker Hub
+> (`production.cloudfront.docker.com`), então nem a imagem base `python:3.11-slim`
+> baixa. O README do proxy lista esse caso como "report, do not work around". **Isso
+> não é defeito do fork** — resta executar `docker compose up --build` na sua máquina,
+> e é o único critério da fase que não pôde ser fechado aqui.
+
+Como `pypi.org` e `registry.npmjs.org` têm acesso direto, a verificação foi feita
+nativamente, e o próprio `ci.yml` do upstream mostra que esse é um caminho legítimo:
+ele instala deliberadamente um conjunto leve, **sem** torch, ultralytics, mediapipe ou
+faster-whisper, porque os módulos de pipeline os importam de forma lazy atrás dos
+feature gates.
+
+| Verificação | Resultado |
+|---|---|
+| `app.py` importa | OK — 60 rotas, `BILLING_ENABLED: False` |
+| `GET /health` | `200 {"status":"ok"}` |
+| `GET /health/ready` | `200 {"status":"ready"}` |
+| `GET /api/config` | `200` · `billingEnabled: false` |
+| UI (vite dev) | `200`, título servido |
+| UI → API pelo proxy do vite | `200` |
+| `npm run build` | OK — build em 7,8 s |
+| `pytest tests/` | **596 passaram, 17 skipped, 0 falhas** |
+
+Os dois pontos que pareciam problema e não são:
+
+- **O proxy do vite dava `500`** porque tem como alvo padrão `http://backend:8000`, o
+  nome do serviço no compose. Com `VITE_PROXY_TARGET=http://localhost:8000`, que o
+  próprio `vite.config.js` documenta, responde `200`.
+- **`npm run lint` acusa 10 erros**, todos herdados e em arquivos que nunca toquei
+  (`public/op1.js` — um blob minificado de analytics — mais `Legal.jsx`,
+  `PricingPage.jsx` e `lib/consent.js`). **A CI não roda lint:** o `ci.yml` roda
+  `pytest tests/ -v`, `npm ci` e `npm run build`, e os dois jobs ficariam verdes neste
+  commit. Note que quatro dos cinco arquivos pertencem à superfície comercial e de
+  marketing que este fork está descartando, então tendem a sair sozinhos adiante.
+
+A suíte verde é a validação prática da Fase 0.1: a remoção do `cloud/` não quebrou o
+que ficou.
+
+### 0.3 — Extirpar as dependências pagas · 1 dia · ◀ PRÓXIMA
 
 Conforme a tabela do §2. Remover, não desativar:
 
@@ -146,6 +188,15 @@ Fase 3.
 **Pronto quando:** busca por `fal`, `elevenlabs`, `upload-post` e `boto3` não retorna
 nada em caminho de código ativo, e a aplicação sobe com **zero** chaves de API paga
 configuradas.
+
+**Alvos localizados na Fase 0.2:**
+
+| Alvo | Onde | Cuidado |
+|---|---|---|
+| fal.ai + ElevenLabs | `saasshorts.py` — o módulo de UGC com atores sintéticos | fora do escopo do §2; remover inteiro |
+| Upload-Post | `app.py:4655`, com `resolve_upload_post` em `app.py:166` | é o ponto onde o `Publisher` da Fase 3 encaixa |
+| AWS S3 | `s3_uploader.py`, importado **no topo** do `app.py` (linha 31) | import de módulo, não lazy: editar a linha 31 e os seis nomes que ela traz |
+| Mídia de demo | `churchil_queen_vertical.gif` (63 MB) e outros ~85 MB | o GitHub já avisa no push; todo clone carrega |
 
 ### 0.4 — Cascata de LLM gratuita · 1–2 dias
 

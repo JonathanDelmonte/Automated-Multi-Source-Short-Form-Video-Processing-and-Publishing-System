@@ -499,6 +499,26 @@ seguinte.
   job vivo), barra + botao de cancelar, e botao de copiar o log.
 - `tests/test_job_control.py` cobre os tres endpoints e o marcador.
 
+### A marca e "Cortes", nao "OpenShorts" (13-set-2026)
+
+O painel dizia `openshorts` na barra lateral, os containers se chamavam
+`openshorts-*` e o `package.json` era `openshorts-app` -- num projeto que o
+autor quer proprio, isso e a marca de outra pessoa na tela dele todo dia.
+Trocado para **Cortes**, que ja era o `<title>` do `index.html`.
+
+O logo herdado saiu do cabecalho e virou a inicial em `font-display` sobre
+`brass`. **Nao inventei um logo**: tipografia tambem e marca, e esta ja e a do
+projeto (sistema Lumen). Um simbolo proprio e decisao do autor.
+
+**Ficou um resto, de proposito:** o favicon (`index.html:6`) ainda aponta para
+`/logo-openshorts.png`. Trocar exige um arquivo de imagem que so o autor pode
+decidir; apagar a linha deixaria o icone padrao do navegador, que e pior.
+Quando existir um logo proprio, e substituir o arquivo em `dashboard/public/`.
+
+`SESSION_KEY` continua `openshorts_session` -- e chave de localStorage,
+invisivel, e renomear so invalidaria as sessoes de quem ja usa sem ganho
+nenhum.
+
 ### GPU: sao dois passos
 
 `--build-arg GPU=1` instala as libs de CUDA na imagem e **nao** faz o container

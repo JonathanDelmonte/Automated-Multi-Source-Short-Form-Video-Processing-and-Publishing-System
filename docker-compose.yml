@@ -1,7 +1,7 @@
 services:
   backend:
     build: .
-    container_name: openshorts-backend
+    container_name: cortes-backend
     # `--reload` so aqui, no arquivo de desenvolvimento local: o `CMD` do
     # Dockerfile continua sem ele, que e o que producao roda. Com isto, editar
     # um `.py` passa a valer sozinho, como ja acontecia com `.jsx` no Vite --
@@ -37,7 +37,7 @@ services:
     build:
       context: ./dashboard
       target: dev
-    container_name: openshorts-frontend
+    container_name: cortes-frontend
     ports:
       - "5175:5173"
     volumes:
@@ -51,7 +51,7 @@ services:
     build:
       context: .
       dockerfile: render-service/Dockerfile
-    container_name: openshorts-renderer
+    container_name: cortes-renderer
     ports:
       - "3100:3100"
     volumes:

@@ -147,9 +147,14 @@ const SESSION_KEY = 'openshorts_session';
 // already purged server-side fails gracefully and clears the saved session.
 const SESSION_MAX_AGE = 86400000; // 24 hours
 
-// Mock polling function
+// Erro proprio para "esse job nao existe mais", que e diferente de "a rede
+// falhou". A distincao importa: erro de rede se tenta de novo, job inexistente
+// nao -- insistir nele e o que prendia a tela para sempre.
+class JobSumiu extends Error {}
+
 const pollJob = async (jobId) => {
   const res = await apiFetch(`/api/status/${jobId}`);
+  if (res.status === 404) throw new JobSumiu('job não existe mais');
   if (!res.ok) throw new Error('Status check failed');
   return res.json();
 };
@@ -432,7 +437,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `openshorts_clips_${(jobId || '').slice(0, 8)}.zip`;
+      a.download = `cortes_${(jobId || '').slice(0, 8)}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -553,6 +558,27 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isManaged, jobId, status, results?.clips?.length]);
 
+  // Declarado aqui, e nao mais abaixo: o efeito de polling passou a depender
+  // dele para limpar a sessao de um job que sumiu, e `const` nao sofre
+  // hoisting -- no array de dependencias ele cairia na zona morta temporal.
+  const handleReset = useCallback(() => {
+    // Flush any pending edit-state sync before dropping the project: the clips
+    // themselves are already archived to R2 as they were edited.
+    flushClipState();
+    setStatus('idle');
+    setJobId(null);
+    setResults(null);
+    setLogs([]);
+    setProcessingMedia(null);
+    setProjectState(null);
+    setNoSource(false);
+    setStage(null);
+    // Voltar para a tela inicial e o momento em que a lista precisa estar certa:
+    // o job que acabou de terminar tem de aparecer nela sem esperar o polling.
+    setProjectsKey((k) => k + 1);
+    localStorage.removeItem(SESSION_KEY);
+  }, []);
+
   // Abre um projeto da lista: carrega o estado dele e entra no modo certo.
   // Um job ainda rodando volta para 'processing', e o efeito de polling faz o
   // resto -- e por isso que reabrir um job em andamento retoma a barra em vez
@@ -644,12 +670,23 @@ function App() {
             if (data.logs) setLogs(data.logs);
           }
         } catch (e) {
+          if (e instanceof JobSumiu) {
+            // A sessao restaurada aponta para um job que nao existe mais: o
+            // container foi recriado, a pasta foi apagada, ou ele expirou na
+            // limpeza por idade. Antes disto o poll batia num 404 a cada 2s
+            // para sempre, e a tela ficava presa em "preparando…" com a lista
+            // de projetos escondida atras de um job fantasma.
+            console.warn('Job não existe mais; limpando a sessão.');
+            clearInterval(interval);
+            handleReset();
+            return;
+          }
           console.error("Polling error", e);
         }
       }, 2000);
     }
     return () => clearInterval(interval);
-  }, [status, jobId, refreshMe]);
+  }, [status, jobId, refreshMe, handleReset]);
 
 
   // Hosted is paid-only (no BYOK core). Self-host uses BYOK keys.
@@ -839,24 +876,6 @@ function App() {
     }
   };
 
-  const handleReset = () => {
-    // Flush any pending edit-state sync before dropping the project: the clips
-    // themselves are already archived to R2 as they were edited.
-    flushClipState();
-    setStatus('idle');
-    setJobId(null);
-    setResults(null);
-    setLogs([]);
-    setProcessingMedia(null);
-    setProjectState(null);
-    setNoSource(false);
-    setStage(null);
-    // Voltar para a tela inicial e o momento em que a lista precisa estar certa:
-    // o job que acabou de terminar tem de aparecer nela sem esperar o polling.
-    setProjectsKey((k) => k + 1);
-    localStorage.removeItem(SESSION_KEY);
-  };
-
   // --- UI Components ---
 
   // One nav definition drives all three surfaces: the desktop rail, the mobile
@@ -909,9 +928,9 @@ function App() {
     <div className="hidden md:flex w-20 lg:w-64 bg-paper2 border-r border-rule flex-col h-full shrink-0 transition-all duration-300">
       <a href="#app" className="p-6 flex items-center gap-3" title="início">
         <div className="w-8 h-8 bg-paper3 rounded-input flex items-center justify-center shrink-0 overflow-hidden border border-rule">
-          <img src="/logo-openshorts.png" alt="Logo" className="w-full h-full object-cover" />
+          <span className="w-full h-full flex items-center justify-center font-display text-brass text-sm">C</span>
         </div>
-        <span className="font-display lowercase text-lg text-ink hidden lg:block">openshorts</span>
+        <span className="font-display lowercase text-lg text-ink hidden lg:block">cortes</span>
       </a>
 
       <nav className="flex-1 px-4 py-4 space-y-1">
@@ -964,9 +983,9 @@ function App() {
         <div className="flex items-center justify-between px-5 h-14 border-b border-rule shrink-0">
           <a href="#app" className="flex items-center gap-2.5" onClick={() => setNavOpen(false)}>
             <div className="w-7 h-7 bg-paper3 rounded-input overflow-hidden border border-rule shrink-0">
-              <img src="/logo-openshorts.png" alt="" className="w-full h-full object-cover" />
+              <span className="w-full h-full flex items-center justify-center font-display text-brass text-sm">C</span>
             </div>
-            <span className="font-display lowercase text-lg text-ink">openshorts</span>
+            <span className="font-display lowercase text-lg text-ink">cortes</span>
           </a>
           <button
             onClick={() => setNavOpen(false)}
@@ -1073,7 +1092,7 @@ function App() {
               <Menu size={20} />
             </button>
             <span data-tutorial="nav-clips" className="md:hidden font-display lowercase text-base text-ink truncate">
-              {activeNav?.label || 'openshorts'}
+              {activeNav?.label || 'cortes'}
             </span>
             {status !== 'idle' && (
               <button
@@ -1138,7 +1157,7 @@ function App() {
               <div className="min-w-0">
                 <span className="font-medium text-ink">Required API keys missing.</span>{' '}
                 <span className="text-muted">
-                  Set your Gemini API key to use OpenShorts.
+                  Defina uma chave de API para usar o Cortes.
                 </span>
               </div>
             </div>
@@ -1652,7 +1671,7 @@ function App() {
       >
         <div className="space-y-4">
           <p className="text-sm text-muted">
-            OpenShorts needs a <strong className="text-ink2">Gemini</strong> API key. It has a free tier.
+            O Cortes precisa de uma chave de <strong className="text-ink2">LLM</strong>. Groq e Gemini têm camada gratuita.
           </p>
 
           {/* Gemini block */}

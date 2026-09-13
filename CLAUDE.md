@@ -495,8 +495,17 @@ seguinte.
   sobre `PIPELINE_STAGES`. Nao ha porcentagem porque nao ha medicao: a
   transcricao nao reporta progresso e o render varia com o numero de cortes.
   Uma barra que mente e pior que barra nenhuma.
-- No painel: `ProjectsList.jsx` (abrir/apagar, com polling de 5s so quando ha
-  job vivo), barra + botao de cancelar, e botao de copiar o log.
+- No painel: a aba **Projetos** (`ProjectsGrid.jsx`, ord 02) com uma grade de
+  cartoes, um por video -- abrir, apagar (com confirmacao, porque leva os
+  cortes junto) e criar novo. A **capa e o proprio clipe**
+  (`<video preload="metadata">`): o navegador baixa so o cabecalho e desenha o
+  primeiro quadro, entao nao ha campo de thumbnail a criar no pipeline. O
+  `_resumo_do_job` manda `first_clip_url` para isso.
+- Dentro de um projeto o cabecalho tem **dois** botoes: `← projetos` (voltar) e
+  `+ novo`. Antes havia so "New Project", que **cria** em vez de voltar -- de um
+  projeto aberto nao existia caminho nenhum para escolher outro.
+- `ProjectsList.jsx` continua como a lista compacta sob o formulario da tela
+  inicial; as duas fazem polling de 5s **so** enquanto ha job vivo.
 - `tests/test_job_control.py` cobre os tres endpoints e o marcador.
 
 ### A marca e "Cortes", nao "OpenShorts" (13-set-2026)

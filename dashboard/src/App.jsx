@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
+import { FolderOpen, ArrowLeft, Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ProjectsList from './components/ProjectsList';
+import ProjectsGrid from './components/ProjectsGrid';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -883,6 +884,7 @@ function App() {
   // wraps to two lines in a 5-up bar on a 360px phone.
   const navItems = [
     { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
+    { id: 'projects', ord: '02', icon: FolderOpen, label: 'Projetos', short: 'projetos', primary: true },
     { id: 'ai-agent', ord: '03', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
     { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History', short: 'history' }] : []),
@@ -1094,15 +1096,29 @@ function App() {
             <span data-tutorial="nav-clips" className="md:hidden font-display lowercase text-base text-ink truncate">
               {activeNav?.label || 'cortes'}
             </span>
+            {/* Dentro de um projeto, o que falta e VOLTAR -- o unico botao
+                aqui dizia "New Project", que cria em vez de voltar, e nao
+                havia caminho nenhum de um projeto aberto para escolher outro.
+                Agora sao dois, e o de voltar vem primeiro. */}
             {status !== 'idle' && (
-              <button
-                onClick={handleReset}
-                className="btn-quiet px-3 py-1.5 text-xs shrink-0"
-                aria-label="New Project"
-              >
-                <Plus size={14} />
-                <span className="hidden sm:inline">New Project</span>
-              </button>
+              <>
+                <button
+                  onClick={() => { handleReset(); goToTab('projects'); }}
+                  className="btn-quiet px-3 py-1.5 text-xs shrink-0"
+                  aria-label="Voltar aos projetos"
+                >
+                  <ArrowLeft size={14} />
+                  <span className="hidden sm:inline">projetos</span>
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="btn-quiet px-3 py-1.5 text-xs shrink-0"
+                  aria-label="Novo projeto"
+                >
+                  <Plus size={14} />
+                  <span className="hidden sm:inline">novo</span>
+                </button>
+              </>
             )}
           </div>
 
@@ -1349,6 +1365,14 @@ function App() {
           {/* {activeTab === 'gallery' && (
             <Gallery />
           )} */}
+
+          {activeTab === 'projects' && (
+            <ProjectsGrid
+              refreshKey={projectsKey}
+              onNew={() => { handleReset(); goToTab('dashboard'); }}
+              onOpen={(id) => { goToTab('dashboard'); handleOpenProject(id); }}
+            />
+          )}
 
           {/* View: Dashboard (Idle) */}
           {activeTab === 'dashboard' && status === 'idle' && (

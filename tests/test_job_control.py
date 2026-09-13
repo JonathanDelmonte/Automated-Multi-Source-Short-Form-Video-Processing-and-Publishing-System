@@ -199,6 +199,22 @@ class TestListagem:
         assert linha["clip_count"] == 2
         assert "logs" not in linha
 
+    def test_resumo_traz_a_capa_do_primeiro_clipe(self, tmp_path, monkeypatch):
+        """E o proprio clipe: o cartao usa <video preload=metadata>."""
+        monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+        app_module.jobs["j"] = {
+            "status": "completed", "created_at": 1.0, "logs": [],
+            "result": {"clips": [{"video_url": "/videos/j/corte_1.mp4"}]},
+        }
+        linha = _client_call("GET", "/api/jobs").json()["jobs"][0]
+        assert linha["first_clip_url"] == "/videos/j/corte_1.mp4"
+
+    def test_sem_clipes_a_capa_e_nula(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+        app_module.jobs["j"] = {"status": "processing", "created_at": 1.0, "logs": []}
+        linha = _client_call("GET", "/api/jobs").json()["jobs"][0]
+        assert linha["first_clip_url"] is None
+
 
 class TestProgressoPorEstagio:
 

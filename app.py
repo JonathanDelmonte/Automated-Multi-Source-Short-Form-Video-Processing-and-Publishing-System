@@ -2743,10 +2743,16 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
     resultado = job.get('result') or {}
     clipes = resultado.get('clips') or []
     titulo = None
+    capa = None
     if clipes:
         primeiro = clipes[0] or {}
         titulo = (primeiro.get('video_title_for_youtube_short')
                   or primeiro.get('title'))
+        # A capa do cartao na tela de projetos e o proprio clipe: o navegador
+        # baixa so o cabecalho (`preload="metadata"`) e desenha o primeiro
+        # quadro. Nao ha campo de thumbnail no pipeline, e cria-lo significaria
+        # gerar e guardar uma imagem por clipe para algo que o <video> ja faz.
+        capa = primeiro.get('video_url')
     criado = job.get('created_at')
     if criado is None:
         try:
@@ -2759,6 +2765,7 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
         "title": titulo,
         "source_url": _job_source_url(job),
         "clip_count": len(clipes),
+        "first_clip_url": capa,
         "created_at": criado,
         **_stage_view(job),
     }

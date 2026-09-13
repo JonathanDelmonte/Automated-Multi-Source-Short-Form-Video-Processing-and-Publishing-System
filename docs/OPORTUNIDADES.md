@@ -284,6 +284,35 @@ Ordenado por (valor ÷ esforço), não por empolgação.
    automatizado", um agente que já sabe operar o pipeline é uma alternativa
    séria a escrever o agendador da Fase 4 do zero.
 
+### Vindo do primeiro uso real (13-set-2026)
+
+Levantado pelo autor ao mandar o primeiro vídeo pelo painel. Ambos são sobre a
+mesma coisa: **o que a interface conta enquanto um job de 10 minutos roda.**
+
+10. **Não existe progresso — nem na interface, nem na API.** A reclamação foi
+    "não tem nenhuma barra de progresso, não consigo entender o que está
+    acontecendo", e o `GET /api/status/{job_id}` explica por quê: ele devolve
+    `{status, logs, result, timings}` e nada mais. O painel não mostra
+    porcentagem porque **o backend nunca calculou uma**. Não é trabalho de
+    frontend: é o pipeline passar a reportar onde está.
+
+    O caminho barato já existe e não pede medição nova: o `job_metrics` abre e
+    fecha cada estágio por nome (`01_ingest`, `03_transcribe`, `04_detect`,
+    `05_06_render`), então dá para expor "estágio 3 de 5, transcrevendo" a
+    partir do que já é instrumentado. Porcentagem dentro do estágio é outra
+    conversa -- o download tem (o yt-dlp reporta), a transcrição não.
+
+    Importa mais do que parece em CPU: o estágio de transcrição domina o tempo
+    de parede e fica minutos em silêncio na primeira execução, baixando o
+    modelo do Whisper. Silêncio longo sem sinal é o que faz alguém recarregar a
+    página ou matar o container no meio.
+
+11. **Botão de copiar o log.** Pequeno, e resolve um caso concreto: hoje, para
+    mandar um erro a quem pode ajudar, é preciso selecionar texto num painel que
+    rola sozinho. A alternativa que existe -- abrir
+    `localhost:8000/api/status/<job-id>` e dar Ctrl+A -- funciona, mas depende
+    de saber o id e de conhecer o endpoint.
+
 ### O que coletar desde já, mesmo sem usar
 
 9. **Começar a gravar `metrics` (B8).** Enquanto não houver publicação

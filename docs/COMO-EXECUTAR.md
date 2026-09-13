@@ -91,11 +91,44 @@ O que a sua máquina precisa ter:
 | Requisito | Detalhe |
 |---|---|
 | Windows 10 **22H2 (build 19045)** ou maior | **Home serve.** No WSL 2 o Home é suportado — em Home é, aliás, o único backend possível |
+| **WSL na versão empacotada** (2.1.5+), não o componente embutido | é o requisito que mais trava, e o embutido não se anuncia como velho — veja o quadro logo abaixo |
 | Virtualização ligada na BIOS/UEFI | Confira no Gerenciador de Tarefas → Desempenho → CPU: "Virtualização: Ativado". Se estiver desativada, é uma opção da BIOS (`Intel VT-x` ou `AMD-V`) |
 | Processador 64-bit com SLAT | Qualquer CPU dos últimos ~12 anos tem |
 
 Para descobrir a sua versão do Windows: tecla Windows → digite `winver` →
 Enter.
+
+#### "There was a problem with WSL" — o WSL embutido não serve
+
+Se o Docker Desktop abrir um diálogo **There was a problem with WSL** citando
+`wsl.exe --version: exit status 1` e, no lugar de uma versão, a **tela de
+ajuda** do `wsl.exe` (`Uso: wsl.exe [Argument]`), o diagnóstico é exato: essa
+é a assinatura do **WSL antigo, o que vem embutido no Windows**. O `--version`
+só existe no WSL novo, empacotado à parte; o antigo, ao receber um argumento
+que não conhece, imprime o manual e sai com erro — e é isso que o Docker lê
+como falha.
+
+Não é o reboot que está faltando: é o WSL moderno que não está instalado. Em
+**PowerShell como Administrador**:
+
+```powershell
+wsl --install
+```
+
+Liga os recursos do Windows que faltam (Virtual Machine Platform e WSL), baixa
+o WSL empacotado e instala um Ubuntu junto — que o Docker não usa e não
+atrapalha.
+
+**Reinicie depois deste comando.** Aqui o reboot é obrigatório, pela razão do
+passo 3: ele ligou recursos do Windows, e recurso recém-ativado só vale depois
+do boot.
+
+Confirme com `wsl --version`: tem de imprimir números de versão. Se ainda vier
+a tela de ajuda, instale **"Windows Subsystem for Linux"** pela Microsoft
+Store, ou o MSI de `github.com/microsoft/WSL/releases`.
+
+Numa build mais antiga que 22H2 — o 19044 (21H2), por exemplo — o WSL
+empacotado não instala, e aí é preciso atualizar o Windows antes.
 
 ---
 
@@ -472,6 +505,7 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | `'git' não é reconhecido` | git não instalado | git-scm.com/download/win, depois feche e reabra o Prompt de Comando |
 | `'docker' não é reconhecido` | Docker Desktop não instalado (≠ fechado) | instale (quadro em "Antes de começar") e **reabra o Prompt** — o `PATH` só é lido na abertura |
 | Docker Desktop não inicia, fala em virtualização | virtualização desligada na BIOS | Gerenciador de Tarefas → Desempenho → CPU mostra o estado; ligar é opção da BIOS |
+| "There was a problem with WSL", `wsl.exe --version: exit status 1` com a tela de ajuda no lugar da versão | o WSL é o embutido no Windows, e o Docker precisa do empacotado (2.1.5+) | `wsl --install` em PowerShell **como Administrador**, e **reiniciar** — ver o quadro em "Antes de começar" |
 | `the docker daemon is not running` | Docker Desktop fechado | abra o Docker Desktop e espere o ícone parar de dizer "starting" |
 | `.env` não tem efeito, `localLlm: null` | o arquivo virou `.env.txt`, ou tem `#`/espaços na linha | passo 2; depois reinicie o `docker compose` |
 | Notepad não acha o `.env` | o Explorer esconde arquivos que começam com ponto | abra pelo comando `notepad .env` dentro da pasta |

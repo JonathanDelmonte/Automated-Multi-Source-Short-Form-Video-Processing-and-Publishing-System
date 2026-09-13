@@ -234,11 +234,18 @@ from this video" vivia dentro do passo de publicação, atrás do sucesso do upl
 Removido o passo, ele seria perdido junto — sem ter relação alguma com dependência
 paga. Foi re-alojado no passo de descrição, que agora é o último.
 
-> **Pendente, e fora do escopo desta fase:** a superfície de marketing e SEO
-> (`Landing.jsx`, `PricingPage.jsx`, `PricingSection.jsx`, `dashboard/seo/*`,
-> `index.html`) mais `examples/n8n/`, `ops/` e `design.md` ainda anunciam dublagem,
-> UGC e publicação automática. É *copy*, não caminho de código — e a decisão de fundo
-> é maior que reescrever texto. Ver `DECISOES.md`, ADR-009.
+> **Resolvido em 13-set-2026, fora desta fase:** a superfície de marketing e SEO
+> (`Landing.jsx`, `PricingPage.jsx`, `PricingSection.jsx`, `Legal.jsx`,
+> `dashboard/seo/`, `vite-plugin-seo.js`, `StarBanner` e a metade de marketing do
+> `index.html`) foi removida inteira. O gatilho não foi planejamento: foi o autor
+> subir o projeto pela primeira vez e a porta 5175 abrir na home comercial do
+> upstream. Ver `DECISOES.md`, ADR-009, e `docs/OPORTUNIDADES.md` Parte D para o
+> que preservar ao trocar o frontend.
+>
+> **Continuam pendentes:** `examples/n8n/`, `ops/` e `design.md`, mais a UI de
+> cobrança do painel (`TrialGate`, `TopUpModal`, `PlanChoiceModal`, `UsageMeter`,
+> `InvoicesCard`, `WatermarkModal`), inalcançável desde o ADR-001. Nenhum deles
+> está no caminho de quem abre a ferramenta.
 
 ### 0.4 — Cascata de LLM gratuita · 1–2 dias · ✅ CONCLUÍDA
 

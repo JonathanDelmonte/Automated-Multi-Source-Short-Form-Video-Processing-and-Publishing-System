@@ -383,7 +383,7 @@ dias fica, mas agora a faixa é por volume de tabelas, não por incerteza. Detal
 
 ## ADR-009 — A superfície de marketing e SEO sai inteira, não reescrita
 
-**Data:** 2026-09-12 · **Status:** proposta
+**Data:** 2026-09-12 · **Status:** aceita e executada em 2026-09-13
 **Aberta pela Fase 0.3**
 
 A Fase 0.3 removeu as dependências pagas do código. Sobrou um resíduo que ela
@@ -414,10 +414,34 @@ só inútil: é enganoso.
 painel entrar direto na ferramenta. O `NOTICE` continua creditando o upstream, que é
 a obrigação real da licença MIT.
 
-**Não decidido ainda** porque não é urgente (nada disso roda no caminho da
-ferramenta) e porque toca ~4.000 linhas, o que merece um commit próprio em vez de
-pegar carona na Fase 0.3. Candidata natural à Fase 4, junto de auth — que é quando o
-painel deixa de ser de uma pessoa só e a tela de entrada volta a importar.
+**Decidido em 13-set-2026, e antes da Fase 4.** A previsão de adiar para a Fase 4
+caiu quando o autor subiu o projeto pela primeira vez: a porta 5175 abria na home
+comercial do upstream, anunciando "ai shorts from $0.65 per video" e "direct publish
+to YouTube", e o botão `github` levava ao repositório deles. Não era teoria sobre
+manutenção futura, era a primeira tela do próprio produto mostrando o produto de
+outra pessoa.
+
+Removido: `Landing.jsx` (808), `PricingPage.jsx` (323), `PricingSection.jsx` (189),
+`Legal.jsx` (114), `dashboard/seo/` (3.541, incluindo `legal.js`), o
+`vite-plugin-seo.js` (155), o `StarBanner`, o cartão que divulgava
+`mutonby/skill-autoshorts` dentro da aba de agente, e a metade de marketing do
+`index.html` (SEO, Open Graph, Twitter, canonical, JSON-LD).
+
+Saiu junto o que só existia para servir a isso: o inicializador do OpenPanel no
+`index.html`, o `public/op1.js` que ele carregava, o `lib/consent.js` e o
+`CookieBanner`. Não era correção de privacidade — o rastreador já era inerte aqui,
+travado por variáveis não definidas **e** por um teste de host
+(`/^(www\.)?openshorts\.app$/`) que localhost nunca passa. Era coerência: sem o
+inicializador, o script virou arquivo inalcançável e o banner passou a pedir
+consentimento para nada. `lib/analytics.js` ficou como no-op explícito, porque as 13
+chamadas a `track()` vivem em quatro arquivos que o autor vai reescrever.
+
+**O que ficou de fora, de propósito:** a UI de cobrança (`TrialGate`, `TopUpModal`,
+`PlanChoiceModal`, `UsageMeter`, `InvoicesCard`, `WatermarkModal`), que o ADR-001 já
+deixou inalcançável via `billingEnabled`, e `examples/n8n/`, `ops/` e `design.md`.
+Nada disso está no caminho de quem abre a ferramenta, e misturar tudo num commit só
+apagaria a fronteira entre "o que me recebia na porta" e "o que existe mas ninguém
+alcança".
 
 **Revisão se:** o projeto virar SaaS. Aí a superfície volta a ter função — mas escrita
 para este produto, não herdada.

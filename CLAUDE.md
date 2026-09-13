@@ -54,6 +54,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
 | `docs/DECISOES.md` | ADR-001 a 009 |
+| `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
 | `docs/upstream/README-openshorts.md` | README do upstream, preservado para consulta |
@@ -114,10 +115,26 @@ parecem arbitrarias no codigo estao justificadas la.
   nao existem mais neste fork** -- a lista de "Key Files", o pipeline de 11
   passos e a tabela de endpoints estao corrigidas, mas trate qualquer outra
   mencao a fal.ai, ElevenLabs, Upload-Post ou S3 como historica.
-- **Pendente**: a superficie de marketing e SEO (`Landing.jsx`,
-  `PricingPage.jsx`, `PricingSection.jsx`, `dashboard/seo/*`, `index.html`) e
-  `examples/n8n/`, `ops/`, `design.md` ainda anunciam essas features. E copy,
-  nao caminho de codigo; ver o fim da Fase 0.3 no plano de acao.
+- **A superficie de marketing e SEO foi removida** (ADR-009, 13-set-2026).
+  Sairam `Landing.jsx`, `PricingPage.jsx`, `PricingSection.jsx`, `Legal.jsx`,
+  `dashboard/seo/`, o `vite-plugin-seo.js`, o `StarBanner` e a metade de
+  marketing do `index.html`. **A porta 5175 agora abre a ferramenta**, sem
+  landing e sem a marca `openshorts_skip_landing` no localStorage: o
+  `main.jsx` responde `app` para todo hash que nao seja `#/account`,
+  `#/oauth/authorize`, `#/deleted` ou `#/auth/`.
+  - Saiu junto o que so servia a isso: o inicializador do OpenPanel no
+    `index.html`, o `public/op1.js`, o `lib/consent.js` e o `CookieBanner`.
+    **`lib/analytics.js` continua existindo como no-op explicito** -- ha 13
+    chamadas a `track()` em quatro arquivos, e o cabecalho do modulo diz por
+    que elas ficaram. Nao reintroduzir telemetria sem decisao consciente.
+  - **Ficou de fora de proposito**: a UI de cobranca (`TrialGate`,
+    `TopUpModal`, `PlanChoiceModal`, `UsageMeter`, `InvoicesCard`,
+    `WatermarkModal`), inalcancavel via `billingEnabled` desde o ADR-001, e
+    `examples/n8n/`, `ops/`, `design.md`. Candidatos ao proximo corte.
+  - O que preservar ao trocar o frontend esta na Parte D de
+    `docs/OPORTUNIDADES.md`: sao ~580 linhas (`src/tokens.css` com 53, o
+    mapeamento em `tailwind.config.js`, as classes de `index.css` e os tres
+    primitivos de `components/ui/`), nao as 4.800 de landing e pricing.
 
 ### Fluxo de git
 
@@ -181,32 +198,18 @@ propria entra na Fase 3.)
 | `hooks.py` | Hook text overlay generation with font rendering |
 | `subtitles.py` | SRT generation, FFmpeg subtitle burning, and dubbed video transcription |
 | `dashboard/src/App.jsx` | Main React component with state management |
-| `dashboard/vite-plugin-seo.js` | Build-time SEO surface: injects crawler-visible homepage content, emits static pages, sitemap.xml and llms.txt |
-| `dashboard/seo/data.js` | Single source of truth for pricing, pipeline and competitor facts used by every generated page |
 
-### SEO / AI-crawler surface
+### Sem superficie de SEO (ADR-009)
 
-The dashboard is a client-rendered SPA with hash routing, so the HTML served for
-`/` used to contain an empty `<div id="root">`. Googlebot renders JavaScript and
-saw the real page; GPTBot, ClaudeBot and PerplexityBot do not and measured the
-homepage as zero characters of text. `vite-plugin-seo.js` fixes that at build time:
+O upstream mantinha um gerador de SEO em tempo de build (`vite-plugin-seo.js`)
+que injetava a home visivel a crawler dentro do `#root` e emitia as paginas
+estaticas, o `sitemap.xml` e o `llms.txt`. **Removido inteiro.** Isto e uma
+ferramenta self-hosted que atende em localhost: nao ha crawler para indexar, e
+o que havia descrevia e apontava para o produto comercial do upstream.
 
-- Injects the content of `seo/landing-fallback.js` into `#root`. React's
-  `createRoot().render()` replaces it on mount, so users get the app and
-  non-executing clients get the copy. **Keep it in sync with `Landing.jsx`.**
-- Emits the standalone pages (the `/alternatives` cluster, the clip-generator,
-  open-source, use-case and automation pages, and `/mcp`; the full list is
-  `buildPages()` in `seo/pages.js`) as flat `.html` files.
-  nginx resolves the clean URL through `try_files $uri $uri.html`; serving them as
-  directories instead makes nginx 301 to a trailing slash and every canonical
-  would then point at a redirect.
-- Generates `sitemap.xml` and `llms.txt` from the same page list, so they cannot
-  drift. Do not add a static `public/sitemap.xml` back.
-
-When editing pricing anywhere, edit `seo/data.js` too. Nothing on the site should
-say "OpenShorts is free" without naming the Cloud price in the same breath: both
-are true of different editions and quoting only the first one is what makes AI
-answers describe the paid product as free.
+Nao reintroduzir: nem `public/sitemap.xml`, nem meta de Open Graph com
+`openshorts.app`, nem o fallback de landing no `#root`. Se um dia este projeto
+tiver um site, ele nasce escrito para ele.
 
 ### Cómo se elige el layout
 

@@ -1,19 +1,16 @@
 import { StrictMode, useState, useEffect, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import Landing from './Landing.jsx'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { capture as captureAttribution } from './lib/attribution'
-import PricingPage from './components/PricingPage'
 import AccountPage from './components/AccountPage'
-import LoginModal from './components/LoginModal'
-import { applyConsent } from './lib/consent'
-import CookieBanner from './components/CookieBanner'
 
 const App = lazy(() => import('./App.jsx'))
-const Legal = lazy(() => import('./Legal.jsx'))
 const OAuthConsent = lazy(() => import('./components/OAuthConsent'))
 
+// A landing e as páginas de preço saíram (ADR-009): eram a home comercial do
+// upstream, anunciando features que a Fase 0.3 removeu por serem pagas. Sem
+// elas o app é a raiz, e não há mais o desvio pela marca `openshorts_skip_
+// landing` no localStorage — quem abre a porta 5175 cai direto na ferramenta.
 function PageShell({ title, children }) {
   return (
     <div className="min-h-screen bg-paper text-ink2">
@@ -29,27 +26,19 @@ function PageShell({ title, children }) {
   );
 }
 
-function PricingView() {
-  const [showLogin, setShowLogin] = useState(false);
-  return (
-    <PageShell>
-      <PricingPage onRequireLogin={() => setShowLogin(true)} />
-      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-    </PageShell>
-  );
-}
-
 function AccountView() {
   const { isSignedIn, loading } = useAuth();
+  // Sem sessão vai para o app, não para a página de preço, que não existe mais.
+  // No self-host `billingEnabled` é false e não há login nenhum, então esta
+  // view só é alcançável por quem digitou o hash à mão.
   useEffect(() => {
-    if (!loading && !isSignedIn) window.location.hash = '#/pricing';
+    if (!loading && !isSignedIn) window.location.hash = '#app';
   }, [loading, isSignedIn]);
   return <PageShell><AccountPage /></PageShell>;
 }
 
-// Landing spot after an account is erased. Its own view because the session is
-// gone: sending the user to #/account would bounce them to pricing with no
-// explanation, and "openshorts_skip_landing" would send them into the app.
+// Destino depois de apagar a conta. View própria porque a sessão já não
+// existe: mandar para #/account devolveria a pessoa ao app sem explicação.
 function DeletedView() {
   return (
     <div className="min-h-screen bg-paper text-ink2 flex items-center justify-center p-6">
@@ -64,7 +53,6 @@ function DeletedView() {
           You're welcome back any time — signing up again with the same address
           starts a brand-new, empty account.
         </p>
-        <a href="#landing" className="btn-ghost px-4 py-2 inline-flex">Back to openshorts.app</a>
       </div>
     </div>
   );
@@ -77,12 +65,7 @@ function Root() {
     if (hash.startsWith('#/oauth/authorize')) return 'oauth';
     if (hash.startsWith('#/account')) return 'account';
     if (hash.startsWith('#/deleted')) return 'deleted';
-    if (hash.startsWith('#/pricing')) return 'pricing';
-    if (hash === '#legal') return 'legal';
-    // #landing = explicit landing view (app logo); section anchors keep the landing mounted
-    if (['#landing', '#features', '#how-it-works', '#pricing', '#comparison', '#faq'].includes(hash)) return 'landing';
-    if (hash === '#app' || hash.startsWith('#app?') || localStorage.getItem('openshorts_skip_landing') === '1') return 'app';
-    return 'landing';
+    return 'app';
   };
 
   const [view, setView] = useState(resolveView);
@@ -93,31 +76,14 @@ function Root() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const handleLaunchApp = () => {
-    localStorage.setItem('openshorts_skip_landing', '1');
-    window.location.hash = '#app';
-    setView('app');
-  };
-
-  if (view === 'legal') return <Legal />;
-  if (view === 'pricing') return <PricingView />;
   if (view === 'account') return <AccountView />;
   if (view === 'oauth') return <OAuthConsent />;
   if (view === 'deleted') return <DeletedView />;
   if (view === 'auth') {
     return <div className="min-h-screen flex items-center justify-center bg-background text-zinc-400">Signing you in…</div>;
   }
-  if (view === 'app') return <App />;
-  return <Landing onLaunchApp={handleLaunchApp} />;
+  return <App />;
 }
-
-// Before React mounts: AuthContext rewrites the URL on auth redirects, which
-// would destroy the referrer and any UTM params we still need to read.
-captureAttribution();
-
-// Start whatever the visitor previously agreed to. Nothing at all on a first
-// visit: index.html only publishes the analytics initialiser, it never runs it.
-applyConsent();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -125,7 +91,6 @@ createRoot(document.getElementById('root')).render(
       <Suspense fallback={<div className="min-h-screen bg-paper flex items-center justify-center text-muted text-sm lowercase">loading…</div>}>
         <Root />
       </Suspense>
-      <CookieBanner />
     </AuthProvider>
   </StrictMode>,
 )

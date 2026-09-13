@@ -27,7 +27,16 @@ autor do projeto.
 
 `origin` e **o repositorio do autor**:
 `JonathanDelmonte/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System`.
-Todo push vai para la, na branch `claude/loving-fermat-c84xtd`.
+Todo push vai para la, na branch **`main`**.
+
+> Ate 13-set-2026 a branch se chamava `claude/loving-fermat-c84xtd`. Aquele
+> nome nunca foi escolha de projeto: e o padrao que o Claude Code na web gera
+> para a branch de uma sessao (`claude/<duas-palavras>-<hash>`), e como o
+> repositorio nasceu daquela sessao, o GitHub o adotou como branch padrao.
+> Renomeado a pedido do autor. Efeito colateral bem-vindo: o `ci.yml` dispara
+> em `push: branches: [main]`, entao o CI, que nunca tinha rodado neste
+> repositorio, passou a rodar.
+
 
 `upstream` e `mutonby/openshorts`, o projeto de terceiros que serviu de base.
 **E somente leitura.** A URL de push dele foi desabilitada de proposito
@@ -138,7 +147,7 @@ parecem arbitrarias no codigo estao justificadas la.
 
 ### Fluxo de git
 
-Desenvolvimento em `claude/loving-fermat-c84xtd`. O upstream fica como remote
+Desenvolvimento em `main`. O upstream fica como remote
 `upstream`; correcoes de terceiros chegam por `git fetch upstream` e merge --
 por isso as alteracoes proprias ficam atras das interfaces (`SourceAdapter`,
 `Publisher`, `FaceTracker`) em vez de espalhadas no codigo herdado.

@@ -1,7 +1,7 @@
 # Plano de ação — início do desenvolvimento
 
 **Repositório:** `Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System`
-**Branch de desenvolvimento:** `claude/loving-fermat-c84xtd`
+**Branch de desenvolvimento:** `main` (renomeada em 13-set-2026; antes `claude/loving-fermat-c84xtd`)
 **Data:** 12 de setembro de 2026
 **Base:** `docs/PLANO-TECNICO.md` v2, corrigido por `docs/AUDITORIA-VERIFICACAO.md`
 

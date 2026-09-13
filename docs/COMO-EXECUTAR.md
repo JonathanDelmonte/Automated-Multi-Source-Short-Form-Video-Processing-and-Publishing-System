@@ -185,8 +185,8 @@ O `dir .env.example` é a conferência: se listar o arquivo, você está na past
 certa. Se disser `Arquivo não encontrado`, o clone não terminou ou você está em
 outra pasta — rode `cd /d C:\cortes` de novo.
 
-Não é preciso trocar de branch: `claude/loving-fermat-c84xtd` é a branch padrão
-do repositório, então o `clone` já traz ela.
+Não é preciso trocar de branch: `main` é a branch padrão do repositório, então
+o `clone` já traz ela.
 
 **Para atualizar depois**, quando eu subir mudanças novas:
 

@@ -391,6 +391,28 @@ docker compose up
 E no `.env`: `WHISPER_MODEL=large-v3-turbo`, `WHISPER_DEVICE=cuda`,
 `WHISPER_COMPUTE=float16`.
 
+**Subiu quando aparecerem estas três linhas**, uma de cada serviço:
+
+```
+openshorts-backend   | INFO:     Uvicorn running on http://0.0.0.0:8000
+openshorts-frontend  |   ➜  Local:   http://localhost:5173/
+openshorts-renderer  | [render-service] Listening on port 3100
+```
+
+O `5173` da linha do frontend é a porta **dentro** do container; na sua máquina
+o painel atende em **5175** (o `docker-compose.yml` mapeia `"5175:5173"`). Não
+é erro.
+
+**Depois disso o log não para de rolar, com dezenas de
+`GET /health/ready ... 200 OK` — e isso é o normal.** É o `HEALTHCHECK` do
+Dockerfile batendo no backend a cada poucos segundos para confirmar que ele
+continua vivo, e `200 OK` é a resposta certa. Linhas idênticas rolando para
+sempre têm a cara exata de um loop travado; aqui são a aparência de um sistema
+saudável.
+
+**Não feche essa janela.** Enquanto ela estiver aberta, os três serviços estão
+de pé. Para parar tudo: Ctrl+C nela.
+
 ---
 
 ## Passo 4 — Conferir que as chaves chegaram (pelo navegador)
@@ -521,6 +543,8 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | `model_decommissioned` no log | o Groq trocou o nome do modelo | `GROQ_MODEL=<nome novo>` no `.env` resolve na hora; me avise que eu corrijo no `llm_cascade.py` |
 | `BILLING_ENABLED` dá erro na subida | **é intencional** (ADR-001): o módulo comercial foi removido | não ligue essa flag |
 | Build morre sem espaço | a imagem com torch é gorda | `docker system prune -a` e ~15 GB livres |
+| Log rolando sem parar com `GET /health/ready 200 OK` | **não é erro**: é o HEALTHCHECK do Dockerfile confirmando que o backend está vivo | nada a fazer; `200 OK` é a resposta certa |
+| A linha do frontend anuncia `localhost:5173` | é a porta dentro do container | no navegador é **5175** (`"5175:5173"` no compose) |
 
 ---
 

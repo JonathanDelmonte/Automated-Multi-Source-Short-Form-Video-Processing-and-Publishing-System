@@ -210,7 +210,7 @@ O que varia é se o processo que está rodando **percebe**:
 | Processo | Percebe sozinho? | Por quê |
 |---|---|---|
 | **Vite** (frontend) | **sim** | vigia os arquivos; é para isso que serve o modo dev |
-| **uvicorn** (backend) | **não** | o `CMD` do Dockerfile não tem `--reload`, e o Python já carregou o código na memória |
+| **uvicorn** (backend) | **sim**, desde 13-set-2026 | o `docker-compose.yml` roda com `--reload`. O `CMD` do Dockerfile continua sem ele, que é o que produção usaria |
 | **a imagem** (torch, node_modules) | só com `--build` | pacote instalado mora na imagem, não na pasta montada |
 
 Daí a tabela:
@@ -219,19 +219,24 @@ Daí a tabela:
 |---|---|
 | só `docs/*.md` | nada |
 | `.jsx`, `.css` | nada — o Vite recarrega o navegador |
-| `.py` | `docker compose restart backend` (~2 s) |
-| `vite.config.js`, `index.html`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
+| `.py` | nada — o uvicorn reinicia sozinho (~1 s no log) |
+| `vite.config.js`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
+| `docker-compose.yml` | `docker compose up -d` (recria o container, sem rebuild) |
 | `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up --build` |
 
 **`--build` é o caro, e quase nunca é o certo.** Ele reconstrói a imagem — os
 15 a 40 minutos da primeira vez. Só faz sentido quando muda a *lista de
 dependências*, nunca quando muda só o código.
 
-> **Se preferir que o backend também recarregue sozinho**, é uma linha no
-> `docker-compose.yml`, no serviço `backend`:
-> `command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload`.
-> Aí `.py` entra na mesma regra do `.jsx`. Custa um processo vigiando arquivos
-> e vale só em desenvolvimento — por isso não vem ligado.
+> **Sobre o `--reload` do backend**, porque a primeira versão disto estava
+> errada: não basta acrescentar a flag. O `requirements.txt` fixa
+> `uvicorn==0.46.0`, o pacote simples, e sem o `watchfiles` o uvicorn cai num
+> reloader por polling (`StatReload`) que **registra em log que os
+> `--reload-exclude` não têm efeito** e varre a árvore inteira atrás de `.py` a
+> cada ciclo — `output/` incluído, que cresce a cada job. Por isso o
+> `watchfiles` está fixado no `requirements.txt`, e por isso ligar isto custou
+> **um** `docker compose up --build`. Depois dele, `.py` entra na mesma regra
+> do `.jsx` para sempre.
 
 ---
 

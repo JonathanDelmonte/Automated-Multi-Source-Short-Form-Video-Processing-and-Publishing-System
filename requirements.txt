@@ -13,6 +13,12 @@ mediapipe==0.10.14
 
 fastapi==0.136.1
 uvicorn==0.46.0
+# O vigia de arquivos que o `--reload` do docker-compose.yml usa. Sem ele o
+# uvicorn cai no StatReload, que avisa em log que `--reload-exclude` nao tem
+# efeito e varre a arvore inteira atras de `.py` -- inclusive `output/`, que
+# cresce a cada job. Vem de graca no `uvicorn[standard]`; aqui e explicito
+# porque o pino do uvicorn tambem e.
+watchfiles==1.2.0
 python-multipart==0.0.27
 httpx==0.28.1
 Pillow==12.2.0

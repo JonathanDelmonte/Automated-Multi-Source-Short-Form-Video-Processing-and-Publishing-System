@@ -2,6 +2,29 @@ services:
   backend:
     build: .
     container_name: openshorts-backend
+    # `--reload` so aqui, no arquivo de desenvolvimento local: o `CMD` do
+    # Dockerfile continua sem ele, que e o que producao roda. Com isto, editar
+    # um `.py` passa a valer sozinho, como ja acontecia com `.jsx` no Vite --
+    # some o `docker compose restart backend` depois de todo `git pull`.
+    #
+    # Os `--reload-exclude` nao sao enfeite: o repositorio inteiro e montado em
+    # /app, entao o vigia enxerga `output/`, `uploads/` e `data/` -- exatamente
+    # onde um job em andamento escreve. Um reload no meio de um render derruba a
+    # fila em memoria e deixa o `main.py` orfao; o manifesto de resume recupera,
+    # e nao deveria precisar.
+    #
+    # **Eles dependem do `watchfiles`** (fixado no requirements.txt por causa
+    # disto). Sem ele o uvicorn 0.46 cai no `StatReload`, que registra em log
+    # "--reload-include and --reload-exclude have no effect unless watchfiles is
+    # installed" e varre a arvore toda a cada ciclo. O filtro `*.py` do
+    # StatReload salvaria a correcao, mas a varredura sobre um `output/` que
+    # cresce a cada job nao se salva sozinha.
+    command: >
+      uvicorn app:app --host 0.0.0.0 --port 8000
+      --reload
+      --reload-exclude 'output/*'
+      --reload-exclude 'uploads/*'
+      --reload-exclude 'data/*'
     ports:
       - "8000:8000"
     volumes:

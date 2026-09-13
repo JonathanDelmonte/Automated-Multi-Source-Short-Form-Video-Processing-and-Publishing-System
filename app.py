@@ -2,6 +2,7 @@ import os
 import job_metrics
 import llm_backend
 import llm_cascade
+import sources
 import re
 import sys
 import uuid
@@ -2368,6 +2369,17 @@ async def process_endpoint(
 
     if url and DISABLE_YOUTUBE_URL:
         raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment. Please upload a file you own.")
+
+    # Fonte reconhecida cujo tipo ainda nao tem como ser buscado -- hoje, a live
+    # da Twitch. O `main.py` tambem recusa, e recusar aqui e o que faz a
+    # diferenca aparecer: no formulario, na hora, em vez de virar um job
+    # vermelho no historico dez segundos depois. Tambem poupa o probe de
+    # qualidade logo abaixo, que para uma live nao responde nada util.
+    if url:
+        try:
+            sources.resolve(url).assert_fetchable(url)
+        except (sources.SourceNotReady, sources.UnknownSource) as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # Pre-flight quality gate: probe the offered resolution BEFORE starting, so
     # the user can abort (refresh cookies / update yt-dlp) instead of burning

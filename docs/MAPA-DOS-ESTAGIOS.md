@@ -81,6 +81,13 @@ saída, que é ergonomia de CLI.
 > acabar. Um job que não termina é pior que um job que falha, porque ninguém
 > percebe que está errado. Até o bloco 1.5, é um erro imediato que diz o que
 > fazer no lugar (esperar o VOD).
+>
+> A recusa acontece **duas vezes, de propósito**: no `app.py`, ao submeter
+> (`assert_fetchable`, antes até do probe de qualidade — numa live ele não
+> responde duração nenhuma), e de novo no `main.py`, que é a última porta antes
+> do yt-dlp. A primeira é a que o usuário vê: mensagem no formulário, na hora,
+> em vez de um job vermelho no histórico dez segundos depois. A segunda existe
+> porque o `main.py` também roda pela linha de comando.
 
 Três coisas que o bloco travou, e que valem para os adapters seguintes:
 

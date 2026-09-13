@@ -20,11 +20,8 @@ from __future__ import annotations
 
 import re
 
-from .base import Fetched, SourceAdapter, SourceInfo, host_of, is_http_url
-
-
-class SourceNotReady(RuntimeError):
-    """A fonte foi reconhecida, e buscar esse tipo dela ainda nao existe."""
+from .base import (Fetched, SourceAdapter, SourceInfo, SourceNotReady,
+                   host_of, is_http_url)
 
 
 def _is_twitch_host(raw: str) -> bool:
@@ -135,7 +132,7 @@ class TwitchLiveAdapter(SourceAdapter):
             notes=("captura de live ainda nao implementada (bloco 1.5)",),
         )
 
-    def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
+    def assert_fetchable(self, raw: str) -> None:
         if classify(raw) == "channel-list":
             raise SourceNotReady(
                 f"{raw} e a lista de videos do canal, nao um video. "
@@ -144,3 +141,10 @@ class TwitchLiveAdapter(SourceAdapter):
             f"{raw} e um canal ao vivo. Gravar transmissao em andamento e o bloco 1.5 "
             "da Fase 1 e ainda nao existe -- um job assim ficaria baixando ate a live "
             "acabar. Por enquanto: espere o VOD e use a URL dele (/videos/<numero>).")
+
+    def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
+        # A mensagem mora no `assert_fetchable` para que o submit e o pipeline
+        # recusem com o mesmo texto. Se alguem chamar `fetch` direto, recusa
+        # aqui tambem -- esta e a ultima porta antes do yt-dlp.
+        self.assert_fetchable(raw)
+        raise AssertionError("inalcancavel: assert_fetchable sempre levanta")

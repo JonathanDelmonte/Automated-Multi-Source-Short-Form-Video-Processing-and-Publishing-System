@@ -181,7 +181,10 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   ate o bloco 1.5). Sem isso a URL de um canal cai no adapter generico e o
   yt-dlp *aceita* gravar live: o job baixaria ate a transmissao acabar. Job que
   nao termina e pior que job que falha. Nao remover o adapter nem move-lo para
-  depois do `DirectUrlAdapter` no `REGISTRY`.
+  depois do `DirectUrlAdapter` no `REGISTRY`. A recusa e `assert_fetchable`, e
+  roda **duas vezes**: no `app.py` ao submeter (antes do probe de qualidade,
+  que numa live nao responde nada) e no `main.py` antes do yt-dlp. A mensagem
+  mora num lugar so para as duas dizerem o mesmo.
 
 ### Fluxo de git
 

@@ -25,13 +25,14 @@ from .base import (  # noqa: F401  (reexportados: e esta a superficie publica)
     Fetched,
     SourceAdapter,
     SourceInfo,
+    SourceNotReady,
     UnknownSource,
     host_of,
     is_http_url,
 )
 from .direct import DirectUrlAdapter
 from .local import LocalFileAdapter
-from .twitch import SourceNotReady, TwitchLiveAdapter, TwitchVodAdapter  # noqa: F401
+from .twitch import TwitchLiveAdapter, TwitchVodAdapter
 from .youtube import YouTubeAdapter
 
 # A ordem E o desempate, do host mais especifico para o mais generico:

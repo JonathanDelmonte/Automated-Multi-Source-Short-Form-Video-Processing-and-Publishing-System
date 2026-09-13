@@ -16,6 +16,14 @@ class UnknownSource(ValueError):
     """Nenhum adapter reconheceu a entrada."""
 
 
+class SourceNotReady(RuntimeError):
+    """A fonte foi reconhecida, e buscar ESTE tipo dela ainda nao existe.
+
+    Diferente de `UnknownSource`: aqui sabemos exatamente o que e, e a resposta
+    certa e dizer o que fazer no lugar. Hoje so a live da Twitch (bloco 1.5).
+    """
+
+
 @dataclass(frozen=True)
 class SourceInfo:
     """O que da para saber da fonte **sem tocar a rede**.
@@ -75,6 +83,16 @@ class SourceAdapter:
 
     def probe(self, raw: str) -> SourceInfo:
         return SourceInfo(kind=self.id, label=self.label)
+
+    def assert_fetchable(self, raw: str) -> None:
+        """Levanta `SourceNotReady` se este tipo de fonte ainda nao tem como ser
+        buscado. Barato e sem rede.
+
+        Existe separado do `fetch` para que a recusa possa acontecer no submit,
+        antes de subir o subprocesso do job: senao o erro vira um job vermelho
+        no historico em vez de uma mensagem no formulario.
+        """
+        return None
 
     def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
         # `output_dir` e onde gravar o que vier da rede. Tem padrao porque

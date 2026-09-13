@@ -57,6 +57,18 @@ class SourceAdapter:
     id: str = ""
     label: str = ""
 
+    # Qual pote de cookies esta fonte usa. E propriedade do adapter, e nao uma
+    # tabela no `main.py`, porque quem sabe que a Twitch precisa de conta
+    # inscrita e o adapter da Twitch -- e porque assim isto e testavel sem
+    # importar o `main` (sem torch), que e o unico jeito de o CI exercitar.
+    #
+    # O jar de uma plataforma nao autentica na outra (formato Netscape e
+    # escopado por dominio, entao mandar o errado nao vaza nada -- so nao
+    # loga), e os ARQUIVOS sao separados porque ate a Fase 1 so havia uma
+    # plataforma: dois jobs simultaneos, um de cada, se sobrescreveriam.
+    cookie_env: str = "YOUTUBE_COOKIES"
+    cookie_file: str = "/app/cookies.txt"
+
     @classmethod
     def matches(cls, raw: str) -> bool:
         raise NotImplementedError

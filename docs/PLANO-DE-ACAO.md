@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, bloco 1.1 concluído |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 e 1.2 concluídos |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -483,7 +483,7 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | Bloco | O quê | Estado |
 |---|---|---|
 | 1.1 | interface `SourceAdapter` (`sources/`), com YouTube, URL direta e arquivo local | ✅ concluído |
-| 1.2 | adapter de Twitch (VOD e clip) | |
+| 1.2 | adapter de Twitch (VOD e clip), e a live reconhecida para ser recusada | ✅ concluído |
 | 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | |
 | 1.4 | pré-filtro heurístico (ADR-004) | |
 | 1.5 | Twitch ao vivo, worker de longa duração | |

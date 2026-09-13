@@ -171,6 +171,17 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   `tests/test_db_schema.py::test_sources_aceita_todo_adapter_registrado` quebra
   antes. O `direct` (URL de arquivo solta, que a lista da secao 4 nao previa)
   entrou pela migracao `2f1b7c4ae903`.
+- **O que e propriedade da fonte mora no adapter**, nao numa tabela no
+  `main.py`: `cookie_env` / `cookie_file` (o VOD sub-only da Twitch precisa de
+  `TWITCH_COOKIES`, em arquivo proprio para que dois jobs simultaneos nao se
+  sobrescrevam; o do YouTube fica em `/app/cookies.txt` porque o
+  `quality_probe.py` procura esse caminho pelo nome) e o rotulo para log. O
+  `main.py` so reexporta: `source_label`, `cookie_jar_for`.
+- **A live da Twitch e reconhecida para ser RECUSADA** (`TwitchLiveAdapter`,
+  ate o bloco 1.5). Sem isso a URL de um canal cai no adapter generico e o
+  yt-dlp *aceita* gravar live: o job baixaria ate a transmissao acabar. Job que
+  nao termina e pior que job que falha. Nao remover o adapter nem move-lo para
+  depois do `DirectUrlAdapter` no `REGISTRY`.
 
 ### Fluxo de git
 

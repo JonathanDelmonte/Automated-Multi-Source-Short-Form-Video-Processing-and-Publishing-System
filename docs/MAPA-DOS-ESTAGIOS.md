@@ -70,8 +70,17 @@ saída, que é ergonomia de CLI.
 | Adapter | `id` | Casa com |
 |---|---|---|
 | `sources/youtube.py` | `youtube` | os hosts do YouTube |
+| `sources/twitch.py` | `twitch-vod` | `/videos/<id>`, `/<canal>/v/<id>`, `/<canal>/clip/<slug>`, `clips.twitch.tv` |
+| `sources/twitch.py` | `twitch-live` | `/<canal>` e `/<canal>/videos` — **recusa explícita** até o bloco 1.5 |
 | `sources/direct.py` | `direct` | qualquer outra URL http(s) |
 | `sources/local.py` | `upload` | o que não é URL (o upload do painel, o `-i`) |
+
+> **Por que a live é reconhecida só para ser recusada.** Sem o
+> `TwitchLiveAdapter`, a URL de um canal cairia no adapter genérico — e o
+> `yt-dlp` *aceita* gravar live da Twitch: ficaria baixando até a transmissão
+> acabar. Um job que não termina é pior que um job que falha, porque ninguém
+> percebe que está errado. Até o bloco 1.5, é um erro imediato que diz o que
+> fazer no lugar (esperar o VOD).
 
 Três coisas que o bloco travou, e que valem para os adapters seguintes:
 
@@ -85,6 +94,10 @@ Três coisas que o bloco travou, e que valem para os adapters seguintes:
 - **O pacote não importa `main` no topo** (só dentro do `fetch`). Além de evitar o
   ciclo, isso o mantém importável só com a biblioteca padrão — então os testes de
   roteamento rodam no CI, que de propósito não instala torch nem scenedetect.
+  Corolário do bloco 1.2: **o que é propriedade da fonte mora no adapter**, não numa
+  tabela no `main.py`. O pote de cookies (`cookie_env` / `cookie_file`) e o rótulo
+  para o log estão lá pelos dois motivos — é onde vive a resposta, e é onde o CI
+  consegue testá-la. O `main.py` só reexporta (`source_label`, `cookie_jar_for`).
 
 > **Herança de proxy pago sem consumidor.** O upstream roteava downloads por proxies
 > estáticos e por DataImpulse (por GB), e a contabilidade morava em

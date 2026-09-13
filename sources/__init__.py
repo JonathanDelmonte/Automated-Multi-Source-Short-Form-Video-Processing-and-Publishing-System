@@ -31,6 +31,7 @@ from .base import (  # noqa: F401  (reexportados: e esta a superficie publica)
 )
 from .direct import DirectUrlAdapter
 from .local import LocalFileAdapter
+from .twitch import SourceNotReady, TwitchLiveAdapter, TwitchVodAdapter  # noqa: F401
 from .youtube import YouTubeAdapter
 
 # A ordem E o desempate, do host mais especifico para o mais generico:
@@ -40,6 +41,8 @@ from .youtube import YouTubeAdapter
 # que a lista se leia como "as fontes de rede, e o resto".
 REGISTRY: tuple[type[SourceAdapter], ...] = (
     YouTubeAdapter,
+    TwitchVodAdapter,
+    TwitchLiveAdapter,
     DirectUrlAdapter,
     LocalFileAdapter,
 )
@@ -59,6 +62,34 @@ def resolve(raw: str) -> SourceAdapter:
         if adapter.matches(raw):
             return adapter()
     raise UnknownSource(f"nenhuma fonte reconhece esta entrada: {raw[:120]}")
+
+
+def label_for(raw: str) -> str:
+    """Nome legivel da fonte, para log e mensagem de erro. Nunca levanta.
+
+    O `main.download_youtube_video` anunciava "Downloading video from YouTube"
+    para qualquer origem, e ao falhar imprimia um banner dizendo "YOUTUBE
+    DOWNLOAD FAILED" -- mesmo quando a URL era de um CDN, o que acontece desde
+    o upstream. Nomear a plataforma errada manda quem le procurar no lugar
+    errado.
+    """
+    try:
+        return resolve(raw).label
+    except Exception:
+        return "fonte desconhecida"
+
+
+def cookie_jar_for(raw: str) -> tuple[str, str]:
+    """(variavel de ambiente, arquivo) com os cookies desta fonte.
+
+    Errar aqui e **silencioso**: o download falha como se a conta nao estivesse
+    logada, e um VOD sub-only vira "video unavailable" sem dizer por que.
+    """
+    try:
+        adapter = resolve(raw)
+    except Exception:
+        return (SourceAdapter.cookie_env, SourceAdapter.cookie_file)
+    return (adapter.cookie_env, adapter.cookie_file)
 
 
 def adapter_ids() -> tuple[str, ...]:

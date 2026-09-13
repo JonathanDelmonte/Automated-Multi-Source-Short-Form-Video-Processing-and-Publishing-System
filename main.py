@@ -725,10 +725,23 @@ def plan_download_attempts(direct_first, statics, paid, have_hd, youtube=True):
     return plan
 
 
+# O rotulo da fonte e o pote de cookies sao propriedade do adapter que a
+# reconhece (`sources/`), nao deste arquivo: e la que fica a resposta para
+# "a Twitch precisa de conta inscrita", e de la eles sao testaveis sem a pilha
+# de ML que o CI nao instala.
+source_label = sources.label_for
+cookie_jar_for = sources.cookie_jar_for
+
+
 def download_youtube_video(url, output_dir="."):
-    """
-    Downloads a YouTube video using yt-dlp.
-    Returns the path to the downloaded video and the video title.
+    """Downloads a video with yt-dlp. Returns (path, title).
+
+    O nome diz YouTube e a funcao atende qualquer origem que o yt-dlp saiba
+    buscar -- URL direta desde o upstream, Twitch desde o bloco 1.2 -- e ela
+    ja separa os casos por dentro: `plan_download_attempts(..., youtube=False)`
+    devolve um plano sem cascata de proxy, e `cookie_jar_for` escolhe o pote de
+    cookies da plataforma. O nome fica como esta porque renomea-lo daria
+    conflito em todo `git fetch upstream`; quem chama e a camada `sources/`.
     """
     # SSRF guard: block non-http(s) schemes and private/loopback/metadata hosts
     # before handing the URL to yt-dlp.
@@ -740,26 +753,33 @@ def download_youtube_video(url, output_dir="."):
     url = file_hosts.resolve(url)
 
     print(f"🔍 Debug: yt-dlp version: {yt_dlp.version.__version__}")
-    print("📥 Downloading video from YouTube...")
+    print(f"📥 Downloading video — {source_label(url)}...")
     step_start_time = time.time()
 
-    cookies_path = '/app/cookies.txt'
-    cookies_env = os.environ.get("YOUTUBE_COOKIES")
+    cookies_var, cookies_path = cookie_jar_for(url)
+    cookies_env = os.environ.get(cookies_var)
     if cookies_env:
-        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
+        print(f"🍪 Found {cookies_var} env var, creating cookies file inside container...")
         try:
-            with open(cookies_path, 'w') as f:
+            # Escrita atomica: dois jobs simultaneos da mesma plataforma
+            # escrevem o mesmo conteudo, mas um `open(...,'w')` truncado no meio
+            # deixaria o outro com um jar pela metade -- que o YouTube responde
+            # com "video unavailable", e que este repositorio ja confundiu uma
+            # vez com banimento de IP (CLAUDE.md, contabilidade de proxy pago).
+            tmp = f"{cookies_path}.{os.getpid()}.tmp"
+            with open(tmp, 'w') as f:
                 f.write(cookies_env)
+            os.replace(tmp, cookies_path)
             if os.path.exists(cookies_path):
                  # Never print file CONTENT here: with a headerless cookies
-                 # blob this would leak live YouTube session cookies to logs.
+                 # blob this would leak live session cookies to logs.
                  print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
         except Exception as e:
             print(f"⚠️ Failed to write cookies file: {e}")
             cookies_path = None
     else:
         cookies_path = None
-        print("⚠️ YOUTUBE_COOKIES env var not found.")
+        print(f"⚠️ {cookies_var} env var not found.")
     
     # Optional HTTP proxy. Set PROXY_URL to route downloads through it; unset
     # (self-host) goes direct as before.
@@ -931,9 +951,9 @@ def download_youtube_video(url, output_dir="."):
         import sys
         error_msg = f"""
 ❌ ================================================================= ❌
-❌ FATAL ERROR: YOUTUBE DOWNLOAD FAILED (all strategies)
+❌ FATAL ERROR: DOWNLOAD FAILED — {source_label(url)} (all strategies)
 ❌ ================================================================= ❌
-REASON: YouTube blocked the request or the download tooling is out of date.
+REASON: the source blocked the request or the download tooling is out of date.
 👇 SOLUTION FOR USER: download the video manually and use the 'Upload Video' tab.
 Technical Details: {str(last_err)}
 """
@@ -1918,7 +1938,11 @@ if __name__ == '__main__':
     # diferente entre URL e arquivo local (num arquivo local, o padrao e a
     # pasta dele; numa URL, a pasta corrente).
     raw_source = args.url or args.input
-    source = sources.resolve(raw_source)
+    try:
+        source = sources.resolve(raw_source)
+    except sources.UnknownSource as e:
+        print(f"❌ {e}")
+        exit(1)
     source_info = source.probe(raw_source)
     print(f"🔌 Fonte: {source_info.label}")
     for _note in source_info.notes:
@@ -1937,15 +1961,7 @@ if __name__ == '__main__':
                 output_dir = os.path.dirname(args.output) or "."
             else:
                 output_dir = "."
-        
-        with job_metrics.stage("01_ingest"):
-            fetched = source.fetch(args.url, output_dir)
-        input_video, video_title = fetched.path, fetched.title
     else:
-        with job_metrics.stage("01_ingest"):
-            fetched = source.fetch(args.input)
-        input_video, video_title = fetched.path, fetched.title
-        
         if args.output and not args.skip_analysis:
             # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
             output_dir = _ensure_dir(args.output)
@@ -1954,9 +1970,21 @@ if __name__ == '__main__':
             if args.output and os.path.isdir(args.output):
                 output_dir = args.output
             elif args.output and not os.path.isdir(args.output):
-                output_dir = os.path.dirname(args.output) or os.path.dirname(input_video)
+                output_dir = os.path.dirname(args.output) or os.path.dirname(args.input)
             else:
-                output_dir = os.path.dirname(input_video)
+                output_dir = os.path.dirname(args.input)
+
+    # Um unico ponto de busca para as duas entradas: acima so se decide ONDE
+    # gravar. `SourceNotReady` e a fonte reconhecida cujo tipo ainda nao tem
+    # implementacao (hoje, a live da Twitch) -- e um erro de uso, com conserto
+    # do lado de quem chamou, entao sai como mensagem e nao como traceback.
+    with job_metrics.stage("01_ingest"):
+        try:
+            fetched = source.fetch(raw_source, output_dir)
+        except sources.SourceNotReady as e:
+            print(f"❌ {e}")
+            exit(1)
+    input_video, video_title = fetched.path, fetched.title
 
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")

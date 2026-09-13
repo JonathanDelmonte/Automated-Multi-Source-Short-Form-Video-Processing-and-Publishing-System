@@ -212,6 +212,8 @@ Prompt de Comando. Todos entram na pasta certa sozinhos, então não é preciso
 | `atualizar.bat` | `git pull` + sobe. Avisa se as dependências mudaram |
 | `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile` |
 | `reconstruir-gpu.bat` | o mesmo, com as libs de CUDA. Roda-se **uma vez** |
+| `abrir-painel.bat` | abre `localhost:5175` no navegador |
+| `conferir-gpu.bat` | responde se a placa chegou ao container |
 
 **O `--build` não é o normal, é a exceção.** Ele reconstrói a imagem inteira —
 os 15 a 40 minutos. Só faz sentido quando muda a *lista de dependências*, e isso

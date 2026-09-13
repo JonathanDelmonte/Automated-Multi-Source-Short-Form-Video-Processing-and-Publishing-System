@@ -38,6 +38,29 @@ videos/
 # Model files (downloaded at build time)
 *.pt
 
+# Dados de execucao. NENHUM destes pertence a imagem -- o Dockerfile cria os
+# diretorios vazios e o compose monta os de verdade por cima. Sem esta secao o
+# `docker build` manda tudo como contexto, e isso quebrou o build de verdade em
+# 13-set-2026:
+#
+#   transferring context: 500.80MB
+#   failed to solve: invalid file request .cache/huggingface/hub/
+#       models--Systran--faster-whisper-small/snapshots/.../config.json
+#
+# O modelo do Whisper e baixado em tempo de execucao para `/app/.cache`
+# (Dockerfile:96), e como o repositorio inteiro e montado em `/app`, ele cai
+# dentro da pasta do projeto no host. O cache do HuggingFace guarda os
+# `snapshots/` como **links simbolicos** para `blobs/`, e o contexto de build do
+# Docker nao os segue -- daí o "invalid file request", com meio giga de
+# transferencia antes de falhar.
+#
+# `output/` e `uploads/` estavam na mesma situacao, so que sem quebrar: eram
+# copiados a cada build, cada vez maiores, em silencio.
+.cache/
+output/
+uploads/
+data/
+
 # Secrets — never bake real credentials into the image (repo is public,
 # image may be pushed to a registry). Runtime env comes via compose env_file.
 .env

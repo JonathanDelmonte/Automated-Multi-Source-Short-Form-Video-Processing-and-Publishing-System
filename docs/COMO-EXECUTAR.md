@@ -198,6 +198,25 @@ git pull
 O `git pull` não mexe no seu `.env` — ele não está versionado, justamente para
 as suas chaves nunca irem parar no GitHub.
 
+#### Os atalhos (o equivalente ao `pnpm dev`)
+
+Estão na raiz do projeto. Dê **duplo clique** no Explorer, ou digite o nome no
+Prompt de Comando. Todos entram na pasta certa sozinhos, então não é preciso
+`cd` nenhum:
+
+| Arquivo | Quando |
+|---|---|
+| **`subir.bat`** | **o do dia a dia.** Sobe em segundos, sem reconstruir |
+| `subir-gpu.bat` | o mesmo, usando a placa NVIDIA |
+| `parar.bat` | para tudo de verdade (`docker compose down`) |
+| `atualizar.bat` | `git pull` + sobe. Avisa se as dependências mudaram |
+| `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile` |
+| `reconstruir-gpu.bat` | o mesmo, com as libs de CUDA. Roda-se **uma vez** |
+
+**O `--build` não é o normal, é a exceção.** Ele reconstrói a imagem inteira —
+os 15 a 40 minutos. Só faz sentido quando muda a *lista de dependências*, e isso
+acontece raramente. O resto do tempo é `subir.bat`.
+
 #### Depois do `git pull`, o que é preciso rodar
 
 **Quase sempre nada, e o motivo não é óbvio.** O `docker-compose.yml` monta a
@@ -606,6 +625,8 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | Um job "cancelado" volta a processar sozinho | corrigido em 13-set-2026: o manifesto de resume o re-enfileirava | use o botão **cancelar** no painel, que apaga o manifesto |
 | Poucos cortes num vídeo longo | o teto padrão é 12 | `CLIP_TARGET_MAX=25` no `.env` + `docker compose restart backend` |
 | Build morre sem espaço | a imagem com torch é gorda | `docker system prune -a` e ~15 GB livres |
+| `failed to solve: invalid file request .cache/huggingface/...` no build | o modelo do Whisper é baixado para `.cache/` dentro da pasta do projeto, e o cache do HuggingFace usa **links simbólicos** que o contexto de build do Docker não segue | corrigido em 13-set-2026: `.cache/`, `output/`, `uploads/` e `data/` entraram no `.dockerignore`. Se aparecer, `git pull` |
+| O build leva minutos "transferindo contexto" | `output/` estava sendo copiado a cada build | mesmo conserto acima |
 | Log rolando sem parar com `GET /health/ready 200 OK` | **não é erro**: é o HEALTHCHECK do Dockerfile confirmando que o backend está vivo | nada a fazer; `200 OK` é a resposta certa |
 | A linha do frontend anuncia `localhost:5173` | é a porta dentro do container | no navegador é **5175** (`"5175:5173"` no compose) |
 

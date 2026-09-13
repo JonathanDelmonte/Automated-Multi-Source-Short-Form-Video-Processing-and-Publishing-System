@@ -562,12 +562,12 @@ ele vem parecido com isto:
 uma destas três:
 
 1. o arquivo virou `.env.txt` (veja o passo 2);
-2. tem `#` no começo da linha, ou espaço em volta do `=`;
+2. tem `#` no começo da linha — **espaço em volta do `=` não atrapalha**, isso
+   foi medido com o `python-dotenv` que o projeto usa (a tabela está no passo 2);
 3. o `docker compose` subiu de outra pasta.
 
 Depois de corrigir o `.env`, é preciso **reiniciar** para ele ser lido de novo:
-Ctrl+C na janela e `docker compose up` outra vez (essa segunda vez é rápida,
-não reconstrói).
+`parar.bat` e depois `subir.bat` (essa segunda vez é rápida, não reconstrói).
 
 E o painel abre em **http://localhost:5175**.
 
@@ -579,6 +579,23 @@ E o painel abre em **http://localhost:5175**.
 do Plano Técnico registra que baixar do YouTube com `yt-dlp` fere os Termos de
 Serviço deles, e um upload tira a rede da equação no primeiro teste — se falhar,
 você sabe que o problema é o pipeline, não o download.
+
+> **O que o campo de link aceita, desde 13-set-2026** (Fase 1, blocos 1.1 e 1.2):
+>
+> | Cola isto | Acontece |
+> |---|---|
+> | vídeo do YouTube | baixa (o log diz `🔌 Fonte: YouTube`) |
+> | VOD da Twitch (`/videos/<número>`) | baixa, avisando que VOD expira em 7 a 60 dias |
+> | clip da Twitch (`/clip/...` ou `clips.twitch.tv/...`) | baixa |
+> | link direto de um `.mp4` | baixa do IP da sua máquina, sem proxy |
+> | **canal da Twitch** (`twitch.tv/<canal>`) | **recusa na hora, e explica** |
+>
+> A recusa do canal é de propósito: o `yt-dlp` *aceita* gravar transmissão ao
+> vivo, e o job ficaria baixando até a live acabar — horas, sem erro nenhum na
+> tela. Gravar live é o bloco 1.5; até lá, espere o VOD e use a URL dele.
+>
+> VOD de sub-only precisa de conta inscrita: `TWITCH_COOKIES` no `.env`, no
+> mesmo formato do `YOUTUBE_COOKIES`. Clip e VOD público não precisam de nada.
 
 Pegue algo com **2 a 5 minutos de alguém falando** — podcast, aula, uma live
 sua. Fala é o que o detector lê; vídeo sem fala cai no caminho por frames, que

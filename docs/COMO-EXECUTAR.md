@@ -198,6 +198,41 @@ git pull
 O `git pull` não mexe no seu `.env` — ele não está versionado, justamente para
 as suas chaves nunca irem parar no GitHub.
 
+#### Depois do `git pull`, o que é preciso rodar
+
+**Quase sempre nada, e o motivo não é óbvio.** O `docker-compose.yml` monta a
+sua pasta *dentro* do container (`- .:/app` no backend, `- ./dashboard:/app` no
+frontend). Não é cópia: é a mesma pasta vista de dois lugares. No instante em
+que o `git pull` termina, os arquivos novos já estão lá dentro.
+
+O que varia é se o processo que está rodando **percebe**:
+
+| Processo | Percebe sozinho? | Por quê |
+|---|---|---|
+| **Vite** (frontend) | **sim** | vigia os arquivos; é para isso que serve o modo dev |
+| **uvicorn** (backend) | **não** | o `CMD` do Dockerfile não tem `--reload`, e o Python já carregou o código na memória |
+| **a imagem** (torch, node_modules) | só com `--build` | pacote instalado mora na imagem, não na pasta montada |
+
+Daí a tabela:
+
+| O que mudou no `pull` | O que rodar |
+|---|---|
+| só `docs/*.md` | nada |
+| `.jsx`, `.css` | nada — o Vite recarrega o navegador |
+| `.py` | `docker compose restart backend` (~2 s) |
+| `vite.config.js`, `index.html`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
+| `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up --build` |
+
+**`--build` é o caro, e quase nunca é o certo.** Ele reconstrói a imagem — os
+15 a 40 minutos da primeira vez. Só faz sentido quando muda a *lista de
+dependências*, nunca quando muda só o código.
+
+> **Se preferir que o backend também recarregue sozinho**, é uma linha no
+> `docker-compose.yml`, no serviço `backend`:
+> `command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload`.
+> Aí `.py` entra na mesma regra do `.jsx`. Custa um processo vigiando arquivos
+> e vale só em desenvolvimento — por isso não vem ligado.
+
 ---
 
 ## Passo 1 — As chaves

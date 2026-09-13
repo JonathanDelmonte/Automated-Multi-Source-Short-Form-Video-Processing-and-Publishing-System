@@ -1,0 +1,42 @@
+# Sobreposicao para maquina com GPU NVIDIA. Nao substitui o docker-compose.yml:
+# soma-se a ele.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# **Por que e arquivo separado, e nao um bloco no compose principal.** O
+# `reservations.devices` abaixo e uma exigencia, nao uma preferencia: numa
+# maquina sem GPU (ou com o NVIDIA Container Toolkit ausente) o `up` falha em
+# vez de cair para CPU. Juntar isso ao arquivo padrao quebraria o caminho que
+# funciona para todo mundo em nome do que funciona para quem tem placa.
+#
+# Antes de usar, a imagem precisa das libs de CUDA, que nao entram por padrao
+# porque somam ~2 GB:
+#
+#   docker compose build --build-arg GPU=1 backend
+#
+# No Windows ainda e preciso ter o driver NVIDIA com suporte a WSL 2 (o driver
+# normal ja traz desde 2021) -- nao se instala driver dentro do WSL.
+#
+# Conferir que funcionou, depois de subir:
+#
+#   docker compose exec backend python -c "import torch; print(torch.cuda.is_available())"
+#
+# `True` e GPU de verdade. `False` significa que a placa nao chegou ao
+# container, e nesse caso o `WHISPER_DEVICE=cuda` abaixo cai para CPU sozinho
+# (`transcribe_backends._whisper_force_cpu`) -- ou seja, funciona, so que lento,
+# que e o pior modo de falhar: sem erro.
+
+services:
+  backend:
+    environment:
+      # `large-v3-turbo` so faz sentido com GPU; em CPU ele e proibitivo.
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE: ${WHISPER_COMPUTE:-float16}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

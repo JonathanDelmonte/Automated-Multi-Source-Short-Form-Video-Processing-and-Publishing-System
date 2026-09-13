@@ -64,16 +64,33 @@ def _slot(name: str) -> dict:
                "providers": {}})
 
 
+#: Prefixo do marcador que o `app.py` le no stdout para saber em que estagio o
+#: job esta. Existe porque o `main.py` e um subprocesso e o stdout ja e o canal
+#: entre os dois -- o `app.py` le linha a linha para montar o log. Anunciar o
+#: estagio por aqui custa uma linha e nao inventa um segundo canal (socket,
+#: arquivo de estado, polling de disco) so para desenhar uma barra.
+#:
+#: O `app.py` consome e **descarta** estas linhas, entao elas nunca aparecem no
+#: log que o painel mostra.
+STAGE_MARKER = "__STAGE__"
+
+
 @contextmanager
 def stage(name: str):
     """Mede o tempo de parede de um estagio e o empilha para atribuicao de tokens.
 
     Reentrante e acumulativo: chamar o mesmo nome de novo soma ao total, que e o
     que se quer no laco de cortes (`05_06_render` roda uma vez por corte).
+
+    Anuncia entrada e saida no stdout (`STAGE_MARKER`) para o `app.py` saber
+    onde o job esta. O `flush` e obrigatorio: o stdout do subprocesso e um pipe,
+    logo bufferizado em blocos, e sem ele o marcador chegaria minutos depois --
+    tarde demais para servir de progresso.
     """
     if not _job:
         reset()
     _stack.append(name)
+    print(f"{STAGE_MARKER}BEGIN {name}", flush=True)
     t0 = time.time()
     try:
         yield
@@ -81,6 +98,7 @@ def stage(name: str):
         _slot(name)["seconds"] += time.time() - t0
         if _stack and _stack[-1] == name:
             _stack.pop()
+        print(f"{STAGE_MARKER}END {name}", flush=True)
 
 
 def current_stage() -> Optional[str]:

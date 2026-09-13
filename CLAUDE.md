@@ -469,6 +469,45 @@ was before: `_apply_topup` reads the user id from Stripe metadata, so it now
 confirms the row still exists before inserting, or the FK violation makes
 Stripe retry the same doomed event for three days.
 
+### Controle de job: cancelar, listar, apagar, progresso (13-set-2026)
+
+Nada disto existia, e a ausencia do cancelamento era um bug de verdade: o
+handle do `Popen` so vivia como variavel local de `run_job`, entao **nenhum
+endpoint alcancava o processo**. Recarregar a pagina nao parava nada; matar o
+container tambem nao, porque o manifesto de resume ressuscitava o job no boot
+seguinte.
+
+- `_job_processes[job_id]` publica o handle; `_cancelled_jobs` marca a
+  intencao. O segundo e consultado em **tres** lugares e os tres importam: o
+  `run_job` (cancelado nao e `failed` -- um processo morto por sinal volta com
+  codigo != 0), a fila (nao comecar um job cancelado que esperava vaga) e o
+  scan de resume (nao ressuscitar).
+- `POST /api/jobs/{id}/cancel` faz os tres passos **nesta ordem**: marca,
+  **apaga o manifesto**, mata o processo. O passo do meio e o unico cuja falta
+  nao aparece na hora -- sem ele o job volta 30s depois.
+- `GET /api/jobs` lista projetos (memoria + disco, sem o log). `DELETE
+  /api/jobs/{id}` cancela **antes** de apagar a pasta: remover o diretorio
+  debaixo de um `main.py` vivo deixa um processo orfao escrevendo no vazio.
+- **Progresso e por estagio, nunca porcentagem.** `job_metrics.stage()` imprime
+  `__STAGE__BEGIN <nome>` no stdout -- o canal que ja existe entre o subprocesso
+  e o `app.py` -- e o `enqueue_output` consome e **descarta** a linha, como ja
+  fazia com `CLIP_READY`. O `_stage_view` devolve `stage_index`/`stage_total`
+  sobre `PIPELINE_STAGES`. Nao ha porcentagem porque nao ha medicao: a
+  transcricao nao reporta progresso e o render varia com o numero de cortes.
+  Uma barra que mente e pior que barra nenhuma.
+- No painel: `ProjectsList.jsx` (abrir/apagar, com polling de 5s so quando ha
+  job vivo), barra + botao de cancelar, e botao de copiar o log.
+- `tests/test_job_control.py` cobre os tres endpoints e o marcador.
+
+### GPU: sao dois passos
+
+`--build-arg GPU=1` instala as libs de CUDA na imagem e **nao** faz o container
+enxergar a placa. A reserva do dispositivo esta em `docker-compose.gpu.yml`,
+uma sobreposicao (`-f docker-compose.yml -f docker-compose.gpu.yml`), separada
+de proposito: `reservations.devices` e exigencia, e numa maquina sem GPU o `up`
+falharia em vez de cair para CPU. Sem a placa no container,
+`WHISPER_DEVICE=cuda` cai para CPU **em silencio** -- funciona, so que lento.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

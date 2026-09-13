@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
+import ProjectsList from './components/ProjectsList';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -172,6 +173,15 @@ function App() {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
+  // Progresso vem do backend por estagio, nao por porcentagem: o pipeline sabe
+  // onde esta, nao quanto falta dentro do estagio (a transcricao nao reporta
+  // nada, e o render varia com o numero de cortes). Ver `_stage_view` no app.py.
+  const [stage, setStage] = useState(null);   // { label, index, total }
+  const [cancelling, setCancelling] = useState(false);
+  // Incrementado ao voltar para a tela inicial, para a lista refletir o job que
+  // acabou de terminar/ser cancelado sem depender do polling de 5s dela.
+  const [projectsKey, setProjectsKey] = useState(0);
+  const [logsCopied, setLogsCopied] = useState(false);
   const [results, setResults] = useState(null);
   // Best clips first. The backend hands them back in transcript order, which
   // buries the strongest one wherever it happens to fall in the video — and
@@ -543,6 +553,58 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isManaged, jobId, status, results?.clips?.length]);
 
+  // Abre um projeto da lista: carrega o estado dele e entra no modo certo.
+  // Um job ainda rodando volta para 'processing', e o efeito de polling faz o
+  // resto -- e por isso que reabrir um job em andamento retoma a barra em vez
+  // de mostrar uma tela morta.
+  const handleOpenProject = useCallback(async (id) => {
+    try {
+      const res = await apiFetch(`/api/status/${id}`);
+      if (!res.ok) throw new Error('não consegui abrir');
+      const data = await res.json();
+      setJobId(id);
+      setLogs(data.logs || []);
+      setResults(data.result || null);
+      setStage(data.stage_index
+        ? { label: data.stage_label, index: data.stage_index, total: data.stage_total }
+        : null);
+      if (data.status === 'completed') setStatus('complete');
+      else if (data.status === 'failed') setStatus('error');
+      else setStatus('processing');
+    } catch (e) {
+      console.error('Open project failed', e);
+    }
+  }, []);
+
+  // Cancela de verdade: o backend mata o subprocesso E apaga o manifesto de
+  // resume. Sem o segundo passo o job voltava sozinho 30s depois (ver o
+  // endpoint em app.py).
+  const handleCancel = useCallback(async () => {
+    if (!jobId || cancelling) return;
+    setCancelling(true);
+    try {
+      await apiFetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+      setStatus('idle');
+      setStage(null);
+      setResults(null);
+      setProjectsKey((k) => k + 1);
+    } catch (e) {
+      console.error('Cancel failed', e);
+    } finally {
+      setCancelling(false);
+    }
+  }, [jobId, cancelling]);
+
+  const handleCopyLogs = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(logs.join('\n'));
+      setLogsCopied(true);
+      setTimeout(() => setLogsCopied(false), 2000);
+    } catch (e) {
+      console.error('Copy failed', e);
+    }
+  }, [logs]);
+
   useEffect(() => {
     let interval;
     if ((status === 'processing' || status === 'completed') && jobId) {
@@ -556,7 +618,18 @@ function App() {
             setResults(data.result);
           }
 
-          if (data.status === 'completed') {
+          if (data.stage_index) {
+            setStage({ label: data.stage_label, index: data.stage_index, total: data.stage_total });
+          }
+
+          if (data.status === 'cancelled') {
+            // Desfecho proprio, nao erro: quem clicou em cancelar nao deve ver
+            // a tela vermelha de falha.
+            setStatus('idle');
+            setStage(null);
+            setCancelling(false);
+            clearInterval(interval);
+          } else if (data.status === 'completed') {
             setStatus('complete');
             clearInterval(interval);
             refreshMe();
@@ -777,6 +850,10 @@ function App() {
     setProcessingMedia(null);
     setProjectState(null);
     setNoSource(false);
+    setStage(null);
+    // Voltar para a tela inicial e o momento em que a lista precisa estar certa:
+    // o job que acabou de terminar tem de aparecer nela sem esperar o polling.
+    setProjectsKey((k) => k + 1);
     localStorage.removeItem(SESSION_KEY);
   };
 
@@ -1288,6 +1365,11 @@ function App() {
 
                 <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
 
+                {/* Some sozinha na primeira visita (a lista vazia nao renderiza
+                    nada), entao a tela de quem nunca rodou um job continua
+                    sendo so o formulario. */}
+                <ProjectsList onOpen={handleOpenProject} refreshKey={projectsKey} />
+
                 <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 text-muted text-xs sm:text-sm">
                   <span className="flex items-center gap-2"><Youtube size={16} /> YouTube</span>
                   <span className="flex items-center gap-2"><Instagram size={16} /> Instagram</span>
@@ -1341,31 +1423,81 @@ function App() {
                   </div>
                 )}
 
-                {/* The render is dead time: the user is watching a progress bar
-                    with nothing to do, so this is where the one star ask goes. */}
+                {/* Progresso e cancelamento. Antes daqui nao havia nem um nem
+                    outro: o /api/status nao devolvia estagio nenhum, e o handle
+                    do subprocesso so existia dentro de run_job, entao nada na
+                    tela alcancava o job. Em CPU a transcricao fica minutos em
+                    silencio, e silencio sem sinal e o que faz alguem recarregar
+                    a pagina no meio de um render. */}
                 {status === 'processing' && (
-                  <div className="my-3">
+                  <div className="my-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-ink2 min-w-0 truncate">
+                        {stage
+                          ? `${stage.index}/${stage.total} · ${stage.label}`
+                          : 'preparando…'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCancel}
+                        disabled={cancelling}
+                        className="shrink-0 lowercase text-muted hover:text-danger transition-colors disabled:opacity-50"
+                      >
+                        {cancelling ? 'cancelando…' : 'cancelar'}
+                      </button>
+                    </div>
+                    {/* Sem estagio ainda, a barra pulsa em vez de fingir 0%:
+                        a fila nao sabe quanto falta e mentir seria pior. */}
+                    <div className="h-1 w-full bg-paper2 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full bg-brass transition-all duration-700 ease-out ${stage ? '' : 'animate-pulse w-1/6'}`}
+                        style={stage ? { width: `${(stage.index / stage.total) * 100}%` } : undefined}
+                      />
+                    </div>
                   </div>
                 )}
 
                 {/* Logs Terminal */}
                 <div className={`bg-paper rounded-card border border-rule overflow-hidden flex flex-col transition-all duration-500 ${status === 'complete' ? `min-h-0 opacity-50 hover:opacity-100 ${logsVisible ? 'h-32' : 'h-auto'}` : `flex-1 ${logsVisible ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-0 flex-none'}`}`}>
-                  <button
-                    type="button"
-                    onClick={() => setLogsVisible(!logsVisible)}
-                    aria-expanded={logsVisible}
-                    className="w-full px-3.5 sm:px-4 py-2.5 border-b border-rule flex items-center justify-between gap-2 bg-paper2 shrink-0 text-left"
-                  >
-                    <span className="readout flex items-center gap-2">
-                      <Terminal size={12} /> System Logs
-                    </span>
-                    <span className="flex items-center gap-2 text-muted">
+                  {/* Dois botoes lado a lado, nao um dentro do outro: o
+                      cabecalho inteiro era um <button>, e aninhar o de copiar
+                      dentro dele seria HTML invalido. */}
+                  <div className="w-full px-3.5 sm:px-4 py-2.5 border-b border-rule flex items-center justify-between gap-2 bg-paper2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setLogsVisible(!logsVisible)}
+                      aria-expanded={logsVisible}
+                      className="flex items-center gap-2 min-w-0 text-left"
+                    >
+                      <span className="readout flex items-center gap-2">
+                        <Terminal size={12} /> System Logs
+                      </span>
+                    </button>
+                    <span className="flex items-center gap-2 text-muted shrink-0">
                       {!logsVisible && logs.length > 0 && (
                         <span className="readout normal-case">{logs.length}</span>
                       )}
-                      <ChevronDown size={16} className={logsVisible ? '' : 'rotate-180'} />
+                      {logs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleCopyLogs}
+                          title="Copiar o log inteiro"
+                          className="hover:text-ink transition-colors"
+                        >
+                          {logsCopied ? <Check size={14} className="text-ok" /> : <Copy size={14} />}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setLogsVisible(!logsVisible)}
+                        aria-expanded={logsVisible}
+                        aria-label={logsVisible ? 'Esconder o log' : 'Mostrar o log'}
+                        className="hover:text-ink transition-colors"
+                      >
+                        <ChevronDown size={16} className={logsVisible ? '' : 'rotate-180'} />
+                      </button>
                     </span>
-                  </button>
+                  </div>
                   {logsVisible && (
                     <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto font-mono text-[11px] sm:text-xs space-y-1.5 custom-scrollbar text-muted break-words">
                       {logs.map((log, i) => (

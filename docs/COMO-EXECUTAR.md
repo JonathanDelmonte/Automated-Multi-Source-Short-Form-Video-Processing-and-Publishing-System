@@ -421,15 +421,35 @@ Sobem três serviços:
 | frontend | **5175** | o painel |
 | renderer | 3100 | serviço de render em Node (Remotion) |
 
-**Com GPU NVIDIA**, as libs de CUDA não entram por padrão:
+### Com GPU NVIDIA
+
+São **dois** passos, e faltar o segundo é a armadilha: instalar as libs de CUDA
+na imagem não faz o container enxergar a placa.
 
 ```bat
+cd /d C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
 docker compose build --build-arg GPU=1 backend
-docker compose up
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
 ```
 
-E no `.env`: `WHISPER_MODEL=large-v3-turbo`, `WHISPER_DEVICE=cuda`,
-`WHISPER_COMPUTE=float16`.
+O `docker-compose.gpu.yml` é uma **sobreposição**: ele reserva a GPU para o
+container e já liga `WHISPER_MODEL=large-v3-turbo` + `WHISPER_DEVICE=cuda`.
+Ficou em arquivo separado de propósito — a reserva de dispositivo é exigência,
+não preferência, e numa máquina sem placa o `up` falharia em vez de cair para
+CPU.
+
+No Windows basta o driver NVIDIA normal (ele traz suporte a WSL 2 desde 2021).
+**Não se instala driver dentro do WSL.**
+
+**Confirme que a placa chegou**, porque a falha aqui é silenciosa:
+
+```bat
+docker compose exec backend python -c "import torch; print(torch.cuda.is_available())"
+```
+
+`True` é GPU de verdade. `False` significa que ela não chegou ao container — e
+aí o `WHISPER_DEVICE=cuda` cai para CPU sozinho, sem erro nenhum. Funciona, só
+que lento, que é o pior modo de falhar.
 
 **Subiu quando aparecerem estas três linhas**, uma de cada serviço:
 
@@ -582,6 +602,9 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 | Um segundo clone do projeto | clonei de novo tendo o GitHub Desktop | use uma pasta só: o `.env` fica na que o `docker compose` sobe |
 | `model_decommissioned` no log | o Groq trocou o nome do modelo | `GROQ_MODEL=<nome novo>` no `.env` resolve na hora; me avise que eu corrijo no `llm_cascade.py` |
 | `BILLING_ENABLED` dá erro na subida | **é intencional** (ADR-001): o módulo comercial foi removido | não ligue essa flag |
+| Um job continua rodando depois de fechar o terminal | os serviços têm `restart: unless-stopped` — fechar a janela **não** os para | `docker compose down` (com `down`, não fechando a janela) |
+| Um job "cancelado" volta a processar sozinho | corrigido em 13-set-2026: o manifesto de resume o re-enfileirava | use o botão **cancelar** no painel, que apaga o manifesto |
+| Poucos cortes num vídeo longo | o teto padrão é 12 | `CLIP_TARGET_MAX=25` no `.env` + `docker compose restart backend` |
 | Build morre sem espaço | a imagem com torch é gorda | `docker system prune -a` e ~15 GB livres |
 | Log rolando sem parar com `GET /health/ready 200 OK` | **não é erro**: é o HEALTHCHECK do Dockerfile confirmando que o backend está vivo | nada a fazer; `200 OK` é a resposta certa |
 | A linha do frontend anuncia `localhost:5173` | é a porta dentro do container | no navegador é **5175** (`"5175:5173"` no compose) |

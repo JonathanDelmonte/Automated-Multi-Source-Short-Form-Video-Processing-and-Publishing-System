@@ -1,4 +1,5 @@
 import os
+import job_metrics
 import llm_backend
 import llm_cascade
 import re
@@ -670,6 +671,56 @@ _stopping = False                    # SIGTERM received: report not-ready so the
                                      # listening socket closes
 _running_jobs: set = set()           # job ids with a live subprocess here
 
+#: Handle do Popen de cada job vivo, para que o cancelamento tenha o que matar.
+#: Sem isto o `process` so existe como variavel local de `run_job` e nenhum
+#: endpoint alcanca: era por isso que nao havia como cancelar.
+_job_processes: dict = {}
+
+#: Jobs que o usuario mandou cancelar. Consultado em tres lugares, e os tres
+#: importam: `run_job` para nao marcar 'failed' o que foi cancelado de
+#: proposito, o scan de resume para nao ressuscitar, e a fila para nao comecar
+#: um job cancelado enquanto esperava vaga.
+_cancelled_jobs: set = set()
+
+#: Os estagios do pipeline, na ordem, com o nome que o painel mostra. As chaves
+#: sao exatamente os nomes que `main.py` passa para `job_metrics.stage()` -- se
+#: um estagio novo nascer la sem entrar aqui, ele simplesmente nao move a barra,
+#: em vez de quebrar.
+PIPELINE_STAGES = [
+    ("01_ingest", "recebendo o vídeo"),
+    ("03_transcribe", "transcrevendo"),
+    ("04_detect", "escolhendo os melhores momentos"),
+    ("05_06_render", "cortando e renderizando"),
+]
+_STAGE_ORDER = {nome: i for i, (nome, _) in enumerate(PIPELINE_STAGES)}
+
+#: Importado, nao redigitado: o produtor do marcador e o `job_metrics`, e duas
+#: copias da mesma string divergem no dia em que uma delas mudar.
+_STAGE_MARKER = job_metrics.STAGE_MARKER
+
+
+def _stage_view(job) -> dict:
+    """O que o painel precisa para desenhar progresso, a partir do estagio atual.
+
+    Deliberadamente **nao** devolve porcentagem. O pipeline sabe em que estagio
+    esta, nao quanto falta dentro dele: a transcricao nao reporta progresso e o
+    render varia com o numero de cortes. Uma porcentagem aqui seria inventada, e
+    uma barra que mente e pior que barra nenhuma -- ela para de ser informacao e
+    vira decoracao. `stage_index` de 4 e honesto e ja responde "esta andando?".
+    """
+    nome = (job or {}).get('stage')
+    if not nome:
+        return {"stage": None, "stage_label": None,
+                "stage_index": 0, "stage_total": len(PIPELINE_STAGES)}
+    i = _STAGE_ORDER.get(nome)
+    rotulo = dict(PIPELINE_STAGES).get(nome, nome)
+    return {
+        "stage": nome,
+        "stage_label": rotulo,
+        "stage_index": (i + 1) if i is not None else 0,
+        "stage_total": len(PIPELINE_STAGES),
+    }
+
 
 def _manifest_path(job_id):
     return os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
@@ -875,6 +926,13 @@ def _resume_interrupted_jobs() -> set:
         job_path = os.path.join(OUTPUT_DIR, job_id)
         manifest_path = os.path.join(job_path, _RESUME_FILE)
         if not os.path.isfile(manifest_path):
+            continue
+        if job_id in _cancelled_jobs:
+            # O cancelamento ja apaga o manifesto, entao chegar aqui significa
+            # que ele reapareceu (um `_touch_manifest` em voo, por exemplo).
+            # Cinto e suspensorio: o sintoma de errar isto e o pior de todos --
+            # um job cancelado que volta a processar sozinho.
+            _clear_resume_manifest(job_id)
             continue
         if glob.glob(os.path.join(job_path, "*_metadata.json")):
             # Finished after all — recovered as completed already.
@@ -1128,6 +1186,14 @@ async def process_queue():
                 concurrency_semaphore.release()
                 job_queue.task_done()
                 print(f"⏸️ Draining — leaving {job_id} for the next instance.")
+                continue
+            if job_id in _cancelled_jobs:
+                # Cancelado enquanto esperava vaga. Sem isto ele so morreria
+                # depois do Popen, e um video de uma hora comecaria a baixar
+                # antes de alguem perceber que ninguem o queria mais.
+                concurrency_semaphore.release()
+                job_queue.task_done()
+                print(f"🛑 Job cancelado antes de comecar: {job_id}")
                 continue
             print(f"🔄 Acquired slot for job: {job_id}")
             _running_jobs.add(job_id)
@@ -1758,6 +1824,14 @@ def enqueue_output(out, job_id):
                     except ValueError:
                         pass
                     continue
+                if decoded_line.startswith(_STAGE_MARKER):
+                    # Marcador de `job_metrics.stage()`, na forma
+                    # `__STAGE__BEGIN 01_ingest`. Consumido aqui como o
+                    # CLIP_READY: move a barra e nunca chega ao log do usuario.
+                    partes = decoded_line[len(_STAGE_MARKER):].split(" ", 1)
+                    if len(partes) == 2 and partes[0] == "BEGIN" and job_id in jobs:
+                        jobs[job_id]['stage'] = partes[1].strip()
+                    continue
                 if decoded_line.startswith("PROXY_BYTES="):
                     try:
                         if job_id in jobs:
@@ -1803,6 +1877,12 @@ async def run_job(job_id, job_data):
             env=env,
             cwd=os.getcwd()
         )
+        # Publica o handle para que `/api/jobs/{id}/cancel` tenha o que matar.
+        # Um job cancelado enquanto esperava vaga na fila ja chega aqui na lista
+        # de cancelados: mata-se antes de deixar processar um video inteiro.
+        _job_processes[job_id] = process
+        if job_id in _cancelled_jobs:
+            _terminar_processo(process)
         
         # We need to capture logs in a thread because Popen isn't async
         t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id))
@@ -1897,15 +1977,29 @@ async def run_job(job_id, job_data):
             else:
                  jobs[job_id]['status'] = 'failed'
                  jobs[job_id]['logs'].append("No metadata file generated.")
+        elif job_id in _cancelled_jobs:
+            # Um processo morto por SIGTERM/SIGKILL volta com codigo != 0, o que
+            # sem esta ramificacao viraria "falhou" na tela de quem acabou de
+            # clicar em cancelar. Cancelado e um desfecho, nao um erro.
+            jobs[job_id]['status'] = 'cancelled'
+            jobs[job_id]['logs'].append("Job cancelado pelo usuário.")
         else:
             jobs[job_id]['status'] = 'failed'
             jobs[job_id]['logs'].append(_scrub_secrets(f"Process failed with exit code {returncode}"))
-            
+
     except Exception as e:
-        jobs[job_id]['status'] = 'failed'
-        # Exception text can embed URLs with credentials (e.g. the proxy URL
-        # inside a yt-dlp/httpx error) — scrub before it reaches client logs.
-        jobs[job_id]['logs'].append(_scrub_secrets(f"Execution error: {str(e)}"))
+        if job_id in _cancelled_jobs:
+            jobs[job_id]['status'] = 'cancelled'
+            jobs[job_id]['logs'].append("Job cancelado pelo usuário.")
+        else:
+            jobs[job_id]['status'] = 'failed'
+            # Exception text can embed URLs with credentials (e.g. the proxy URL
+            # inside a yt-dlp/httpx error) — scrub before it reaches client logs.
+            jobs[job_id]['logs'].append(_scrub_secrets(f"Execution error: {str(e)}"))
+    finally:
+        # O handle morre com o job, em qualquer desfecho. Deixa-lo para tras
+        # faria o proximo cancelamento mirar num processo que ja nao existe.
+        _job_processes.pop(job_id, None)
 
 @app.get("/health")
 async def health():
@@ -2488,6 +2582,10 @@ async def process_endpoint(
     # Enqueue Job
     jobs[job_id] = {
         'status': 'queued',
+        # Ordena a lista de projetos. Um job recuperado do disco nao passa por
+        # aqui, entao `_resumo_do_job` cai na data da pasta -- pior, mas
+        # existente, que e o que a ordenacao precisa.
+        'created_at': time.time(),
         'logs': [f"Job {job_id} queued."],
         'cmd': cmd,
         'env': env,
@@ -2578,6 +2676,143 @@ def _job_timings(job_id: str) -> Optional[dict]:
     return None
 
 
+def _terminar_processo(process) -> None:
+    """Encerra o subprocesso de um job: SIGTERM, e SIGKILL se ele insistir.
+
+    Os 5 segundos de tolerancia existem porque o `main.py` pode estar no meio de
+    um `ffmpeg`; um SIGTERM deixa ele fechar o arquivo em vez de abandonar um
+    .mp4 truncado na pasta. Passado esse prazo, a limpeza vale menos que a vaga
+    presa na fila.
+    """
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    except Exception as e:
+        print(f"⚠️ Não consegui encerrar o processo do job: {e}")
+
+
+def _apagar_pasta_do_job(job_id: str) -> None:
+    path = os.path.join(OUTPUT_DIR, job_id)
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, request: Request):
+    """Para um job em andamento.
+
+    Antes disto nao havia como parar nada: o handle do Popen so existia como
+    variavel local de `run_job`. Recarregar a pagina nao alcancava o processo, e
+    matar o container tambem nao resolvia -- o manifesto de resume o
+    ressuscitava no proximo boot. Daí os tres passos, nesta ordem:
+
+    1. marcar como cancelado, para o `run_job` nao chamar isto de falha e para a
+       fila nao iniciar um job que ainda esperava vaga;
+    2. **apagar o manifesto**, senao o scan de resume o re-enfileira em 30s --
+       era exatamente o que fazia um job "cancelado" voltar do nada;
+    3. matar o processo, se ja houver um.
+    """
+    job = jobs.get(job_id) or _job_view_from_disk(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _assert_job_owner(request, job)
+
+    if job.get('status') in ('completed', 'failed', 'cancelled'):
+        return {"status": job.get('status'), "cancelled": False,
+                "detail": "O job já tinha terminado."}
+
+    _cancelled_jobs.add(job_id)
+    _clear_resume_manifest(job_id)
+    _terminar_processo(_job_processes.get(job_id))
+
+    if job_id in jobs:
+        jobs[job_id]['status'] = 'cancelled'
+        jobs[job_id].setdefault('logs', []).append("Job cancelado pelo usuário.")
+    print(f"🛑 Job cancelado pelo usuário: {job_id}")
+    return {"status": "cancelled", "cancelled": True}
+
+
+def _resumo_do_job(job_id: str, job: dict) -> dict:
+    """Uma linha da lista de projetos. So o que a lista precisa desenhar --
+    o log inteiro de um job de uma hora tem milhares de linhas e nao cabe aqui."""
+    resultado = job.get('result') or {}
+    clipes = resultado.get('clips') or []
+    titulo = None
+    if clipes:
+        primeiro = clipes[0] or {}
+        titulo = (primeiro.get('video_title_for_youtube_short')
+                  or primeiro.get('title'))
+    criado = job.get('created_at')
+    if criado is None:
+        try:
+            criado = os.path.getmtime(os.path.join(OUTPUT_DIR, job_id))
+        except OSError:
+            criado = 0
+    return {
+        "job_id": job_id,
+        "status": _presented_status(job_id, job),
+        "title": titulo,
+        "source_url": _job_source_url(job),
+        "clip_count": len(clipes),
+        "created_at": criado,
+        **_stage_view(job),
+    }
+
+
+@app.get("/api/jobs")
+async def list_jobs(request: Request):
+    """Os projetos deste usuario, do mais recente para o mais antigo.
+
+    Junta memoria e disco porque as duas metades sao parciais: a memoria perde
+    tudo num restart do container, e o disco nao conhece um job que ainda esta
+    na fila (a pasta so nasce quando o `main.py` comeca a escrever).
+    """
+    _recover_jobs_from_disk()
+    vistos = []
+    for job_id, job in list(jobs.items()):
+        if BILLING_ENABLED:
+            try:
+                await _assert_job_owner(request, job)
+            except HTTPException:
+                continue
+        vistos.append(_resumo_do_job(job_id, job))
+    vistos.sort(key=lambda j: j.get('created_at') or 0, reverse=True)
+    return {"jobs": vistos}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str, request: Request):
+    """Apaga um projeto: cancela se estiver rodando, depois remove a pasta.
+
+    Cancelar **antes** de apagar nao e detalhe. Apagar a pasta debaixo de um
+    `main.py` vivo deixa o processo escrevendo num diretorio que ja nao existe,
+    e o manifesto sobrevive na memoria do scan -- foi assim que um job apagado a
+    mao continuou aparecendo como se estivesse rodando.
+    """
+    job = jobs.get(job_id) or _job_view_from_disk(job_id)
+    if job is None:
+        # Ja nao existe: apagar o que nao existe e sucesso, nao erro.
+        _apagar_pasta_do_job(job_id)
+        jobs.pop(job_id, None)
+        return {"deleted": True}
+    await _assert_job_owner(request, job)
+
+    if job.get('status') in ('processing', 'queued'):
+        _cancelled_jobs.add(job_id)
+        _clear_resume_manifest(job_id)
+        _terminar_processo(_job_processes.get(job_id))
+
+    jobs.pop(job_id, None)
+    _apagar_pasta_do_job(job_id)
+    print(f"🗑️  Projeto apagado: {job_id}")
+    return {"deleted": True}
+
+
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str, request: Request):
     job = jobs.get(job_id)
@@ -2592,6 +2827,7 @@ async def get_status(job_id: str, request: Request):
         "logs": _visible_logs(job['logs']),
         "result": job.get('result'),
         "timings": _job_timings(job_id),
+        **_stage_view(job),
     }
 
 

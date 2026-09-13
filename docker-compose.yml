@@ -40,6 +40,18 @@ services:
     container_name: cortes-frontend
     ports:
       - "5175:5173"
+    environment:
+      # Sem isto, no Windows, um `git pull` de `.jsx` nao chega ao Vite: o bind
+      # mount do Docker Desktop nao repassa os eventos do sistema de arquivos do
+      # Windows para o inotify do Linux, e o dev server continua servindo o
+      # grafo de modulos que leu quando o container subiu. O arquivo esta la
+      # dentro; nada avisa. Custou uma aba inteira que "nao aparecia" enquanto o
+      # backend ja respondia ao endpoint novo dela.
+      #
+      # A variavel esta so aqui, e nao no `vite.config.js`, porque polling
+      # custa CPU e so e preciso dentro do container: `npm run dev` direto na
+      # maquina recebe os eventos normalmente.
+      - VITE_USE_POLLING=1
     volumes:
       - ./dashboard:/app
       - /app/node_modules

@@ -18,7 +18,7 @@ São quatro coisas, e só a terceira demora:
 | 0 | Baixar o projeto para o seu computador | 3 min |
 | 1 | Pegar as chaves de API (grátis) | 5 min |
 | 2 | Criar o arquivo `.env` e colar as chaves | 2 min |
-| 3 | `docker compose up --build` | 15–40 min **na primeira vez**, segundos depois |
+| 3 | `docker compose up -d --build` | 15–40 min **na primeira vez**, segundos depois |
 | 4 | Mandar um vídeo pelo navegador | 5–20 min |
 
 Nada aqui custa dinheiro. Nenhuma chave paga foi configurada, e a Fase 0.3
@@ -214,6 +214,19 @@ Prompt de Comando. Todos entram na pasta certa sozinhos, então não é preciso
 | `reconstruir-gpu.bat` | o mesmo, com as libs de CUDA. Roda-se **uma vez** |
 | `abrir-painel.bat` | abre `localhost:5175` no navegador |
 | `conferir-gpu.bat` | responde se a placa chegou ao container |
+| `ver-log.bat` | mostra o log do backend ao vivo. **A única janela que fica rolando** |
+
+**Todos sobem em modo destacado (`-d`) e devolvem o terminal**, desde
+13-set-2026. Antes ficavam anexados ao log, e daí vinha uma confusão razoável:
+a janela nunca fechava, cada atalho aberto virava mais uma janela rolando
+`GET /health/ready ... 200 OK` para sempre, e ficava parecendo que havia quatro
+sistemas rodando ao mesmo tempo. **Não havia: é uma pilha só.** `docker compose
+up` não sobe nada novo se os containers já estão de pé — ele só se *anexa* ao
+log deles. Quatro janelas eram quatro leituras do mesmo log.
+
+Com `-d`, fechar a janela não para nada (e nunca parava — veja `parar.bat`
+abaixo). Quando o log for de fato necessário, ele tem um atalho próprio:
+`ver-log.bat`.
 
 **O `--build` não é o normal, é a exceção.** Ele reconstrói a imagem inteira —
 os 15 a 40 minutos. Só faz sentido quando muda a *lista de dependências*, e isso
@@ -230,20 +243,38 @@ O que varia é se o processo que está rodando **percebe**:
 
 | Processo | Percebe sozinho? | Por quê |
 |---|---|---|
-| **Vite** (frontend) | **sim** | vigia os arquivos; é para isso que serve o modo dev |
-| **uvicorn** (backend) | **sim**, desde 13-set-2026 | o `docker-compose.yml` roda com `--reload`. O `CMD` do Dockerfile continua sem ele, que é o que produção usaria |
+| **Vite** (frontend) | **sim**, com polling | vigia os arquivos — mas no Windows precisa de `VITE_USE_POLLING=1`, veja o quadro abaixo |
+| **uvicorn** (backend) | **no Windows, não** | roda com `--reload`, e o `--reload` depende dos mesmos eventos que não chegam. Por isso o `atualizar.bat` reinicia o backend por conta própria (~3 s) |
 | **a imagem** (torch, node_modules) | só com `--build` | pacote instalado mora na imagem, não na pasta montada |
+
+> **O bind mount do Windows não repassa evento de arquivo, e isso custou uma
+> aba inteira.** A aba **Projetos** foi ao GitHub, o `git pull` a trouxe para o
+> disco, o backend já respondia ao endpoint novo dela (`GET /api/jobs 200 OK`
+> no log) — e ela não aparecia na barra lateral. O arquivo estava lá dentro; o
+> que faltou foi alguém *avisar* o Vite. O Docker Desktop no Windows monta uma
+> pasta do `C:\` dentro de um container Linux atravessando uma camada que não
+> traduz as notificações do sistema de arquivos, então o inotify do container
+> nunca dispara: o dev server segue servindo o grafo de módulos que leu quando
+> subiu, indefinidamente. É por isso que recriar o container "resolvia" — na
+> subida ele relê tudo do disco.
+>
+> Duas correções, uma para cada lado: o `docker-compose.yml` liga
+> `VITE_USE_POLLING=1` no frontend (o `vite.config.js` troca os eventos por uma
+> varredura a cada 300 ms; é barato porque só olha `dashboard/`), e o
+> `atualizar.bat` reinicia o backend explicitamente em vez de torcer para o
+> `--reload` perceber — no backend a mesma varredura sairia cara, porque o
+> repositório inteiro está montado em `/app` e `output/` cresce a cada job.
 
 Daí a tabela:
 
 | O que mudou no `pull` | O que rodar |
 |---|---|
 | só `docs/*.md` | nada |
-| `.jsx`, `.css` | nada — o Vite recarrega o navegador |
-| `.py` | nada — o uvicorn reinicia sozinho (~1 s no log) |
+| `.jsx`, `.css` | nada — o Vite recarrega o navegador (com `Ctrl+F5` se teimar) |
+| `.py` | `atualizar.bat` já reinicia o backend; à mão, `docker compose restart backend` |
 | `vite.config.js`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
 | `docker-compose.yml` | `docker compose up -d` (recria o container, sem rebuild) |
-| `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up --build` |
+| `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up -d --build` |
 
 **`--build` é o caro, e quase nunca é o certo.** Ele reconstrói a imagem — os
 15 a 40 minutos da primeira vez. Só faz sentido quando muda a *lista de
@@ -256,8 +287,15 @@ dependências*, nunca quando muda só o código.
 > `--reload-exclude` não têm efeito** e varre a árvore inteira atrás de `.py` a
 > cada ciclo — `output/` incluído, que cresce a cada job. Por isso o
 > `watchfiles` está fixado no `requirements.txt`, e por isso ligar isto custou
-> **um** `docker compose up --build`. Depois dele, `.py` entra na mesma regra
-> do `.jsx` para sempre.
+> **um** `docker compose up --build`.
+>
+> O que ele **não** resolve é o bind mount do Windows: o `watchfiles` também
+> espera eventos do sistema de arquivos, e eles não atravessam. Ele tem um modo
+> de polling (`WATCHFILES_FORCE_POLLING=1`), e deliberadamente não está ligado —
+> o repositório inteiro está montado em `/app`, então a varredura passaria por
+> `output/` a cada ciclo, que é exatamente o problema do `StatReload` de volta
+> por outra porta. Em vez disso o `atualizar.bat` reinicia o backend quando o
+> `pull` traz código: são ~3 s, e não custam CPU o dia inteiro.
 
 ---
 
@@ -423,7 +461,7 @@ não acha nada.
 
 ```bat
 cd /d C:\cortes
-docker compose up --build
+docker compose up -d --build
 ```
 
 (`docker compose`, com espaço e sem hífen. O `docker-compose` com hífen é a v1,
@@ -431,8 +469,10 @@ antiga.)
 
 A primeira vez leva de 15 a 40 minutos: a imagem instala torch, torchvision,
 ultralytics, mediapipe e faster-whisper. **As seguintes sobem em segundos.**
-Deixe a janela aberta — é ela que mostra o log. Para parar tudo depois:
-Ctrl+C na janela.
+
+O `-d` é o que faz o terminal voltar quando termina, em vez de ficar anexado ao
+log para sempre. A construção continua aparecendo na tela — ela demora, convém
+ver. Para parar tudo depois: `parar.bat`, ou `docker compose down`.
 
 Sobem três serviços:
 
@@ -450,7 +490,7 @@ na imagem não faz o container enxergar a placa.
 ```bat
 cd /d C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
 docker compose build --build-arg GPU=1 backend
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
 O `docker-compose.gpu.yml` é uma **sobreposição**: ele reserva a GPU para o
@@ -472,27 +512,33 @@ docker compose exec backend python -c "import torch; print(torch.cuda.is_availab
 aí o `WHISPER_DEVICE=cuda` cai para CPU sozinho, sem erro nenhum. Funciona, só
 que lento, que é o pior modo de falhar.
 
-**Subiu quando aparecerem estas três linhas**, uma de cada serviço:
+**Subiu quando o `-d` devolver o terminal e os três aparecerem de pé:**
 
-```
-openshorts-backend   | INFO:     Uvicorn running on http://0.0.0.0:8000
-openshorts-frontend  |   ➜  Local:   http://localhost:5173/
-openshorts-renderer  | [render-service] Listening on port 3100
+```bat
+docker compose ps
 ```
 
-O `5173` da linha do frontend é a porta **dentro** do container; na sua máquina
-o painel atende em **5175** (o `docker-compose.yml` mapeia `"5175:5173"`). Não
-é erro.
+```
+NAME               STATUS
+cortes-backend     Up 20 seconds (healthy)
+cortes-frontend    Up 19 seconds
+cortes-renderer    Up 19 seconds
+```
 
-**Depois disso o log não para de rolar, com dezenas de
-`GET /health/ready ... 200 OK` — e isso é o normal.** É o `HEALTHCHECK` do
-Dockerfile batendo no backend a cada poucos segundos para confirmar que ele
-continua vivo, e `200 OK` é a resposta certa. Linhas idênticas rolando para
-sempre têm a cara exata de um loop travado; aqui são a aparência de um sistema
-saudável.
+O log do frontend anuncia `Local: http://localhost:5173/`. Esse `5173` é a
+porta **dentro** do container; na sua máquina o painel atende em **5175** (o
+`docker-compose.yml` mapeia `"5175:5173"`). Não é erro — só não adianta digitar
+o que está escrito no log.
 
-**Não feche essa janela.** Enquanto ela estiver aberta, os três serviços estão
-de pé. Para parar tudo: Ctrl+C nela.
+**No log, `GET /health/ready ... 200 OK` a cada poucos segundos, sem parar, é o
+normal.** É o `HEALTHCHECK` do Dockerfile perguntando ao backend se ele
+continua vivo, e `200` é a resposta certa. Linhas idênticas rolando para sempre
+têm a cara exata de um loop travado; aqui são a aparência de um sistema
+saudável. (`ver-log.bat` é o atalho para ver isso quando você quiser.)
+
+**Fechar a janela não para nada** — e nunca parou, mesmo antes do `-d`: os três
+serviços têm `restart: unless-stopped` no compose, então o Docker os religa. O
+único jeito de encerrar de verdade é `parar.bat` (`docker compose down`).
 
 ---
 
@@ -686,7 +732,7 @@ git clone https://github.com/JonathanDelmonte/Automated-Multi-Source-Short-Form-
 cd cortes
 cp .env.example .env
 nano .env          # ou o editor que preferir
-docker compose up --build
+docker compose up -d --build
 ```
 
 E a conferência do passo 4 pode ser por terminal:

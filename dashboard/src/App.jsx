@@ -882,14 +882,23 @@ function App() {
   // One nav definition drives all three surfaces: the desktop rail, the mobile
   // drawer, and the bottom tab bar. `short` is the tab-bar label — the full one
   // wraps to two lines in a 5-up bar on a 360px phone.
+  //
+  // O `ord` é o número que aparece à direita de cada item, e ele é **calculado
+  // pela posição**, não escrito à mão. Escrito à mão era o que estava aqui, e
+  // a lista mostrava `01 03 05 07`: os pares eram as abas AI Shorts, UGC
+  // Gallery e History, que saíram com as dependências pagas (Fase 0.3) e com o
+  // módulo comercial (ADR-001), deixando buracos que não querem dizer nada
+  // para quem olha. Numerar pela posição também acerta sozinho o caso do
+  // `history`, que só existe em modo cloud: sem ele os números seguem
+  // seguidos, com ele também.
   const navItems = [
-    { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
-    { id: 'projects', ord: '02', icon: FolderOpen, label: 'Projetos', short: 'projetos', primary: true },
-    { id: 'ai-agent', ord: '03', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
-    { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
-    ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History', short: 'history' }] : []),
-    { id: 'settings', ord: '07', icon: Settings, label: 'Settings', short: 'settings' },
-  ];
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
+    { id: 'projects', icon: FolderOpen, label: 'Projetos', short: 'projetos', primary: true },
+    { id: 'ai-agent', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
+    { id: 'thumbnails', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
+    ...(billingEnabled && isSignedIn ? [{ id: 'history', icon: History, label: 'History', short: 'history' }] : []),
+    { id: 'settings', icon: Settings, label: 'Settings', short: 'settings' },
+  ].map((item, i) => ({ ...item, ord: String(i + 1).padStart(2, '0') }));
   const activeNav = navItems.find((n) => n.id === activeTab);
 
   // Escape closes the mobile drawer. The shell itself is overflow-hidden, so

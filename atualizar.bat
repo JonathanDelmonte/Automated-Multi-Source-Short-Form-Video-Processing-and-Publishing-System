@@ -10,6 +10,13 @@ for /f %%i in ('git rev-parse HEAD') do set ANTES=%%i
 git pull
 for /f %%i in ('git rev-parse HEAD') do set DEPOIS=%%i
 
+if "%ANTES%"=="%DEPOIS%" (
+  echo.
+  echo Nada novo para baixar. Subindo o que ja existe.
+  docker compose up -d
+  goto fim
+)
+
 git diff --name-only %ANTES% %DEPOIS% | findstr /R "requirements.txt package.json Dockerfile" >nul
 if %errorlevel%==0 (
   echo.
@@ -22,4 +29,34 @@ if %errorlevel%==0 (
   exit /b 1
 )
 
-docker compose up
+docker compose up -d
+if %errorlevel% neq 0 (
+  echo.
+  echo Nao subiu. O erro esta acima.
+  pause
+  exit /b %errorlevel%
+)
+
+REM O `--reload` do uvicorn depende de eventos do sistema de arquivos, e eles
+REM NAO atravessam o bind mount do Docker Desktop quando o repositorio mora num
+REM caminho do Windows (C:\...). Entao aqui a atualizacao do backend e explicita
+REM em vez de torcer para ele perceber: sao ~3 s, e tira a duvida de "sera que
+REM o pull chegou?". O frontend nao precisa -- o Vite roda com polling
+REM (VITE_USE_POLLING=1 no docker-compose.yml), que enxerga a mudanca mesmo sem
+REM os eventos.
+echo.
+echo Reiniciando o backend para valer o que foi baixado...
+docker compose restart backend
+
+:fim
+echo.
+docker compose ps
+echo.
+echo ============================================================
+echo  Atualizado. No ar: http://localhost:5175
+echo.
+echo  No navegador, de um Ctrl+F5 na aba do painel.
+echo  Pode fechar esta janela: os servicos ficam rodando.
+echo ============================================================
+echo.
+pause

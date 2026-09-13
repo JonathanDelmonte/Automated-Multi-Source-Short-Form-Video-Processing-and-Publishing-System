@@ -209,9 +209,17 @@ class Source(Base, TenantScoped):
     __table_args__ = (
         ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
                              name="fk_sources_tenant"),
+        # Os ids da secao 4, mais `direct`. A lista da secao 4 nao previu uma
+        # URL de arquivo solta -- um mp4 num CDN, um link de tmpfiles que um
+        # agente subiu pelo MCP, um objeto no R2 --, mas o fork ingere isso
+        # desde o upstream (`plan_download_attempts(..., youtube=False)` e o
+        # `file_hosts.py` existem so para esse caso). Gravar essas como
+        # `upload` seria mentira na linha: `upload` e arquivo que entrou pelo
+        # nosso endpoint, e a diferenca importa -- uma expira em 60 minutos.
+        # Ver `sources/direct.py`.
         CheckConstraint(
             "adapter in ('youtube','youtube-channel','twitch-vod','twitch-live',"
-            "'gdrive','upload')", name="ck_sources_adapter"),
+            "'gdrive','upload','direct')", name="ck_sources_adapter"),
         CheckConstraint("duration_ms is null or duration_ms >= 0",
                         name="ck_sources_duration_nao_negativa"),
         Index("ix_sources_tenant_id_id", "tenant_id", "id", unique=True),

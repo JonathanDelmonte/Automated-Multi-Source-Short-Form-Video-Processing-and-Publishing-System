@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 e Fase 0.5 completas em código.** Próximo: Fase 1 — ingestão |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, bloco 1.1 concluído |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -364,18 +364,18 @@ O do §9, mais uma condição:
 > Um corte vertical legendado sai na sua máquina, sem nenhuma chave de API paga
 > configurada — **e existe medição de tokens e tempo por estágio de um vídeo real.**
 
-**Estado: completa em código, pendente de uma execução real.** Os cinco blocos estão
-feitos e verificados no que este ambiente permite: 637 testes passando, backend e
-painel subindo, build limpo, nenhuma dependência paga em caminho ativo, cascata
-roteando e degradando, e a medição reportando. O que falta é fora do meu alcance aqui:
+**Estado: FECHADA em 13-set-2026.** Os três itens que dependiam da máquina do autor
+foram executados lá, nesta ordem:
 
-| Pendente | Por quê |
+| Era pendente | Fechado em |
 |---|---|
-| `docker compose up --build` | gateway deste container nega o CDN do Docker Hub (403 de política) |
-| Uma chamada HTTP real ao Groq | não há chave neste ambiente |
-| Um vídeo de verdade atravessando o pipeline | precisa da stack de ML (torch, ~2GB) e do `ffmpeg` |
+| `docker compose up --build` | 13-set, depois de corrigir o `.dockerignore` (o cache do Whisper usa symlinks que o contexto de build não segue) |
+| Uma chamada HTTP real ao Groq | 13-set, `/api/config` com os dois provedores `ready: true` |
+| Um vídeo de verdade atravessando o pipeline | 13-set, **6 cortes** de um vídeo de 10 min, com custo medido (~US$ 0,005 estimados, cota gratuita) |
 
-São os três primeiros testes a fazer na sua máquina, e juntos fecham o critério.
+O que sobrou dessa execução e alimenta a Fase 1: o `tokens / minuto falado` do sidecar
+`<base>.timings.json`. É o número que converte a calibração do pré-filtro (bloco 1.4)
+de achismo em medição, e é por isso que o bloco 0.5 existiu.
 
 > **Cuidado com o nome:** o **bloco 0.5** (instrumentar, acima) é parte da Fase 0. A
 > **Fase 0.5** (o schema com `tenant_id`, abaixo) é outra coisa, inserida por ADR-008.
@@ -456,7 +456,7 @@ em silêncio e o bug aparece no deploy.
 
 ## Fases 1 a 5 — ajustes sobre o §9
 
-### Fase 1 — camada de ingestão · 1–2 semanas · ◀ PRÓXIMA
+### Fase 1 — camada de ingestão · 1–2 semanas · ◀ EM CURSO
 
 Conforme o §9, com duas adições:
 
@@ -477,6 +477,35 @@ aqui; o alvo é 10GB.
 
 **Pronto quando:** os quatro tipos de link entram pelo mesmo endpoint, **e** uma live
 de 4h é processada sem estourar o orçamento diário de tokens.
+
+#### Blocos
+
+| Bloco | O quê | Estado |
+|---|---|---|
+| 1.1 | interface `SourceAdapter` (`sources/`), com YouTube, URL direta e arquivo local | ✅ concluído |
+| 1.2 | adapter de Twitch (VOD e clip) | |
+| 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | |
+| 1.4 | pré-filtro heurístico (ADR-004) | |
+| 1.5 | Twitch ao vivo, worker de longa duração | |
+| 1.6 | Google Drive e upload de 10GB em streaming | |
+| 1.7 | YOLO preguiçoso e tracker atrás de interface (ADR-003) | |
+
+O 1.1 vem antes da Twitch, que o §9 manda fazer primeiro, porque a Twitch **é** um
+adapter: sem a interface, ela seria mais um ramo dentro do `__main__` — exatamente a
+dispersão que a fase existe para desfazer.
+
+#### Divergência do §4 que o bloco 1.1 registrou
+
+A lista de `id` da interface do §4 (`youtube` | `youtube-channel` | `twitch-vod` |
+`twitch-live` | `gdrive` | `upload`) **não previu a URL de arquivo solta** — um mp4 num
+CDN, um link de tmpfiles que um agente sobe pelo MCP, um objeto no R2. O fork ingere
+isso desde o upstream: `plan_download_attempts(..., youtube=False)` e o `file_hosts.py`
+existem só para esse caso.
+
+Entrou como `direct`, e o `CHECK` de `sources.adapter` foi ampliado por migração
+(`2f1b7c4ae903`). Gravar essas fontes como `upload` teria evitado a migração e estragado
+o dado: `upload` é arquivo que entrou pelo nosso endpoint e fica até a limpeza; `direct`
+é link de terceiro que pode expirar em 60 minutos. A coluna existe para distinguir isso.
 
 ### Fase 2 — motor de template · ~1 semana
 

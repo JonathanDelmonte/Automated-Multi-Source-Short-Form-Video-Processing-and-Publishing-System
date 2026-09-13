@@ -224,6 +224,26 @@ class TestConstraints:
                     return "recusou"
         assert corre(_t) == "recusou"
 
+    def test_sources_aceita_todo_adapter_registrado(self, banco):
+        """O CHECK da coluna e a lista de adapters de verdade nao podem divergir.
+
+        Sao dois lugares que dizem a mesma coisa em linguagens diferentes -- um
+        CHECK em SQL e um REGISTRY em Python --, e quem acrescentar um adapter
+        novo vai mexer so no segundo. O erro so apareceria na primeira linha
+        gravada com a fonte nova, que e depois do download inteiro.
+        """
+        import sources
+
+        async def _t():
+            async with db.tenant() as t:
+                for adapter_id in sources.adapter_ids():
+                    t.add(Source(adapter=adapter_id, input=f"entrada de {adapter_id}"))
+                await t.commit()
+                return "aceitou"
+        assert corre(_t) == "aceitou", (
+            "algum adapter de sources/ nao passa no CHECK de sources.adapter -- "
+            "acrescente-o em db_models.Source e crie a migracao")
+
     def test_clips_recusa_fim_antes_do_inicio(self, banco):
         from sqlalchemy.exc import IntegrityError
 

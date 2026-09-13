@@ -55,9 +55,36 @@ Três consequências que valem para as próximas fases:
 | `file_hosts.py` | origens que não são YouTube |
 | `app.py:process_endpoint` (2236) | upload direto e entrada do job |
 | `quality_probe.py` | probe de qualidade, rodado como subprocesso próprio (`app.py:2026`) |
+| **`sources/`** | **a camada de adapter, desde o bloco 1.1** |
 
-Não há camada de adapter: a decisão de origem está espalhada entre `is_youtube_url`,
-`plan_download_attempts` e o `__main__`. É exatamente o que a Fase 1 extrai.
+**Atualizado no bloco 1.1 (13-set-2026).** Quando este documento foi escrito não havia
+camada de adapter: a decisão de origem estava espalhada entre `is_youtube_url`
+(roteamento por host), `plan_download_attempts` (rotas de rede) e o `__main__` (URL ou
+arquivo), e nenhum dos três era o dono da pergunta *"que tipo de fonte é esta?"*.
+
+Agora é o `sources/`: uma fonte, uma classe, com `matches` / `probe` / `fetch`, e o
+pipeline recebe sempre a mesma coisa — um arquivo em disco e um título. A costura é o
+`__main__`, como este documento previa; o que sobrou lá é só a escolha do diretório de
+saída, que é ergonomia de CLI.
+
+| Adapter | `id` | Casa com |
+|---|---|---|
+| `sources/youtube.py` | `youtube` | os hosts do YouTube |
+| `sources/direct.py` | `direct` | qualquer outra URL http(s) |
+| `sources/local.py` | `upload` | o que não é URL (o upload do painel, o `-i`) |
+
+Três coisas que o bloco travou, e que valem para os adapters seguintes:
+
+- **Os adapters chamam o código que já existe; não o movem.** `download_youtube_video`
+  são ~240 linhas do upstream. Trazê-las para dentro do adapter daria conflito em todo
+  `git fetch upstream` — que é justamente o que as interfaces do §4 existem para evitar.
+- **O `probe` daqui é o barato**, o que dá para saber sem tocar a rede. O probe caro
+  (duração, tamanho) já tem dono — `quality_probe.py` e as regras de quando vale pagar
+  por ele em `cloud/metering.probe_url_minutes`. Um teste falha se um `probe` passar a
+  importar o `main`.
+- **O pacote não importa `main` no topo** (só dentro do `fetch`). Além de evitar o
+  ciclo, isso o mantém importável só com a biblioteca padrão — então os testes de
+  roteamento rodam no CI, que de propósito não instala torch nem scenedetect.
 
 > **Herança de proxy pago sem consumidor.** O upstream roteava downloads por proxies
 > estáticos e por DataImpulse (por GB), e a contabilidade morava em

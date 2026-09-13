@@ -27,6 +27,7 @@ import layout_picker
 import llm_backend
 import llm_cascade
 import job_metrics
+import sources
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -1910,6 +1911,19 @@ if __name__ == '__main__':
         return path
     
     # 1. Get Input Video
+    #
+    # Camada de ingestao (Fase 1, §4): quem sabe buscar cada tipo de fonte e o
+    # adapter, nao este bloco. O que sobrou aqui e a escolha do diretorio de
+    # saida -- que e ergonomia de linha de comando, e por isso continua
+    # diferente entre URL e arquivo local (num arquivo local, o padrao e a
+    # pasta dele; numa URL, a pasta corrente).
+    raw_source = args.url or args.input
+    source = sources.resolve(raw_source)
+    source_info = source.probe(raw_source)
+    print(f"🔌 Fonte: {source_info.label}")
+    for _note in source_info.notes:
+        print(f"   ⚠️  {_note}")
+
     if args.url:
         # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
         # For whole-video runs (--skip-analysis), --output can be a file path.
@@ -1925,10 +1939,12 @@ if __name__ == '__main__':
                 output_dir = "."
         
         with job_metrics.stage("01_ingest"):
-            input_video, video_title = download_youtube_video(args.url, output_dir)
+            fetched = source.fetch(args.url, output_dir)
+        input_video, video_title = fetched.path, fetched.title
     else:
-        input_video = args.input
-        video_title = os.path.splitext(os.path.basename(input_video))[0]
+        with job_metrics.stage("01_ingest"):
+            fetched = source.fetch(args.input)
+        input_video, video_title = fetched.path, fetched.title
         
         if args.output and not args.skip_analysis:
             # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).

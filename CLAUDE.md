@@ -145,6 +145,33 @@ parecem arbitrarias no codigo estao justificadas la.
     mapeamento em `tailwind.config.js`, as classes de `index.css` e os tres
     primitivos de `components/ui/`), nao as 4.800 de landing e pricing.
 
+### Camada de ingestao (`sources/`, Fase 1 bloco 1.1)
+
+Uma fonte, uma classe, com `matches` / `probe` / `fetch`; o pipeline recebe
+sempre um arquivo em disco e um titulo. Antes disto a decisao de origem estava
+em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
+`main.py`, e nenhum era o dono da pergunta.
+
+- **Os adapters chamam o `main`; nao movem o codigo dele.** `download_youtube_video`
+  sao ~240 linhas do upstream (cascata de proxy, clients do yt-dlp,
+  contabilidade de bytes pagos). Traze-las para o adapter daria conflito em todo
+  `git fetch upstream`.
+- **O import do `main` e tardio, dentro do `fetch`** -- evita o ciclo e mantem o
+  pacote importavel so com a stdlib, entao os testes de roteamento rodam no CI,
+  que de proposito nao instala torch nem scenedetect. **Nao por `import main` no
+  topo de um adapter.**
+- **`probe()` aqui e o barato**, sem rede. O probe caro (duracao, tamanho) tem
+  dono: `quality_probe.py` e `cloud/metering.probe_url_minutes`, com as regras
+  de quando vale pagar por ele. `tests/test_sources.py` falha se um `probe`
+  passar a importar o `main`.
+- **A ordem do `REGISTRY` e o desempate**: `DirectUrlAdapter` aceita qualquer
+  http(s), entao plataforma nova entra **antes** dele ou nunca e alcancada.
+- **`id` novo exige migracao.** `sources.adapter` tem `CHECK`; um id fora da
+  lista so falharia ao gravar a primeira linha, depois do download inteiro.
+  `tests/test_db_schema.py::test_sources_aceita_todo_adapter_registrado` quebra
+  antes. O `direct` (URL de arquivo solta, que a lista da secao 4 nao previa)
+  entrou pela migracao `2f1b7c4ae903`.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

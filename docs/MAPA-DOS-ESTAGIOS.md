@@ -177,6 +177,15 @@ reenquadramento, não à atribuição de fala no transcript. Trabalho novo da Fa
 | `llm_backend.py` (165 l.) | **já existe uma saída para LLM não-Gemini** |
 | `main.py:get_visual_clips` (1724) | caminho por frames, quando a fala é esparsa |
 | `main.py:speech_is_sparse` (1716) | decide entre transcript e frames |
+| **`prefilter.py`** | **pré-filtro do ADR-004, desde o bloco 1.4** |
+
+**Atualizado no bloco 1.4.** Entre `build_transcript_windows` e o passe de
+pontuação entrou o pré-filtro. Ele **corta por orçamento, nunca por qualidade**:
+num vídeo curto devolve a lista inteira e não faz nada; numa live de 4h — 240
+janelas, ~82k tokens só na pontuação, contra os 100.000/dia do Groq — escolhe as
+que cabem. O orçamento é o menor teto publicado da cadeia inteira, não o do
+primeiro provedor, porque pelo ADR-005 a fonte longa começa no Gemini, que não
+publica teto. Detalhes e medição em `PLANO-DE-ACAO.md`, seção da Fase 1.
 
 `llm_backend.py` é a melhor notícia para o bloco 0.4: `LLM_BASE_URL` + `LLM_MODEL` +
 `LLM_API_KEY` já roteiam as duas passadas de `get_viral_clips` para qualquer endpoint

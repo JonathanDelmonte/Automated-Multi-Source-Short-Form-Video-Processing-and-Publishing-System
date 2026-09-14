@@ -29,6 +29,7 @@ import llm_cascade
 import job_metrics
 import sources
 import audio_probe
+import prefilter
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -1648,7 +1649,7 @@ def score_batch_size(duration_seconds=None):
     return 3 if llm_backend.active() else 8
 
 
-def get_viral_clips(transcript_result, video_duration):
+def get_viral_clips(transcript_result, video_duration, audio_path=None):
     """Two-pass clip selection: score transcript windows, then detail the best.
 
     Windowing gives even coverage on long videos (a single call over the whole
@@ -1706,6 +1707,13 @@ def get_viral_clips(transcript_result, video_duration):
             transcript_result, video_duration,
             window_seconds=max(90, int(max_secs * 1.5)))
         print(f"   Built {len(windows)} scoring window(s).")
+
+        # Pre-filtro heuristico (ADR-004). Corta por ORCAMENTO, nao por
+        # qualidade: num video curto, onde tudo cabe no teto diario de tokens,
+        # ele devolve a lista inteira e nao faz nada. Numa live de 4h, que
+        # sozinha consome 60-75% do teto do Groq, ele escolhe as que cabem.
+        _envelope = prefilter.envelope_from_wav(audio_path) if audio_path else None
+        windows = prefilter.apply(windows, words, chain=chain, envelope=_envelope)
         costs = []
 
         # --- Pass 1: score windows in batches, keep the highest-scoring ---
@@ -2131,7 +2139,7 @@ if __name__ == '__main__':
         job_metrics.fact("spoken_seconds", job_metrics.spoken_seconds_from(transcript))
         with job_metrics.stage("04_detect"):
             if transcript is not None:
-                clips_data = get_viral_clips(transcript, duration)
+                clips_data = get_viral_clips(transcript, duration, audio_path=audio_path)
             else:
                 clips_data = get_visual_clips(input_video, duration)
 

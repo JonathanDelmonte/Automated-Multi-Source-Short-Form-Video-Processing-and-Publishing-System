@@ -213,6 +213,29 @@ tamanho do arquivo -- e o que sustenta o alvo de 10GB do §4.
 - **`PIPELINE_STAGES` no `app.py` ganhou `02_probe`.** Os testes de progresso
   derivam indice e total da lista; nao voltar a fixar numeros neles.
 
+### Pre-filtro heuristico (`prefilter.py`, Fase 1 bloco 1.4, ADR-004)
+
+Corta janelas de pontuacao antes do LLM. **Corta por ORCAMENTO, nunca por
+qualidade**: nunca decide que uma janela e ruim, decide que so cabem N hoje e
+manda as N melhores. Num video curto ele **nao faz nada** -- e o que o torna
+seguro de deixar ligado antes de existir calibracao. Nao trocar por limiar de
+nota: o erro de um limiar mal calibrado e silencioso.
+
+- **O orcamento e o menor teto publicado da CADEIA**, nao o do primeiro
+  provedor. Pelo ADR-005 fonte longa comeca no Gemini, que nao publica teto --
+  olhar so o primeiro deixaria passar exatamente a live de 4h que o ADR-004
+  quer viabilizar. E a cascata escorrega: um 429 do Gemini poe o job no Groq no
+  meio do caminho.
+- **Nenhum provedor com teto publicado = nao atua.** Sem numero divulgado,
+  cortar seria o achismo que o ADR-004 manda evitar.
+- Piso de `MINIMO_DE_JANELAS`; `PREFILTER_MAX_WINDOWS` manda em tudo.
+- Os quatro sinais do ADR-004, normalizados **relativos ao video** (fala densa
+  num podcast calmo e outra coisa que numa live de gameplay). A energia vem do
+  WAV do estagio 02 e e opcional: sem numpy ou sem WAV, decide com os outros
+  tres.
+- **Os numeros das janelas descartadas vao para o log de proposito**: calibrar
+  isto e trabalho da Fase 5 e precisa de casos reais.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

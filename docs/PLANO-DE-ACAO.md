@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 a 1.3 concluídos |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 a 1.4 concluídos |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -485,7 +485,7 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | 1.1 | interface `SourceAdapter` (`sources/`), com YouTube, URL direta e arquivo local | ✅ concluído |
 | 1.2 | adapter de Twitch (VOD e clip), e a live reconhecida para ser recusada | ✅ concluído |
 | 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | ✅ concluído |
-| 1.4 | pré-filtro heurístico (ADR-004) | |
+| 1.4 | pré-filtro heurístico (ADR-004) | ✅ concluído |
 | 1.5 | Twitch ao vivo, worker de longa duração | |
 | 1.6 | Google Drive e upload de 10GB em streaming | |
 | 1.7 | YOLO preguiçoso e tracker atrás de interface (ADR-003) | |
@@ -493,6 +493,34 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 O 1.1 vem antes da Twitch, que o §9 manda fazer primeiro, porque a Twitch **é** um
 adapter: sem a interface, ela seria mais um ramo dentro do `__main__` — exatamente a
 dispersão que a fase existe para desfazer.
+
+#### O pré-filtro corta por orçamento, não por qualidade (bloco 1.4)
+
+Decisão que não estava no ADR-004 e que o bloco precisou tomar. O ADR lista os
+quatro sinais — energia de áudio, silêncio prolongado, mudança de falante,
+densidade de palavras/segundo — e diz por que o filtro é obrigatório, mas não diz
+**o que fazer com a nota**. As duas opções não são equivalentes:
+
+- *Limiar de qualidade*: descarta a janela cuja nota estiver abaixo de X. Exige a
+  calibração que o próprio ADR-004 diz não existir ainda, e o erro é silencioso —
+  o melhor momento de um vídeo de 10 minutos some sem ninguém notar.
+- *Teto de orçamento*: nunca decide que uma janela é ruim; decide que só cabem N
+  hoje e manda as N mais promissoras. **Num vídeo curto não faz nada.**
+
+O segundo, então, e por isso ele é seguro de deixar ligado antes da calibração.
+
+O orçamento é o **menor teto publicado entre os provedores da cascata**, não o do
+primeiro. Pelo ADR-005 uma fonte longa começa no Gemini, que não publica teto
+estável de tokens — olhar só o primeiro deixaria a live de 4h passar sem filtro
+nenhum, exatamente o vídeo que o pré-filtro existe para viabilizar. E a cascata
+escorrega: basta um 429 do Gemini para o job cair no Groq no meio do caminho e
+precisar caber nos 100.000/dia de lá.
+
+Medido sobre uma live sintética de 4h: 240 janelas custam ~82k tokens só na
+pontuação — perto da estimativa de ~75k que o ADR-004 fez por outro caminho — e o
+filtro mantém 146, dentro de metade do teto do Groq. Os números das janelas
+descartadas vão para o log de propósito: a calibração é trabalho da Fase 5 e
+precisa de casos reais.
 
 #### Divergência do §4 que o bloco 1.1 registrou
 

@@ -163,6 +163,31 @@ parecem arbitrarias no codigo estao justificadas la.
     mapeamento em `tailwind.config.js`, as classes de `index.css` e os tres
     primitivos de `components/ui/`), nao as 4.800 de landing e pricing.
 
+### Documento de template (`template.py`, Fase 2 bloco 2.1)
+
+O JSON da secao 5 -- "nao e um editor de timeline, e um documento de
+configuracao versionado" -- com defaults, validacao, seis presets de legenda e
+a traducao `safeArea` -> `margin_v`. Stdlib pura, entao roda no CI.
+
+- **O ADR-002 ganhou nota: as duas aquisicoes do `clippyme` ja estavam aqui.**
+  A segunda passada existe (`/api/subtitle` requeima legenda sobre o clipe ja
+  renderizado; `/api/hook` idem; `recut` recorta sem reenquadrar) e os presets
+  sao combinacao de botoes que o `generate_ass` ja expoe. Faltava o documento,
+  nao o motor. **Nao adicionar o remote do clippyme para importar o que ja esta
+  escrito.**
+- **`karaoke_fill` nao foi inventado**: e o `subtitles.AUTO_CAPTION_STYLE`,
+  escolhido por medicao em 25-jul-2026. Um teste compara os dois.
+- **Merge e por secao**: `{"safeArea": {"bottomPct": 25}}` mantem o `topPct`.
+  Campo desconhecido passa intacto -- documento versionado, recusar o que ainda
+  nao se le transformaria todo campo novo em migracao.
+- **`safeArea` nao e enfeite** (12% topo, 18% base): e onde o app cobre o
+  quadro com nome de perfil e botoes. O `SAFE_MARGIN_V` de hoje (43, ~15%) ja
+  veio de uma falha observada; os 18% da secao 5 sao mais folga na mesma
+  direcao, e um teste garante que o padrao nunca fique ABAIXO do atual.
+- **Um preset so vale se o `generate_ass` souber receber**: um teste compara
+  as chaves com a assinatura dele, porque argumento errado so quebraria na hora
+  de queimar, depois do render inteiro.
+
 ### Camada de ingestao (`sources/`, Fase 1 bloco 1.1)
 
 Uma fonte, uma classe, com `matches` / `probe` / `fetch`; o pipeline recebe

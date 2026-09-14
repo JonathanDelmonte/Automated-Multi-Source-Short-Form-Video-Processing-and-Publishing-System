@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). **Fase 1 completa em código**; falta exercitar cada fonte numa execução real |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código; **Fase 2 em curso**, bloco 2.1 concluído |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -563,7 +563,7 @@ Entrou como `direct`, e o `CHECK` de `sources.adapter` foi ampliado por migraç�
 o dado: `upload` é arquivo que entrou pelo nosso endpoint e fica até a limpeza; `direct`
 é link de terceiro que pode expirar em 60 minutos. A coluna existe para distinguir isso.
 
-### Fase 2 — motor de template · ~1 semana
+### Fase 2 — motor de template · ~1 semana · ◀ EM CURSO
 
 Reduzida de ~2 semanas por ADR-002. Em vez de escrever o motor, trazer do `clippyme`
 por `git diff` com ancestral comum: o compositor de segunda passada e os seis presets
@@ -574,6 +574,37 @@ preview de 3 segundos. Travar as três decisões do §5 — `safeArea` respeitad
 18% base), template aplicado no download e não no render, preview antes de queimar GPU.
 
 **Pronto quando:** trocar de template não reprocessa o vídeo.
+
+#### Blocos
+
+| Bloco | O quê | Estado |
+|---|---|---|
+| 2.1 | o documento da §5 (`template.py`): defaults, validação, seis presets, `safeArea` → `margin_v` | ✅ concluído |
+| 2.2 | aplicar o template a um clipe em segunda passada, e o preview de 3 s | |
+| 2.3 | CRUD no painel | |
+
+#### O ADR-002 precisa de uma nota: as duas aquisições já estavam aqui
+
+A ADR-002 decidiu trazer do `clippyme` o **compositor de segunda passada** — que
+o §2 chama de *"a melhor ideia de arquitetura dos quatro"* — e os **seis presets
+de legenda**. Lendo o código antes de importar qualquer coisa:
+
+- **A segunda passada já existe no fork.** `/api/subtitle` lê o clipe **já
+  renderizado**, pega a transcrição do `_metadata.json` e requeima a legenda em
+  cima; `/api/hook` faz o mesmo com a sobreposição de texto; o `recut` recorta
+  sem reenquadrar. Trocar de legenda nunca reprocessou o vídeo aqui.
+- **Os seis presets são configuração, não código.** `subtitles.generate_ass` já
+  expõe cor, contorno, realce, opacidade da base, caixa, efeito, caixa alta,
+  alinhamento e janela de palavras. Um preset é uma combinação desses botões — e
+  o primeiro deles não foi inventado: é o `AUTO_CAPTION_STYLE`, escolhido em
+  25-jul-2026 renderizando quatro candidatos num clipe real.
+
+Então o que faltava não era motor: era **o documento**. Os botões existiam
+espalhados por parâmetros de endpoint, sem nome, sem versão e sem um lugar onde
+"o meu estilo" pudesse ser escrito uma vez e reusado. O `clippyme` continua
+disponível como doador se algum bloco seguinte precisar de algo concreto de lá —
+mas adicionar um remote para importar o que já está escrito seria trabalho para
+chegar ao mesmo lugar.
 
 ### Fase 3 — camada Publisher · ~2 semanas
 

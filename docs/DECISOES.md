@@ -101,6 +101,29 @@ forks e seguem como doadores de leitura, conforme o plano original.
 
 **Consequência:** a Fase 2 cai de ~2 semanas para ~1 semana.
 
+### Nota de implementação (bloco 2.1, 14-set-2026) — as duas aquisições já estavam no fork
+
+Ao começar a Fase 2, antes de adicionar o remote, li o código para saber o que
+exatamente importar. As duas coisas que esta ADR queria já existiam:
+
+- **O compositor de segunda passada.** `/api/subtitle` lê o clipe **já
+  renderizado**, pega a transcrição do `_metadata.json` e requeima a legenda em
+  cima dele; `/api/hook` faz o mesmo com a sobreposição; o `recut` recorta sem
+  reenquadrar. Trocar de legenda nunca reprocessou o vídeo neste fork.
+- **Os seis presets de legenda.** `subtitles.generate_ass` já expõe cor,
+  contorno, realce, opacidade da base, caixa, efeito, caixa alta, alinhamento e
+  janela de palavras. Um preset é uma combinação desses botões, e o primeiro
+  deles é o `AUTO_CAPTION_STYLE` que o repositório já escolheu por medição.
+
+O que faltava era o **documento**: os botões existiam espalhados por parâmetros
+de endpoint, sem nome, sem versão, sem lugar onde escrever "o meu estilo" uma
+vez. É o que o `template.py` passou a ser.
+
+**A decisão não foi desfeita** — o `clippyme` continua sendo doador legítimo, e
+adicioná-lo como remote continua sendo o jeito certo de trazer algo de lá. Mas a
+Fase 2 não começa importando: começa com um módulo próprio, e o remote entra se
+e quando um bloco precisar de algo concreto que aqui não exista.
+
 ---
 
 ## ADR-003 — MediaPipe é o padrão; YOLOv8 fica atrás de flag desligada

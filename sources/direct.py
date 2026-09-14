@@ -11,7 +11,7 @@ ganho e o log dizer "URL direta" em vez de "Downloading video from YouTube...".
 """
 from __future__ import annotations
 
-from .base import Fetched, SourceAdapter, is_http_url
+from .base import Fetched, SourceAdapter, is_http_url, modulo_main
 
 
 class DirectUrlAdapter(SourceAdapter):
@@ -23,7 +23,5 @@ class DirectUrlAdapter(SourceAdapter):
         return is_http_url(raw)
 
     def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
-        import main
-
-        path, title = main.download_youtube_video(raw, output_dir)
+        path, title = modulo_main().download_youtube_video(raw, output_dir)
         return Fetched(path=path, title=title, kind=self.id)

@@ -22,7 +22,7 @@ import os
 import re
 
 from .base import (Fetched, SourceAdapter, SourceInfo, SourceNotReady,
-                   host_of, is_http_url)
+                   host_of, is_http_url, modulo_main)
 
 
 def _is_twitch_host(raw: str) -> bool:
@@ -109,9 +109,7 @@ class TwitchVodAdapter(SourceAdapter):
         return SourceInfo(kind=self.id, label=self.label, notes=tuple(notas))
 
     def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
-        import main
-
-        path, title = main.download_youtube_video(raw, output_dir)
+        path, title = modulo_main().download_youtube_video(raw, output_dir)
         return Fetched(path=path, title=title, kind=self.id)
 
 
@@ -156,11 +154,9 @@ class TwitchLiveAdapter(SourceAdapter):
         _, cookiefile = self.cookie_env, self.cookie_file
         vivo = twitch_live.resolve_live(raw, cookiefile=cookiefile)
 
-        # Import tardio, mesma razao dos outros adapters (evita o ciclo com o
-        # `main`) -- aqui so para higienizar o nome do arquivo.
-        import main
-
-        base = main.sanitize_filename(f"{vivo['title']}_bloco")
+        # Resolucao tardia, mesma razao dos outros adapters -- aqui so para
+        # higienizar o nome do arquivo.
+        base = modulo_main().sanitize_filename(f"{vivo['title']}_bloco")
         destino = os.path.join(output_dir or ".", f"{base}.mp4")
         twitch_live.record_block(vivo["stream_url"], destino, segundos)
         return Fetched(path=destino, title=base, kind=self.id,

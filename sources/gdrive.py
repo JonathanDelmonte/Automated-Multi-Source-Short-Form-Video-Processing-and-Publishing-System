@@ -27,7 +27,7 @@ falharia com uma mensagem sobre extrator, que nao ajuda ninguem.
 from __future__ import annotations
 
 from .base import (Fetched, SourceAdapter, SourceInfo, SourceNotReady,
-                   host_of, is_http_url)
+                   host_of, is_http_url, modulo_main)
 
 HOSTS = ("drive.google.com", "docs.google.com")
 
@@ -88,7 +88,5 @@ class GoogleDriveAdapter(SourceAdapter):
 
     def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
         self.assert_fetchable(raw)
-        import main
-
-        path, title = main.download_youtube_video(raw, output_dir)
+        path, title = modulo_main().download_youtube_video(raw, output_dir)
         return Fetched(path=path, title=title, kind=self.id)

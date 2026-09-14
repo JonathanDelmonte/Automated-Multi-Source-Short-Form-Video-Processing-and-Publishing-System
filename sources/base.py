@@ -100,6 +100,31 @@ class SourceAdapter:
         raise NotImplementedError
 
 
+def modulo_main():
+    """O modulo `main`, sem carrega-lo duas vezes.
+
+    `python main.py` carrega o arquivo como `__main__`. Um `import main` la
+    dentro **nao** devolve esse modulo: o Python nao encontra "main" em
+    `sys.modules` e le o arquivo OUTRA VEZ, criando um segundo modulo com o
+    topo reexecutado -- outro grafo do MediaPipe, outro `DETECT_LOCK`, outro
+    conjunto de globais. Funciona por acidente e paga o preco em todo job, que
+    e um subprocesso novo a cada video.
+
+    A checagem e pelo atributo, e nao pelo `__file__`, porque e o que o chamador
+    precisa de verdade. Sob o uvicorn (`app.py`), `__main__` e o entrypoint dele
+    e nao tem o atributo, entao o `import main` normal acontece -- que ali e o
+    certo, porque o `main` ja esta carregado uma vez so.
+    """
+    import sys
+
+    atual = sys.modules.get("__main__")
+    if hasattr(atual, "download_youtube_video"):
+        return atual
+    import main
+
+    return main
+
+
 def host_of(raw: str) -> str:
     """Host em minusculas, ou string vazia se a entrada nao for uma URL."""
     try:

@@ -174,10 +174,16 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   sao ~240 linhas do upstream (cascata de proxy, clients do yt-dlp,
   contabilidade de bytes pagos). Traze-las para o adapter daria conflito em todo
   `git fetch upstream`.
-- **O import do `main` e tardio, dentro do `fetch`** -- evita o ciclo e mantem o
-  pacote importavel so com a stdlib, entao os testes de roteamento rodam no CI,
-  que de proposito nao instala torch nem scenedetect. **Nao por `import main` no
-  topo de um adapter.**
+- **O `main` e resolvido tarde e por `base.modulo_main()`, nunca por
+  `import main`.** Tardio porque evita o ciclo e mantem o pacote importavel so
+  com a stdlib (os testes de roteamento rodam no CI, que de proposito nao
+  instala torch nem scenedetect). E pelo helper porque `python main.py` carrega
+  o arquivo como `__main__`: um `import main` ali dentro **le o arquivo outra
+  vez**, criando um segundo modulo com o topo reexecutado -- outro grafo do
+  MediaPipe, outro `DETECT_LOCK`, outros globais, em todo job.
+  `tests/test_sources_modulo_main.py` roda um subprocesso de verdade para
+  pegar isso; sob o pytest o defeito nao aparece, porque ali `__main__` e o
+  proprio pytest.
 - **`probe()` aqui e o barato**, sem rede. O probe caro (duracao, tamanho) tem
   dono: `quality_probe.py` e `cloud/metering.probe_url_minutes`, com as regras
   de quando vale pagar por ele. `tests/test_sources.py` falha se um `probe`

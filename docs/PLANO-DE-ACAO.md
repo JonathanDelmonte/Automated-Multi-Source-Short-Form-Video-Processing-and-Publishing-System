@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código; **Fase 2 em curso**, blocos 2.1 e 2.2 concluídos |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código (com `sources`/`jobs` ainda por escrever); **Fase 2 em curso**, blocos 2.1 e 2.2 concluídos |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -503,6 +503,25 @@ arquitetura: `MAX_FILE_SIZE_MB` passou a 10240 (o alvo do §4) e a ser
 configurável, porque disco é restrição da máquina e não do projeto. Ele convive
 com `UPLOADS_MAX_GB` (15) e `OUTPUT_MAX_GB` (25), e um teste falha se as duas
 contas deixarem de fechar.
+
+#### Pendência da Fase 1 que NÃO foi feita: escrever `sources` e `jobs`
+
+A Fase 0.5 registrou que *"`sources` e `jobs` passam a ser escritas na Fase 1,
+quando o `SourceAdapter` nascer"*. O adapter nasceu (bloco 1.1) e **as tabelas
+continuam vazias**: nenhum caminho do pipeline chama `db.tenant()`, só os testes
+de schema.
+
+Não é esquecimento com desculpa: é escopo que eu não fiz e que fica registrado
+como aberto. O critério de saída da fase — *"os quatro tipos de link entram pelo
+mesmo endpoint"* — não depende disso, e o estado de job continua vivendo em
+disco (`.resume.json`, `.owner`, `_metadata.json`), que é o desenho que o
+ADR-008 descreve para o caminho self-host de hoje.
+
+O que se perde enquanto isso não existe: não há histórico consultável de o que
+entrou por qual adapter, e o `jobs.timings_json` — a coluna que o bloco 0.5
+preparou — continua só no sidecar. É a matéria-prima da Fase 5 (calibrar a
+detecção com dados reais), então em algum momento antes dela isso precisa
+acontecer.
 
 #### O Drive usa cookies, não OAuth — divergência deliberada do §4
 

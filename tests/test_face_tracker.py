@@ -107,6 +107,40 @@ class TestMainNaoImportaAgplNoTopo:
             "carregar os pesos em nível de módulo custa um download por job")
 
 
+class TestAvisoBarulhento:
+    """O ADR-003 não previa que dois layouts usam o detector para DETECTAR.
+
+    `camera_inset` e `screencast_layout` chamam `detect_person_yolo` porque o
+    BlazeFace não enxerga o rosto dentro de um recuadro de webcam de 1080p, e
+    porque mediram zero detecções numa demonstração de planilha. Sem o YOLO,
+    INSET pode não disparar e SCREENCAST pode não achar o apresentador. Isso
+    não desfaz a decisão do ADR — o passivo de licença é real —, mas a
+    degradação não pode ser silenciosa.
+    """
+
+    def test_avisa_uma_vez_so(self):
+        linhas = []
+        for _ in range(50):
+            ft.avisar_desligado(log=linhas.append)
+        assert len(linhas) == 1, (
+            "isto é chamado por frame; avisar sempre viraria o log inteiro")
+
+    def test_o_aviso_diz_o_que_se_perde_e_como_ligar(self):
+        linhas = []
+        ft.avisar_desligado(log=linhas.append)
+        texto = linhas[0]
+        assert "INSET" in texto and "SCREENCAST" in texto
+        assert "FACE_TRACKER=yolo" in texto
+        assert "AGPL" in texto
+
+    def test_reset_rearma(self):
+        linhas = []
+        ft.avisar_desligado(log=linhas.append)
+        ft.reset()
+        ft.avisar_desligado(log=linhas.append)
+        assert len(linhas) == 2
+
+
 class TestDetectorDesligado:
     def test_devolve_none_sem_tocar_no_modelo(self, monkeypatch):
         main = pytest.importorskip("main")

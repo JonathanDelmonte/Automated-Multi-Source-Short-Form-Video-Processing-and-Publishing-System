@@ -479,6 +479,10 @@ def detect_person_yolo(frame):
     `camera_inset`, `screencast_layout`) passam por aqui.
     """
     if not face_tracker.yolo_ligado():
+        # Barulhento de proposito: o INSET e o SCREENCAST usam este detector
+        # para DETECTAR, nao so para enquadrar, e podem deixar de disparar sem
+        # ele. Perder um layout em silencio seria pior que perde-lo.
+        face_tracker.avisar_desligado()
         return None
     small, scale = _detection_frame(frame)
     # Modelo carregado na primeira chamada, nunca no import.

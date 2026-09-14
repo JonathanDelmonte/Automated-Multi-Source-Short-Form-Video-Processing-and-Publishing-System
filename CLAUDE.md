@@ -109,9 +109,13 @@ parecem arbitrarias no codigo estao justificadas la.
     `main.py`. Um teste le a arvore sintatica do `main.py` e falha se voltar.
   - `main.detect_person_yolo` e o **unico** portao: os quatro sitios de chamada
     (`main`, `reframe_v2`, `camera_inset`, `screencast_layout`) passam por la.
-  - Com o padrao, cena sem rosto segura o ultimo alvo em vez de procurar um
-    corpo. O classificador ja manda cena sem rosto para GENERAL, que nao usa
-    este caminho.
+  - **O ADR-003 subestimou o custo, e a nota nele registra isso.** O detector
+    nao serve so para enquadrar: `camera_inset` e `screencast_layout` o usam
+    para DETECTAR. Sem ele, INSET pode nao disparar (o rosto num recuadro de
+    webcam 1080p e pequeno demais para o BlazeFace) e SCREENCAST pode nao achar
+    o apresentador (medido: zero deteccoes numa demonstracao de planilha). A
+    decisao ficou de pe, mas a degradacao e **barulhenta**:
+    `face_tracker.avisar_desligado()` imprime uma linha por job. Nao silenciar.
   - Os pesos so sao pre-baixados com `--build-arg YOLO=1`, mesmo padrao do
     `GPU=1`.
 - **Cascata de LLM gratuita** (`llm_cascade.py`, Fase 0.4 concluida, ADR-004 e

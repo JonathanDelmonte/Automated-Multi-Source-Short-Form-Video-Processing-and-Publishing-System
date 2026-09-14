@@ -128,6 +128,28 @@ pessoal, e a virada para SaaS passa a ser mudança de configuração em vez de r
 **Revisão se:** o MediaPipe puro se mostrar insuficiente em material real — nesse caso
 o substituto é YOLOX ou RTMDet (Apache 2.0), não o YOLOv8.
 
+### Nota de implementação (bloco 1.7, 14-set-2026) — o custo é maior do que esta ADR supôs
+
+Ao implementar, apareceu um fato que esta decisão não levou em conta. A ADR discute o
+detector como **qualidade de enquadramento** ("o MediaPipe resolve rosto bem, e o
+YOLOv8 resolve melhor detecção de pessoa quando o rosto está virado"). Mas ele não é
+usado só para enquadrar: **dois layouts dependem dele para detectar**, e os dois
+registram medição no próprio código.
+
+| Quem | O que perde sem o YOLO |
+|---|---|
+| TRACK | cena sem rosto segura o último alvo em vez de procurar um corpo — o custo que a ADR previu |
+| **INSET** (`camera_inset.py`) | pode **não disparar**: o rosto dentro de um recuadro de webcam numa fonte 1080p costuma ser pequeno demais para o BlazeFace, e o detector exige 3 amostras para concluir |
+| **SCREENCAST** (`screencast_layout.py`) | pode **não achar o apresentador**: o comentário registra *"measured: zero detections across an Excel walkthrough where the person is plainly visible"* |
+
+A decisão **não foi desfeita** — o passivo AGPL-3.0 é real e a escolha é do autor. Mas
+a degradação deixou de ser silenciosa: `face_tracker.avisar_desligado()` imprime uma
+linha por job na primeira vez que alguém pede o detector e ele está desligado, dizendo
+o que se perde e como ligar. Perder um layout sem aviso seria pior que perdê-lo.
+
+**Consequência para a revisão acima:** se o YOLOX/RTMDet entrar como substituto Apache
+2.0, ele precisa cobrir estes dois casos de detecção, não só o enquadramento.
+
 ---
 
 ## ADR-004 — O pré-filtro heurístico é obrigatório, não oportunista

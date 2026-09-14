@@ -45,7 +45,16 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
-MAX_FILE_SIZE_MB = 2048  # 2GB limit
+# Teto de um upload. O §4 do Plano Tecnico mira 10GB, e o caminho de escrita ja
+# aguenta: o upload e gravado em disco em pedacos de 1MB desde o upstream,
+# nunca carregado em memoria -- entao o que limitava era este numero, nao a
+# arquitetura.
+#
+# Configuravel porque disco e a restricao de verdade agora, e ela e da maquina:
+# um arquivo de 10GB convive com `UPLOADS_MAX_GB` (15) e com o que o job
+# escreve em `output/` sob `OUTPUT_MAX_GB` (25). Quem tiver menos disco baixa o
+# teto; quem tiver mais, sobe.
+MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "10240"))  # 10GB
 
 # Ceiling for the working directory once it lives on a persistent volume: the
 # age-based sweep alone can't stop a burst of long videos from filling the disk.

@@ -487,12 +487,25 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | ✅ concluído |
 | 1.4 | pré-filtro heurístico (ADR-004) | ✅ concluído |
 | 1.5 | Twitch ao vivo, worker de longa duração | |
-| 1.6 | Google Drive e upload de 10GB em streaming | |
+| 1.6 | Google Drive e upload de 10GB em streaming | ◐ upload feito; Drive pendente |
 | 1.7 | YOLO preguiçoso e desligado por padrão (ADR-003) | ✅ concluído |
 
 O 1.1 vem antes da Twitch, que o §9 manda fazer primeiro, porque a Twitch **é** um
 adapter: sem a interface, ela seria mais um ramo dentro do `__main__` — exatamente a
 dispersão que a fase existe para desfazer.
+
+#### O que o bloco 1.6 encontrou pronto
+
+O §4 pede *"upload grande gravado em disco por streaming e nunca em memória"*, e
+isso **já era verdade** — herdado do upstream, o endpoint lê em pedaços de 1MB e
+escreve direto no arquivo. O que limitava a 2GB era uma constante, não a
+arquitetura: `MAX_FILE_SIZE_MB` passou a 10240 (o alvo do §4) e a ser
+configurável, porque disco é restrição da máquina e não do projeto. Ele convive
+com `UPLOADS_MAX_GB` (15) e `OUTPUT_MAX_GB` (25), e um teste falha se as duas
+contas deixarem de fechar.
+
+Fica pendente do 1.6 o **adapter do Google Drive**: precisa de OAuth com refresh
+token, que exige credenciais que só o autor pode criar.
 
 #### O pré-filtro corta por orçamento, não por qualidade (bloco 1.4)
 

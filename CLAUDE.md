@@ -98,8 +98,22 @@ parecem arbitrarias no codigo estao justificadas la.
     `00000000-0000-0000-0000-000000000001`, e nada do pipeline usa o banco
     ainda: `sources` e `jobs` passam a ser escritas na Fase 1.
 - **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
-  flag desligada. **Ainda nao feito**: `main.py:88` instancia `YOLO(...)` em
-  nivel de modulo, em todo job. Tornar isso lazy e trabalho da Fase 1.
+  flag desligada -- **feito no bloco 1.7** (`face_tracker.py`). Eram dois
+  problemas no mesmo lugar: o de licenca (o detector era o fallback *automatico*
+  de toda cena sem rosto, ou seja, ligado por padrao) e o de custo
+  (`model = YOLO(...)` em nivel de modulo carregava e, na primeira vez, baixava
+  os pesos **em todo job**, porque o `main.py` e subprocesso novo a cada video).
+  - `FACE_TRACKER=yolo` liga; qualquer outro valor cai no padrao Apache 2.0.
+  - O **import** do `ultralytics` mora dentro de `face_tracker.modelo_yolo()`.
+    E ele que traz a AGPL para o processo; nao o por de volta no topo do
+    `main.py`. Um teste le a arvore sintatica do `main.py` e falha se voltar.
+  - `main.detect_person_yolo` e o **unico** portao: os quatro sitios de chamada
+    (`main`, `reframe_v2`, `camera_inset`, `screencast_layout`) passam por la.
+  - Com o padrao, cena sem rosto segura o ultimo alvo em vez de procurar um
+    corpo. O classificador ja manda cena sem rosto para GENERAL, que nao usa
+    este caminho.
+  - Os pesos so sao pre-baixados com `--build-arg YOLO=1`, mesmo padrao do
+    `GPU=1`.
 - **Cascata de LLM gratuita** (`llm_cascade.py`, Fase 0.4 concluida, ADR-004 e
   ADR-005). O detector de momentos atravessa Groq / Gemini / Cerebras / Ollama
   em ordem que depende da duracao falada da fonte, com orcamento diario em

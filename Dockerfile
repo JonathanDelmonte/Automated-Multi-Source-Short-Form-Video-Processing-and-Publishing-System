@@ -100,8 +100,21 @@ RUN chown -R appuser:appuser /app /tmp/Ultralytics
 # Switch to non-root user
 USER appuser
 
-# Pre-download YOLO model on build (now running as appuser)
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# Pesos do YOLOv8 baixados na build, SO com --build-arg YOLO=1.
+#
+# Desde o bloco 1.7 (ADR-003) o detector nasce desligado: o caminho padrao e
+# MediaPipe, Apache 2.0, e `FACE_TRACKER=yolo` e quem liga o outro. Baixar na
+# build pesos AGPL-3.0 que a imagem padrao nunca vai abrir e assumir o passivo
+# sem decisao -- que e exatamente o que o ADR-003 existe para evitar.
+#
+# Mesmo padrao do `--build-arg GPU=1`: quem quer, pede. Sem isto, ligar
+# `FACE_TRACKER=yolo` faz o primeiro clipe pagar o download dos pesos.
+ARG YOLO=0
+RUN if [ "$YOLO" = "1" ]; then \
+      python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"; \
+    else \
+      echo "YOLOv8 nao pre-baixado (ADR-003). Use --build-arg YOLO=1 se for usar FACE_TRACKER=yolo."; \
+    fi
 
 # Expose FastAPI port
 EXPOSE 8000

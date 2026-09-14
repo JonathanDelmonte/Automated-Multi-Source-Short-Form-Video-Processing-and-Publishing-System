@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 a 1.4 concluídos |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 a 1.4 e 1.7 concluídos |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -488,7 +488,7 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | 1.4 | pré-filtro heurístico (ADR-004) | ✅ concluído |
 | 1.5 | Twitch ao vivo, worker de longa duração | |
 | 1.6 | Google Drive e upload de 10GB em streaming | |
-| 1.7 | YOLO preguiçoso e tracker atrás de interface (ADR-003) | |
+| 1.7 | YOLO preguiçoso e desligado por padrão (ADR-003) | ✅ concluído |
 
 O 1.1 vem antes da Twitch, que o §9 manda fazer primeiro, porque a Twitch **é** um
 adapter: sem a interface, ela seria mais um ramo dentro do `__main__` — exatamente a

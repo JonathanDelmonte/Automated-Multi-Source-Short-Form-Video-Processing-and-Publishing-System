@@ -10,7 +10,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
-from ultralytics import YOLO
+# O `ultralytics` NAO e importado aqui: e ele que traz a AGPL-3.0 para o
+# processo, e o ADR-003 decidiu que o YOLOv8 fica fora do caminho automatico.
+# O import mora dentro de `face_tracker.modelo_yolo()`, que so roda com
+# FACE_TRACKER=yolo.
 import torch
 import os
 import numpy as np
@@ -30,6 +33,7 @@ import job_metrics
 import sources
 import audio_probe
 import prefilter
+import face_tracker
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -86,10 +90,11 @@ OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by pre
 }}
 """
 
-# Load the YOLO model once (Keep for backup or scene analysis if needed)
-# YOLO_MODEL_PATH lets deployments point at a pre-downloaded weights file so a
-# volume mounted over the workdir doesn't trigger a re-download at startup.
-model = YOLO(os.environ.get("YOLO_MODEL_PATH", "yolov8n.pt"))
+# O YOLOv8 nao e mais carregado aqui (Fase 1, bloco 1.7, ADR-003). Carregar em
+# nivel de modulo significava carregar -- e, na primeira vez, BAIXAR -- os pesos
+# em todo job, porque o `main.py` e um subprocesso novo a cada video, mesmo nos
+# que nunca chamariam o detector. Agora a carga e preguicosa e so acontece com
+# `FACE_TRACKER=yolo`. Ver `face_tracker.py`.
 
 # --- MediaPipe Setup ---
 # Use standard Face Detection (BlazeFace) for speed
@@ -467,11 +472,18 @@ def detect_person_yolo(frame):
     Fallback: Detect largest person using YOLO when face detection fails.
     Returns [x, y, w, h] of the person's 'upper body' approximation, in
     ORIGINAL frame coordinates (inference runs on a downscaled copy).
+
+    Desligado por padrao (ADR-003): devolve None com `FACE_TRACKER=mediapipe`,
+    e ai a camera segura o ultimo alvo em vez de procurar um corpo. Este e o
+    unico portao -- os quatro sitios de chamada (`main`, `reframe_v2`,
+    `camera_inset`, `screencast_layout`) passam por aqui.
     """
+    if not face_tracker.yolo_ligado():
+        return None
     small, scale = _detection_frame(frame)
-    # Use the globally loaded model
+    # Modelo carregado na primeira chamada, nunca no import.
     with DETECT_LOCK:
-        results = model(small, verbose=False, classes=[0]) # class 0 is person
+        results = face_tracker.modelo_yolo()(small, verbose=False, classes=[0])  # class 0 is person
 
     if not results:
         return None

@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código; **Fase 2 em curso**, bloco 2.1 concluído |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código; **Fase 2 em curso**, blocos 2.1 e 2.2 concluídos |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -580,7 +580,7 @@ preview de 3 segundos. Travar as três decisões do §5 — `safeArea` respeitad
 | Bloco | O quê | Estado |
 |---|---|---|
 | 2.1 | o documento da §5 (`template.py`): defaults, validação, seis presets, `safeArea` → `margin_v` | ✅ concluído |
-| 2.2 | aplicar o template a um clipe em segunda passada, e o preview de 3 s | |
+| 2.2 | aplicar o template a um clipe em segunda passada, e o preview de 3 s | ✅ concluído |
 | 2.3 | CRUD no painel | |
 
 #### O ADR-002 precisa de uma nota: as duas aquisições já estavam aqui

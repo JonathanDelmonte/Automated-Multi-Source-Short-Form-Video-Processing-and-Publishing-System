@@ -3,6 +3,7 @@ import job_metrics
 import llm_backend
 import llm_cascade
 import sources
+import template as template_doc
 import re
 import sys
 import uuid
@@ -3217,6 +3218,10 @@ async def _ensure_job_files(job_id: str, request: Request) -> bool:
 
 from editor import VideoEditor
 from subtitles import generate_srt, generate_ass, burn_subtitles, generate_srt_from_video
+# `cut_clip` corta o trecho do preview do §5. Vem do `ffmpeg_utils` e nao do
+# `main` de proposito: o `ffmpeg_utils` nao traz a pilha de ML junto, e este
+# import e de topo -- o `app.py` roda sob o uvicorn.
+from ffmpeg_utils import cut_clip
 from hooks import add_hook_to_video
 from thumbnail import (analyze_video_for_titles, refine_titles, generate_thumbnail,
                        generate_youtube_description, extract_face_frames)
@@ -3427,6 +3432,17 @@ class SubtitleRequest(BaseModel):
     # instead of regenerating from the stored transcript — without this, text
     # edits in the modal were silently discarded on the server render path.
     words: Optional[List[CaptionWordIn]] = None
+    # O documento da secao 5 (`template.py`). Quando vem, ele MANDA no estilo:
+    # os campos soltos acima sao a sobreposicao por clipe do modal, e o
+    # documento e "o meu estilo", escrito uma vez. Misturar os dois -- deixar o
+    # modal vencer campo a campo -- tornaria o template decorativo, porque o
+    # modal sempre manda todos os campos, preenchidos com os defaults dele.
+    template: Optional[dict] = None
+    # Preview do §5: queima so os primeiros N segundos, para conferir o estilo
+    # sem esperar o clipe inteiro. Nao mexe no metadata -- preview nao e
+    # entregavel, e trocar o `video_url` do clipe por um trecho de 3s seria
+    # perder o clipe de vista.
+    preview_seconds: Optional[float] = None
 
 
 @app.get("/api/clip/{job_id}/{clip_index}/transcript")
@@ -4420,9 +4436,40 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
         effect=req.effect, base_opacity=req.base_opacity, uppercase=req.uppercase,
     )
 
+    # O documento da secao 5 manda no estilo quando vem (Fase 2, bloco 2.2).
+    # Sempre pelo caminho ASS: e o unico que aceita realce por palavra, efeito,
+    # opacidade da base e a legenda na costura de um layout SPLIT -- e o
+    # `burn_subtitles` reconhece `.ass` e nao aplica `force_style` em cima, que
+    # e o que faz os estilos do documento chegarem intactos ao video.
+    if req.template is not None:
+        try:
+            karaoke_opts.update(template_doc.kwargs_de_legenda(req.template))
+            karaoke_opts["margin_v"] = template_doc.margem_vertical(req.template)
+        except template_doc.TemplateInvalido as e:
+            raise HTTPException(status_code=400, detail=f"Template invalido: {e}")
+        is_karaoke = True
+        srt_filename = f"subs_{req.clip_index}_{generation_id}.ass"
+        srt_path = os.path.join(output_dir, srt_filename)
+
+    # Preview do §5: "antes de queimar minutos de GPU, renderize so o primeiro
+    # trecho com o template aplicado". Corta a ENTRADA, nao a legenda: o ASS
+    # cobre o clipe inteiro e os eventos alem do corte simplesmente nunca
+    # aparecem, entao nao ha timestamp a remapear.
+    preview = None
+    if req.preview_seconds is not None:
+        preview = max(0.5, min(float(req.preview_seconds), 30.0))
+        trecho = os.path.join(output_dir, f"previewsrc_{generation_id}.mp4")
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, cut_clip, input_path, trecho, 0.0, preview, 0)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Nao consegui cortar o preview: {e}")
+        input_path = trecho
+
     # Output video
     # We create a new file "subtitled_..."
-    output_filename = f"subtitled_{generation_id}_{filename}"
+    prefixo = "preview" if preview else "subtitled"
+    output_filename = f"{prefixo}_{generation_id}_{filename}"
     output_path = os.path.join(output_dir, output_filename)
 
     # Burning captions is FREE. They're table stakes for short-form — a clip
@@ -4483,6 +4530,17 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
 
     if reservation_id:
         await _metering.commit_reservation(reservation_id)
+
+    # Preview nao e entregavel: apontar o `video_url` do clipe para um trecho
+    # de 3s seria perder o clipe de vista. O arquivo fica no diretorio do job e
+    # a varredura horaria o leva embora com o resto.
+    if preview:
+        try:
+            os.remove(os.path.join(output_dir, f"previewsrc_{generation_id}.mp4"))
+        except OSError:
+            pass
+        return {"success": True, "preview": True, "seconds": preview,
+                "new_video_url": f"/videos/{req.job_id}/{output_filename}"}
 
     # 3. Update Result and Metadata
     # Update InMemory Jobs

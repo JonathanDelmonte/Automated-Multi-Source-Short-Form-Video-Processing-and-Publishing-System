@@ -188,6 +188,24 @@ a traducao `safeArea` -> `margin_v`. Stdlib pura, entao roda no CI.
   as chaves com a assinatura dele, porque argumento errado so quebraria na hora
   de queimar, depois do render inteiro.
 
+**Aplicar (bloco 2.2)** e por `/api/subtitle`, que ja era a segunda passada.
+`SubtitleRequest.template` e `preview_seconds` sao os dois campos novos.
+
+- **O documento MANDA no estilo quando vem**, e nao o contrario. Os campos
+  soltos do request sao a sobreposicao por clipe do modal, e o modal manda
+  todos eles sempre, preenchidos com os defaults dele -- deixar o modal vencer
+  campo a campo tornaria o template decorativo.
+- **Template forca o caminho ASS.** E o unico que aceita realce por palavra,
+  efeito, base apagada e a legenda na costura de um SPLIT; e o `burn_subtitles`
+  reconhece `.ass` e **nao** aplica `force_style` em cima, que e o que faz os
+  estilos do documento chegarem intactos.
+- **O preview corta a ENTRADA, nao a legenda.** O ASS cobre o clipe inteiro e
+  os eventos alem do corte nunca aparecem, entao nao ha timestamp a remapear.
+  Entre 0,5 e 30 s.
+- **Preview nao mexe no metadata nem arquiva.** Apontar o `video_url` do clipe
+  para um trecho de 3s seria perder o clipe de vista. Sai com nome proprio
+  (`preview_...`) e o corte intermediario e apagado.
+
 ### Camada de ingestao (`sources/`, Fase 1 bloco 1.1)
 
 Uma fonte, uma classe, com `matches` / `probe` / `fetch`; o pipeline recebe

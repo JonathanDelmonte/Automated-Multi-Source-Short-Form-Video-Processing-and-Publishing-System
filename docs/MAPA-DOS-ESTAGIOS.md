@@ -71,23 +71,25 @@ saída, que é ergonomia de CLI.
 |---|---|---|
 | `sources/youtube.py` | `youtube` | os hosts do YouTube |
 | `sources/twitch.py` | `twitch-vod` | `/videos/<id>`, `/<canal>/v/<id>`, `/<canal>/clip/<slug>`, `clips.twitch.tv` |
-| `sources/twitch.py` | `twitch-live` | `/<canal>` e `/<canal>/videos` — **recusa explícita** até o bloco 1.5 |
+| `sources/twitch.py` + `sources/twitch_live.py` | `twitch-live` | `/<canal>` — **grava um bloco** (bloco 1.5). `/<canal>/videos` continua recusada: é listagem, não vídeo |
 | `sources/direct.py` | `direct` | qualquer outra URL http(s) |
 | `sources/local.py` | `upload` | o que não é URL (o upload do painel, o `-i`) |
 
-> **Por que a live é reconhecida só para ser recusada.** Sem o
-> `TwitchLiveAdapter`, a URL de um canal cairia no adapter genérico — e o
-> `yt-dlp` *aceita* gravar live da Twitch: ficaria baixando até a transmissão
-> acabar. Um job que não termina é pior que um job que falha, porque ninguém
-> percebe que está errado. Até o bloco 1.5, é um erro imediato que diz o que
-> fazer no lugar (esperar o VOD).
+> **Um job = um bloco (bloco 1.5).** A URL de um canal não pode cair no adapter
+> genérico: o `yt-dlp` *aceita* gravar live da Twitch e ficaria baixando até a
+> transmissão acabar. Um job que não termina é pior que um job que falha, porque
+> ninguém percebe que está errado — e um job de 4h quebraria a vaga no semáforo
+> da fila, o batimento do resume (60s) e o drain de um deploy (840s).
 >
-> A recusa acontece **duas vezes, de propósito**: no `app.py`, ao submeter
-> (`assert_fetchable`, antes até do probe de qualidade — numa live ele não
-> responde duração nenhuma), e de novo no `main.py`, que é a última porta antes
-> do yt-dlp. A primeira é a que o usuário vê: mensagem no formulário, na hora,
-> em vez de um job vermelho no histórico dez segundos depois. A segunda existe
-> porque o `main.py` também roda pela linha de comando.
+> Então cada job grava um bloco de `TWITCH_LIVE_BLOCK_MINUTES` (15, teto 2h) e o
+> corta como qualquer upload. **Quem grava é o ffmpeg com `-t`**, não o yt-dlp,
+> que não tem "grave 15 minutos"; o yt-dlp entra só para dizer se o canal está no
+> ar e achar a URL do stream.
+>
+> `/<canal>/videos` continua recusada, **duas vezes de propósito**: no `app.py`
+> ao submeter (`assert_fetchable`, antes até do probe de qualidade) e de novo no
+> `main.py`, última porta antes do yt-dlp. A primeira é a que o usuário vê; a
+> segunda existe porque o `main.py` também roda pela linha de comando.
 
 Três coisas que o bloco travou, e que valem para os adapters seguintes:
 

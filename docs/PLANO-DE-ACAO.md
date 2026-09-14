@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão, blocos 1.1 a 1.4 e 1.7 concluídos |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão; só falta o adapter do Google Drive |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -486,7 +486,7 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | 1.2 | adapter de Twitch (VOD e clip), e a live reconhecida para ser recusada | ✅ concluído |
 | 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | ✅ concluído |
 | 1.4 | pré-filtro heurístico (ADR-004) | ✅ concluído |
-| 1.5 | Twitch ao vivo, worker de longa duração | |
+| 1.5 | Twitch ao vivo, **em blocos** (é o que evita o worker de longa duração) | ✅ concluído |
 | 1.6 | Google Drive e upload de 10GB em streaming | ◐ upload feito; Drive pendente |
 | 1.7 | YOLO preguiçoso e desligado por padrão (ADR-003) | ✅ concluído |
 

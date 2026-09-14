@@ -46,12 +46,13 @@ def probe_nunca_chamado(monkeypatch):
     return chamadas
 
 
-class TestLiveDaTwitch:
-    def test_canal_ao_vivo_e_recusado(self, dirs, probe_nunca_chamado):
-        resp = _post({"url": "https://www.twitch.tv/gaules", "acknowledged": True})
-        assert resp.status_code == 400
-        detalhe = resp.json()["detail"]
-        assert "1.5" in detalhe and "/videos/" in detalhe, detalhe
+class TestListaDoCanal:
+    """O portao guarda o que nao e um video.
+
+    Ate o bloco 1.5 ele tambem recusava a live; agora ela e gravada em blocos e
+    passa. O que continua recusado e `/<canal>/videos`, que e uma listagem: o
+    yt-dlp a trataria como playlist e baixaria o canal inteiro.
+    """
 
     def test_lista_de_videos_do_canal_e_recusada(self, dirs, probe_nunca_chamado):
         resp = _post({"url": "https://www.twitch.tv/gaules/videos", "acknowledged": True})
@@ -59,14 +60,14 @@ class TestLiveDaTwitch:
         assert "lista de videos" in resp.json()["detail"]
 
     def test_nao_gasta_probe_numa_fonte_recusada(self, dirs, probe_nunca_chamado):
-        _post({"url": "https://www.twitch.tv/gaules", "acknowledged": True})
+        _post({"url": "https://www.twitch.tv/gaules/videos", "acknowledged": True})
         assert probe_nunca_chamado == [], (
-            "a recusa tem que vir antes do probe: numa live ele nao responde "
+            "a recusa tem que vir antes do probe: numa listagem ele nao responde "
             "duracao nenhuma e, em modo cloud, custa banda paga")
 
     def test_nenhum_job_e_criado(self, dirs, probe_nunca_chamado):
         antes = dict(app_module.jobs)
-        _post({"url": "https://www.twitch.tv/gaules", "acknowledged": True})
+        _post({"url": "https://www.twitch.tv/gaules/videos", "acknowledged": True})
         assert dict(app_module.jobs) == antes
 
 
@@ -76,6 +77,8 @@ class TestFontesQuePassam:
     @pytest.mark.parametrize("url", [
         "https://www.twitch.tv/videos/123456789",
         "https://clips.twitch.tv/AlgumSlug",
+        "https://www.twitch.tv/gaules",          # live: gravada em blocos desde o 1.5
+
         "https://www.youtube.com/watch?v=abc",
         "https://cdn.exemplo.com/video.mp4",
     ])

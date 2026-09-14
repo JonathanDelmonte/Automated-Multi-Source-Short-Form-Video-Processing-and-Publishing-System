@@ -195,14 +195,38 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   sobrescrevam; o do YouTube fica em `/app/cookies.txt` porque o
   `quality_probe.py` procura esse caminho pelo nome) e o rotulo para log. O
   `main.py` so reexporta: `source_label`, `cookie_jar_for`.
-- **A live da Twitch e reconhecida para ser RECUSADA** (`TwitchLiveAdapter`,
-  ate o bloco 1.5). Sem isso a URL de um canal cai no adapter generico e o
-  yt-dlp *aceita* gravar live: o job baixaria ate a transmissao acabar. Job que
-  nao termina e pior que job que falha. Nao remover o adapter nem move-lo para
-  depois do `DirectUrlAdapter` no `REGISTRY`. A recusa e `assert_fetchable`, e
-  roda **duas vezes**: no `app.py` ao submeter (antes do probe de qualidade,
-  que numa live nao responde nada) e no `main.py` antes do yt-dlp. A mensagem
-  mora num lugar so para as duas dizerem o mesmo.
+- **A live da Twitch e gravada em BLOCOS** (`sources/twitch_live.py`, bloco
+  1.5). Ver a secao propria abaixo. A URL de um canal nunca pode cair no
+  adapter generico: o yt-dlp *aceita* gravar live e baixaria ate a transmissao
+  acabar. Nao mover `TwitchLiveAdapter` para depois do `DirectUrlAdapter` no
+  `REGISTRY`.
+- **`/<canal>/videos` continua recusada** por `assert_fetchable`, que roda
+  **duas vezes**: no `app.py` ao submeter (antes do probe de qualidade, que
+  numa listagem nao responde nada) e no `main.py` antes do yt-dlp. Nao e um
+  video: o yt-dlp a trataria como playlist e baixaria o canal inteiro.
+
+### Live da Twitch em blocos (`sources/twitch_live.py`, Fase 1 bloco 1.5)
+
+**Um job = um bloco, e essa e a decisao inteira.** O §4 chama a live de "worker
+de longa duracao"; o fatiamento em blocos que ele manda fazer e o que evita
+precisar de um. Um job de 4h quebraria quatro coisas de uma vez: a vaga no
+semaforo da fila, o batimento do manifesto de resume (60s), o drain de um
+deploy (`DRAIN_TIMEOUT_SECONDS`, 840s) e a barra do painel.
+
+- `TWITCH_LIVE_BLOCK_MINUTES` (15 por padrao), com **teto de 2h** -- acima
+  disso o job deixa de caber no drain, que e justamente o que o fatiamento
+  resolve.
+- **ffmpeg grava, yt-dlp so resolve.** O yt-dlp grava live ate ela acabar; nao
+  ha "grave 15 minutos". Ele entra so para dizer se o canal esta no ar e achar
+  a URL do stream; quem grava e `ffmpeg -i <url> -t <segundos> -c copy`, que
+  fecha o arquivo no tempo pedido. `-t` **depois** do `-i`: antes dele seria um
+  seek, e numa live isso nunca fecha o arquivo.
+- **Aqui NAO se falha aberto**, ao contrario do estagio 02: sem o arquivo nao
+  ha o que processar. Canal fora do ar levanta `LiveOffline` com a saida
+  (use a URL do VOD).
+- Efeito colateral bom: o pre-filtro do bloco 1.4 le o orcamento **restante**
+  do dia, entao os blocos seguintes de uma live longa vao sendo apertados
+  sozinhos conforme a cota e consumida.
 
 ### Estagio 02: o audio dirige (`audio_probe.py`, Fase 1 bloco 1.3)
 

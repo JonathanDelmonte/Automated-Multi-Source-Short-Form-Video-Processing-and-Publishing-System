@@ -605,11 +605,18 @@ você sabe que o problema é o pipeline, não o download.
 > | VOD da Twitch (`/videos/<número>`) | baixa, avisando que VOD expira em 7 a 60 dias |
 > | clip da Twitch (`/clip/...` ou `clips.twitch.tv/...`) | baixa |
 > | link direto de um `.mp4` | baixa do IP da sua máquina, sem proxy |
-> | **canal da Twitch** (`twitch.tv/<canal>`) | **recusa na hora, e explica** |
+> | **canal da Twitch ao vivo** (`twitch.tv/<canal>`) | **grava 15 min e corta esse pedaço** |
+> | lista de vídeos do canal (`twitch.tv/<canal>/videos`) | recusa na hora: é listagem, não vídeo |
 >
-> A recusa do canal é de propósito: o `yt-dlp` *aceita* gravar transmissão ao
-> vivo, e o job ficaria baixando até a live acabar — horas, sem erro nenhum na
-> tela. Gravar live é o bloco 1.5; até lá, espere o VOD e use a URL dele.
+> **A live é gravada em blocos, e isso é de propósito.** Não dá para baixar o
+> que ainda não aconteceu: gravar uma live de 4h inteira seria um job de 4
+> horas, que ocuparia a fila a tarde toda e não sobreviveria a um `git pull`
+> com rebuild no meio. Então cada job grava um pedaço de 15 minutos
+> (`TWITCH_LIVE_BLOCK_MINUTES` no `.env` muda isso, até 2h) e corta esse
+> pedaço. Para cobrir mais, é enviar de novo — a automação disso é a Fase 4.
+>
+> Enquanto grava, a barra fica em "recebendo o vídeo" pelos 15 minutos. É
+> esperado, e o log diz: `🔴 Gravando 15 min da transmissão ao vivo`.
 >
 > VOD de sub-only precisa de conta inscrita: `TWITCH_COOKIES` no `.env`, no
 > mesmo formato do `YOUTUBE_COOKIES`. Clip e VOD público não precisam de nada.

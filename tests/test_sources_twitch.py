@@ -69,35 +69,59 @@ class TestClassificacao:
 
 
 class TestLiveRecusa:
-    def test_fetch_de_canal_levanta_com_saida(self):
-        a = sources.resolve("https://www.twitch.tv/gaules")
-        with pytest.raises(SourceNotReady) as exc:
-            a.fetch("https://www.twitch.tv/gaules", "/tmp")
-        msg = str(exc.value)
-        assert "1.5" in msg, "a mensagem precisa dizer onde isso vai existir"
-        assert "/videos/" in msg, "e precisa dizer o que fazer agora"
+    """Desde o bloco 1.5 a live E gravada; a lista do canal continua recusada.
 
-    def test_fetch_de_lista_explica_a_diferenca(self):
-        url = "https://www.twitch.tv/gaules/videos"
-        with pytest.raises(SourceNotReady) as exc:
-            sources.resolve(url).fetch(url, "/tmp")
-        assert "lista de videos" in str(exc.value)
+    O invariante que sobreviveu e o que importava desde o inicio: **nenhuma URL
+    de live pode chegar ao `download_youtube_video`**. Aquele caminho grava ate
+    a transmissao acabar. Agora ela vai para o gravador de blocos, que tem
+    teto; antes ia para uma recusa. Os dois estao certos, o que nao pode e o
+    terceiro caminho.
+    """
 
-    def test_live_nunca_chega_ao_adapter_generico(self, monkeypatch):
-        # A regressao de verdade: se `TwitchLiveAdapter` sair do REGISTRY ou
-        # descer para depois do generico, isto passa a baixar -- para sempre.
+    def test_live_nunca_chega_ao_downloader_sem_teto(self, monkeypatch):
         import sys
         import types
 
         baixou = []
         fake = types.ModuleType("main")
         fake.download_youtube_video = lambda url, output_dir=".": baixou.append(url) or ("/x.mp4", "x")
+        fake.sanitize_filename = lambda n: n
         monkeypatch.setitem(sys.modules, "main", fake)
 
-        for url in ("https://www.twitch.tv/gaules", "https://www.twitch.tv/gaules/videos"):
-            with pytest.raises(SourceNotReady):
-                sources.resolve(url).fetch(url, "/tmp")
-        assert baixou == [], "nenhuma URL de live pode ter chegado ao yt-dlp"
+        from sources import twitch_live as tl
+        gravou = []
+        monkeypatch.setattr(tl, "resolve_live",
+                            lambda url, cookiefile=None: {"title": "t", "stream_url": "u"})
+        monkeypatch.setattr(tl, "record_block",
+                            lambda s_url, dest, secs, log=print: gravou.append(dest) or dest)
+
+        sources.resolve("https://www.twitch.tv/gaules").fetch("https://www.twitch.tv/gaules", "/tmp")
+
+        assert baixou == [], (
+            "o downloader do yt-dlp grava live ate ela acabar: um job assim nunca termina")
+        assert len(gravou) == 1, "a live tem que ir para o gravador de blocos"
+
+    def test_lista_do_canal_ainda_e_recusada(self):
+        url = "https://www.twitch.tv/gaules/videos"
+        with pytest.raises(SourceNotReady) as exc:
+            sources.resolve(url).assert_fetchable(url)
+        assert "lista de videos" in str(exc.value)
+
+    def test_lista_do_canal_nunca_baixa_o_canal_inteiro(self, monkeypatch):
+        # O yt-dlp trataria /<canal>/videos como playlist.
+        import sys
+        import types
+
+        baixou = []
+        fake = types.ModuleType("main")
+        fake.download_youtube_video = lambda url, output_dir=".": baixou.append(url) or ("/x.mp4", "x")
+        fake.sanitize_filename = lambda n: n
+        monkeypatch.setitem(sys.modules, "main", fake)
+
+        url = "https://www.twitch.tv/gaules/videos"
+        with pytest.raises(SourceNotReady):
+            sources.resolve(url).fetch(url, "/tmp")
+        assert baixou == []
 
     def test_probe_marca_como_live(self):
         info = sources.resolve("https://www.twitch.tv/gaules").probe("https://www.twitch.tv/gaules")

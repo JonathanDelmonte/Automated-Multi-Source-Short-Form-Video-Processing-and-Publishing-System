@@ -18,6 +18,7 @@ nunca tocar o proxy por GB.
 """
 from __future__ import annotations
 
+import os
 import re
 
 from .base import (Fetched, SourceAdapter, SourceInfo, SourceNotReady,
@@ -127,24 +128,40 @@ class TwitchLiveAdapter(SourceAdapter):
         return classify(raw) in ("live", "channel-list")
 
     def probe(self, raw: str) -> SourceInfo:
+        from . import twitch_live
+
+        if classify(raw) == "channel-list":
+            return SourceInfo(kind=self.id, label="Twitch (lista do canal)", is_live=False)
+        minutos = twitch_live.block_seconds() // 60
         return SourceInfo(
             kind=self.id, label=self.label, is_live=True,
-            notes=("captura de live ainda nao implementada (bloco 1.5)",),
+            notes=(f"transmissao ao vivo: o job grava um bloco de {minutos} min e corta "
+                   f"esse bloco (TWITCH_LIVE_BLOCK_MINUTES muda a duracao)",),
         )
 
     def assert_fetchable(self, raw: str) -> None:
+        # A live passa desde o bloco 1.5. A lista de videos do canal continua
+        # recusada: nao e um video, e o yt-dlp a trataria como playlist e
+        # baixaria o canal inteiro.
         if classify(raw) == "channel-list":
             raise SourceNotReady(
                 f"{raw} e a lista de videos do canal, nao um video. "
                 "Abra o VOD que voce quer e use a URL dele (termina em /videos/<numero>).")
-        raise SourceNotReady(
-            f"{raw} e um canal ao vivo. Gravar transmissao em andamento e o bloco 1.5 "
-            "da Fase 1 e ainda nao existe -- um job assim ficaria baixando ate a live "
-            "acabar. Por enquanto: espere o VOD e use a URL dele (/videos/<numero>).")
 
     def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
-        # A mensagem mora no `assert_fetchable` para que o submit e o pipeline
-        # recusem com o mesmo texto. Se alguem chamar `fetch` direto, recusa
-        # aqui tambem -- esta e a ultima porta antes do yt-dlp.
+        from . import twitch_live
+
         self.assert_fetchable(raw)
-        raise AssertionError("inalcancavel: assert_fetchable sempre levanta")
+        segundos = twitch_live.block_seconds()
+        _, cookiefile = self.cookie_env, self.cookie_file
+        vivo = twitch_live.resolve_live(raw, cookiefile=cookiefile)
+
+        # Import tardio, mesma razao dos outros adapters (evita o ciclo com o
+        # `main`) -- aqui so para higienizar o nome do arquivo.
+        import main
+
+        base = main.sanitize_filename(f"{vivo['title']}_bloco")
+        destino = os.path.join(output_dir or ".", f"{base}.mp4")
+        twitch_live.record_block(vivo["stream_url"], destino, segundos)
+        return Fetched(path=destino, title=base, kind=self.id,
+                       meta={"live": True, "block_seconds": segundos})

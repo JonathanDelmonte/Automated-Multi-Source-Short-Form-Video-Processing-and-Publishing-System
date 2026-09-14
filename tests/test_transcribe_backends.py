@@ -72,7 +72,10 @@ def fake_parakeet(monkeypatch):
     ]
     model = SimpleNamespace(recognize=lambda path: iter(segs))
     monkeypatch.setattr(tb, "_get_parakeet_model", lambda: model)
-    monkeypatch.setattr(tb, "_extract_wav", lambda path: "/tmp/fake.wav")
+    # (caminho, e_nosso_para_apagar) desde o bloco 1.3: o WAV do estagio 02
+    # e reusado em vez de reextraido, e apaga-lo aqui deixaria o resto do
+    # job sem audio.
+    monkeypatch.setattr(tb, "_extract_wav", lambda path: ("/tmp/fake.wav", True))
     monkeypatch.setattr(tb.os, "remove", lambda path: None)
     return segs
 
@@ -210,3 +213,64 @@ def test_run_whisper_transcription_materializes_segments(fake_faster_whisper, mo
     segments, info = tb.run_whisper_transcription("video.mp4")
     assert isinstance(segments, list)
     assert info.language == "es"
+
+
+class TestReusoDoWavDoPipeline:
+    """Bloco 1.3: o estágio 02 já entrega o WAV 16k mono pronto.
+
+    Reextraí-lo seria decodificar de novo o que acabou de ser decodificado, e —
+    pior — apagá-lo no `finally` deixaria o resto do job sem áudio, porque quem
+    o criou ainda o usa.
+    """
+
+    def _probe_diz(self, monkeypatch, e_o_nosso):
+        import audio_probe
+        monkeypatch.setattr(audio_probe, "probe", lambda p, **k: {})
+        monkeypatch.setattr(audio_probe, "ja_e_wav_do_pipeline",
+                            lambda info: e_o_nosso)
+
+    def test_wav_do_pipeline_e_reusado_e_nao_e_nosso(self, monkeypatch, tmp_path):
+        self._probe_diz(monkeypatch, True)
+        wav = tmp_path / ".audio16k.wav"
+        wav.write_bytes(b"\0" * 100)
+
+        chamou_ffmpeg = []
+        monkeypatch.setattr(tb.subprocess, "run",
+                            lambda *a, **k: chamou_ffmpeg.append(a))
+
+        caminho, e_nosso = tb._extract_wav(str(wav))
+        assert caminho == str(wav)
+        assert e_nosso is False
+        assert chamou_ffmpeg == [], "não pode reextrair o que já está pronto"
+
+    def test_wav_de_terceiro_ainda_e_convertido(self, monkeypatch, tmp_path):
+        # Um .wav qualquer (44.1kHz estéreo, por exemplo) não serve ao Parakeet.
+        self._probe_diz(monkeypatch, False)
+        monkeypatch.setattr(tb.subprocess, "run", lambda *a, **k: None)
+        caminho, e_nosso = tb._extract_wav(str(tmp_path / "outro.wav"))
+        assert e_nosso is True
+        assert caminho != str(tmp_path / "outro.wav")
+
+    def test_mp4_nao_paga_ffprobe(self, monkeypatch):
+        # O caso normal decide pela extensão: nenhum processo extra.
+        import audio_probe
+
+        def _nao_devia(*a, **k):
+            raise AssertionError("ffprobe não deveria ser chamado para um mp4")
+        monkeypatch.setattr(audio_probe, "probe", _nao_devia)
+        monkeypatch.setattr(tb.subprocess, "run", lambda *a, **k: None)
+        _, e_nosso = tb._extract_wav("video.mp4")
+        assert e_nosso is True
+
+    def test_parakeet_nao_apaga_o_wav_do_pipeline(self, monkeypatch, tmp_path):
+        wav = tmp_path / ".audio16k.wav"
+        wav.write_bytes(b"\0" * 32000)
+
+        monkeypatch.setattr(tb, "_extract_wav", lambda path: (str(wav), False))
+        monkeypatch.setattr(tb, "_get_parakeet_model",
+                            lambda: SimpleNamespace(recognize=lambda p: iter([])))
+        monkeypatch.setattr(tb, "_detect_language", lambda text: "pt")
+        tb._transcribe_with_parakeet(str(wav))
+
+        assert wav.exists(), (
+            "apagar o WAV do estágio 02 deixaria o resto do job sem áudio")

@@ -186,6 +186,33 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   que numa live nao responde nada) e no `main.py` antes do yt-dlp. A mensagem
   mora num lugar so para as duas dizerem o mesmo.
 
+### Estagio 02: o audio dirige (`audio_probe.py`, Fase 1 bloco 1.3)
+
+A decisao mais importante do §4, e agora implementada: um `ffprobe` e um WAV
+16k mono (`.audio16k.wav` no diretorio do job) antes de tudo. Transcricao e
+deteccao leem **so o audio**; o video so e tocado no 05/06, e ali so nos
+trechos escolhidos. O custo passa a crescer com a duracao FALADA, nao com o
+tamanho do arquivo -- e o que sustenta o alvo de 10GB do §4.
+
+- **Tudo falha aberto.** `probe()` devolve o dict vazio e `extract_wav()`
+  devolve None; o `main.py` entao entrega o video ao modelo como antes.
+  Otimizacao de custo que derruba job nao e otimizacao. Nao trocar por
+  `raise`.
+- **A duracao vem do `ffprobe`**, com o OpenCV de reserva. `frame_count/fps`
+  erra em video de taxa variavel e **divide por zero** quando o container nao
+  declara fps.
+- **Nao extrai** com `--skip-analysis` (ninguem vai ler transcricao) nem sem
+  trilha de audio (o caminho de analise visual ja existe).
+- **O WAV e apagado no fim** (a menos de `--keep-original`): numa live de 4h
+  sao ~460 MB. Quem resume um job nao perde nada -- o que evita retranscrever
+  e o `.transcript_checkpoint.json`.
+- **O Parakeet reconhece o WAV do pipeline** e nao o reextrai.
+  `transcribe_backends._extract_wav` devolve `(caminho, e_nosso_para_apagar)`:
+  o `finally` dele apagava o arquivo que o resto do job ainda usa. **Nao voltar
+  a devolver so o caminho.**
+- **`PIPELINE_STAGES` no `app.py` ganhou `02_probe`.** Os testes de progresso
+  derivam indice e total da lista; nao voltar a fixar numeros neles.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

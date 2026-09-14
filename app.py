@@ -689,6 +689,7 @@ _cancelled_jobs: set = set()
 #: em vez de quebrar.
 PIPELINE_STAGES = [
     ("01_ingest", "recebendo o vídeo"),
+    ("02_probe", "preparando o áudio"),
     ("03_transcribe", "transcrevendo"),
     ("04_detect", "escolhendo os melhores momentos"),
     ("05_06_render", "cortando e renderizando"),

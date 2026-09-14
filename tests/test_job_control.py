@@ -233,10 +233,27 @@ class TestProgressoPorEstagio:
         assert app_module.jobs["j"]["logs"] == ["Baixando vídeo..."]
 
     def test_indice_e_rotulo_do_estagio(self):
+        # O indice vem da POSICAO em PIPELINE_STAGES, nao de um numero repetido
+        # aqui: a versao anterior deste teste fixava 3 de 4 e quebrou no dia em
+        # que o estagio 02 nasceu, sem que nada estivesse errado.
+        esperado = [n for n, _ in app_module.PIPELINE_STAGES].index("04_detect") + 1
         v = app_module._stage_view({"stage": "04_detect"})
-        assert v["stage_index"] == 3
-        assert v["stage_total"] == 4
+        assert v["stage_index"] == esperado
+        assert v["stage_total"] == len(app_module.PIPELINE_STAGES)
         assert v["stage_label"] == "escolhendo os melhores momentos"
+
+    def test_estagios_estao_na_ordem_em_que_o_pipeline_os_emite(self):
+        """O indice so quer dizer alguma coisa se a lista estiver na ordem certa.
+
+        Os nomes sao ordenaveis por prefixo justamente para isto (`01_`, `02_`),
+        entao a checagem e direta -- e pega o caso de alguem acrescentar um
+        estagio no fim da lista em vez de no lugar dele."""
+        nomes = [n for n, _ in app_module.PIPELINE_STAGES]
+        assert nomes == sorted(nomes)
+
+    def test_todo_estagio_tem_rotulo_em_portugues(self):
+        for nome, rotulo in app_module.PIPELINE_STAGES:
+            assert rotulo and rotulo != nome, nome
 
     def test_sem_estagio_o_indice_e_zero(self):
         v = app_module._stage_view({})
@@ -255,4 +272,5 @@ class TestProgressoPorEstagio:
         app_module.jobs["j"] = {"status": "processing", "logs": [], "stage": "03_transcribe"}
         corpo = _client_call("GET", "/api/status/j").json()
         assert corpo["stage_label"] == "transcrevendo"
-        assert corpo["stage_index"] == 2
+        assert corpo["stage_index"] == (
+            [n for n, _ in app_module.PIPELINE_STAGES].index("03_transcribe") + 1)

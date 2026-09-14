@@ -200,7 +200,22 @@ def _get_parakeet_model():
 
 
 def _extract_wav(media_path):
-    """Parakeet wants 16kHz mono PCM wav; ffmpeg-extract to a temp file."""
+    """Parakeet wants 16kHz mono PCM wav. Returns ``(path, is_temp)``.
+
+    Desde o estagio 02 (Fase 1, bloco 1.3) o pipeline ja entrega esse WAV
+    pronto, e reextrai-lo seria decodificar outra vez o que acabou de ser
+    decodificado. ``is_temp`` diz se o arquivo e nosso para apagar: o do
+    pipeline **nao** e -- quem o criou tambem o remove, e apaga-lo aqui
+    deixaria o resto do job sem audio.
+
+    A confirmacao so custa um ffprobe quando a entrada ja e `.wav`; no caso
+    normal (um mp4) a comparacao de extensao decide sozinha.
+    """
+    if media_path.lower().endswith(".wav"):
+        import audio_probe
+        if audio_probe.ja_e_wav_do_pipeline(audio_probe.probe(media_path)):
+            return media_path, False
+
     fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="asr_")
     os.close(fd)
     cmd = [
@@ -209,7 +224,7 @@ def _extract_wav(media_path):
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
                    stderr=subprocess.PIPE, timeout=1800)
-    return wav_path
+    return wav_path, True
 
 
 def _words_from_tokens(tokens, timestamps, seg_start, seg_end):
@@ -249,7 +264,7 @@ def _words_from_tokens(tokens, timestamps, seg_start, seg_end):
 
 def _transcribe_with_parakeet(media_path):
     model = _get_parakeet_model()
-    wav_path = _extract_wav(media_path)
+    wav_path, wav_e_nosso = _extract_wav(media_path)
     try:
         # 16kHz mono s16le wav -> 32000 bytes per second of audio.
         try:
@@ -264,10 +279,11 @@ def _transcribe_with_parakeet(media_path):
                 progress.update(float(seg.end))
             progress.update(progress.total)
     finally:
-        try:
-            os.remove(wav_path)
-        except OSError:
-            pass
+        if wav_e_nosso:
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
 
     out_segments = []
     text_parts = []

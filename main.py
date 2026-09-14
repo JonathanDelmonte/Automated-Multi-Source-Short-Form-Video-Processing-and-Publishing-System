@@ -28,6 +28,7 @@ import llm_backend
 import llm_cascade
 import job_metrics
 import sources
+import audio_probe
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             clip_duration_bounds, snap_clip_to_words,
                             trim_to_best)
@@ -1994,6 +1995,40 @@ if __name__ == '__main__':
     # arquivo local), entao e aqui que o coletor aprende onde gravar.
     job_metrics.set_destination(output_dir, video_title)
 
+    # 2. Probe — o audio dirige, o video obedece (§4 do Plano Tecnico).
+    #
+    # Um `ffprobe` e, quando houver analise pela frente, um WAV 16k mono. Dali
+    # em diante transcricao e deteccao leem so o audio: um MOV 4K de 10GB e um
+    # MP4 720p de 800MB com a mesma live dentro passam a custar quase o mesmo,
+    # porque o custo cresce com a duracao FALADA e nao com o tamanho do arquivo.
+    #
+    # Tudo aqui falha aberto. Sem probe ou sem extracao, `audio_path` continua
+    # sendo o proprio video e o pipeline roda como rodava.
+    audio_path = input_video
+    with job_metrics.stage("02_probe"):
+        media_info = audio_probe.probe(input_video)
+        if media_info.get("width") and media_info.get("height"):
+            print(f"   📐 {media_info['width']}x{media_info['height']}"
+                  + (f", {media_info['duration_s']:.0f}s" if media_info.get("duration_s") else "")
+                  + (f", audio {media_info['audio_codec']}" if media_info.get("audio_codec") else ", sem audio"))
+        if args.skip_analysis:
+            # Converter o video inteiro nao le transcricao nenhuma; extrair o
+            # audio aqui seria minutos de ffmpeg para nada.
+            pass
+        elif not media_info.get("has_audio"):
+            print("   🔇 Fonte sem trilha de audio — a analise vai ser visual.")
+        else:
+            _wav = audio_probe.extract_wav(
+                input_video, os.path.join(output_dir, audio_probe.WAV_NAME))
+            if _wav:
+                audio_path = _wav
+                _seg = audio_probe.wav_seconds(_wav) or 0
+                _mb = os.path.getsize(_wav) / (1024 * 1024)
+                _orig_mb = (media_info.get("size_bytes") or 0) / (1024 * 1024)
+                print(f"   🎧 Audio extraido: {_seg:.0f}s, {_mb:.0f} MB"
+                      + (f" (a fonte tem {_orig_mb:.0f} MB)" if _orig_mb else ""))
+                job_metrics.fact("audio_mb", round(_mb, 1))
+
     # Layout choice is per SOURCE video, not per clip: one upload and one call
     # instead of one per clip, and the answer is a property of the material
     # ("this is a screencast"), which does not change between its own clips.
@@ -2030,11 +2065,21 @@ if __name__ == '__main__':
         render_clip(input_video, output_file, output_format)
     else:
         # Get duration (needed by both the transcript and the vision path).
-        cap = cv2.VideoCapture(input_video)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = frame_count / fps
-        cap.release()
+        #
+        # A do container, medida no estagio 02, vem primeiro: `frame_count/fps`
+        # do OpenCV erra em video de taxa variavel e, quando o container nao
+        # declara fps, divide por zero -- que derrubava o job inteiro no lugar
+        # mais bobo possivel. O OpenCV fica de reserva para o caso de o ffprobe
+        # nao ter respondido.
+        duration = media_info.get("duration_s")
+        if not duration:
+            cap = cv2.VideoCapture(input_video)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 0
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            duration = (frame_count / fps) if fps else 0
+            if not duration:
+                print("⚠️  Nao consegui medir a duracao da fonte.")
 
         # 3. Transcribe — unless the video has no audio, in which case fall back
         # to Gemini vision (picks clips from the imagery instead of the speech).
@@ -2062,7 +2107,9 @@ if __name__ == '__main__':
         if transcript is None:
             try:
                 with job_metrics.stage("03_transcribe"):
-                    transcript = transcribe_video(input_video)
+                    # `audio_path` e o WAV do estagio 02 quando ele existe, e o
+                    # proprio video quando nao existe.
+                    transcript = transcribe_video(audio_path)
                 save_transcript_checkpoint(output_dir, transcript, input_video, duration)
             except NoAudioError as e:
                 print(f"🔇 {e} — switching to visual analysis.")
@@ -2194,6 +2241,12 @@ if __name__ == '__main__':
     if args.url and not args.keep_original and os.path.exists(input_video):
         os.remove(input_video)
         print(f"🗑️  Cleaned up downloaded video.")
+    # O WAV do estagio 02 e intermediario, nao entregavel: numa live de 4h sao
+    # ~460 MB parados no diretorio do job. Quem resume um job interrompido nao
+    # perde nada com isso -- o que evita retranscrever e o
+    # `.transcript_checkpoint.json`, nao este arquivo.
+    if audio_path != input_video and os.path.exists(audio_path) and not args.keep_original:
+        os.remove(audio_path)
     # The job finished: a later run in this directory must transcribe afresh.
     if not args.skip_analysis:
         clear_transcript_checkpoint(output_dir)

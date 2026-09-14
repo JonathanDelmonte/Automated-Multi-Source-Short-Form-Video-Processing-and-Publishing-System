@@ -120,20 +120,32 @@ Três coisas que o bloco travou, e que valem para os adapters seguintes:
 | `ffmpeg_utils.py` (298 l.) | `METADATA_SCRUB`, `QUALITY_FAST`, `audio_encode_args` |
 | `main.py:detect_scenes` (625) · `scene_detection.py` | PySceneDetect |
 
-**A regra central do §4 não está implementada.** `main.py:transcribe_video` (1467)
-recebe `video_path` e entrega o **arquivo de vídeo inteiro** a `transcribe_media`.
-Não há extração de áudio 16k mono antes do pipeline; quem decodifica é o modelo.
-
-Existe uma extração 16k mono no repositório, mas é local do backend Parakeet
-(`transcribe_backends.py:203-208`), como wav temporário só daquele caminho:
+**Implementada no bloco 1.3** (`audio_probe.py`). O que este documento registrou na
+Fase 0.2 — *"a linha já está escrita, só está no lugar errado da árvore"* — era
+literal: a receita existia dentro do backend Parakeet
+(`transcribe_backends._extract_wav`), como wav temporário só daquele caminho.
+Promovê-la a estágio foi o trabalho.
 
 ```
-"-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav_path
+"-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"
 ```
 
-É a receita que a Fase 1 promove a estágio 02 de verdade — a linha já está escrita,
-só está no lugar errado da árvore. Confirma que "mover a extração de áudio para antes
-de tudo" é trabalho real e não uma reorganização cosmética.
+Agora o `main.py` roda um `ffprobe` e, quando há análise pela frente, extrai
+`.audio16k.wav` no diretório do job. Transcrição e detecção leem esse arquivo; o
+vídeo só é tocado no 05/06, e mesmo ali só nos trechos escolhidos.
+
+| Decisão | Por quê |
+|---|---|
+| **Tudo falha aberto** | ffprobe que não roda ou extração que sai vazia devolvem "não consegui" e o pipeline segue entregando o vídeo ao modelo, como antes. Otimização que derruba job não é otimização. |
+| **A duração vem do `ffprobe`**, com o OpenCV de reserva | `frame_count/fps` erra em vídeo de taxa variável e, quando o container não declara fps, **divide por zero** — derrubava o job no lugar mais bobo possível. |
+| **Não extrai com `--skip-analysis`** | converter o vídeo inteiro não lê transcrição nenhuma; seriam minutos de ffmpeg para nada. |
+| **Não extrai sem trilha de áudio** | o pipeline já tem o caminho de análise visual; forçar a extração só trocaria um erro claro por um arquivo vazio. |
+| **O WAV é apagado no fim** | numa live de 4h são ~460 MB parados. Quem resume um job interrompido não perde nada: o que evita retranscrever é o `.transcript_checkpoint.json`. |
+| **Dotfile** | o diretório do job é servido em `/videos/<job>/`, e isto é estado intermediário — mesma convenção do `.resume.json`. |
+
+O backend Parakeet **reconhece o próprio WAV do pipeline** e não o reextrai;
+`_extract_wav` passou a devolver `(caminho, é_nosso_para_apagar)`, porque o
+`finally` dele apagaria o arquivo que o resto do job ainda usa.
 
 ### 03 Transcribe
 

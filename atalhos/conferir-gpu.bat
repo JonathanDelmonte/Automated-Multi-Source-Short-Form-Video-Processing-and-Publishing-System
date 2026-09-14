@@ -4,7 +4,10 @@ REM
 REM Pergunta que vale a pena fazer porque a resposta errada e SILENCIOSA: sem a
 REM GPU, o WHISPER_DEVICE=cuda cai para CPU sozinho, sem erro nenhum. Funciona,
 REM so que lento -- e nao ha nada no log dizendo que foi isso.
-cd /d "%~dp0"
+call "%~dp0_garantir-docker.bat"
+if %errorlevel% neq 0 ( pause & exit /b 1 )
+
+cd /d "%~dp0.."
 echo.
 echo Perguntando ao container se ele enxerga a GPU...
 echo.

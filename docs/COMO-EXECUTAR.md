@@ -200,9 +200,25 @@ as suas chaves nunca irem parar no GitHub.
 
 #### Os atalhos (o equivalente ao `pnpm dev`)
 
-Estão na raiz do projeto. Dê **duplo clique** no Explorer, ou digite o nome no
-Prompt de Comando. Todos entram na pasta certa sozinhos, então não é preciso
-`cd` nenhum:
+Estão na pasta **`atalhos\`**, não na raiz — eram dez arquivos misturados com o
+código, e em ordem alfabética ficavam espalhados entre `app.py` e `subtitles.py`.
+A pasta inteira é conveniência de quem roda no Windows e pode ser apagada sem
+afetar o projeto (há um `LEIA-ME.txt` lá dentro dizendo isso).
+
+Dê **duplo clique** no Explorer, ou digite o nome no Prompt de Comando. Todos
+entram na pasta certa sozinhos, então não é preciso `cd` nenhum.
+
+**E todos abrem o Docker Desktop se ele não estiver rodando.** Sem isso, o erro
+que aparecia era este:
+
+```
+failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+
+Ele não diz *"abra o Docker Desktop"* — diz que não achou um cano. Parece
+problema do projeto, e é do Windows: o Docker Desktop não estava no ar. Agora
+`_garantir-docker.bat` (chamado pelos outros) abre o programa e espera o motor
+responder, até 3 minutos.
 
 | Arquivo | Quando |
 |---|---|
@@ -215,6 +231,7 @@ Prompt de Comando. Todos entram na pasta certa sozinhos, então não é preciso
 | `abrir-painel.bat` | abre `localhost:5175` no navegador |
 | `conferir-gpu.bat` | responde se a placa chegou ao container |
 | `ver-log.bat` | mostra o log do backend ao vivo. **A única janela que fica rolando** |
+| `_garantir-docker.bat` | não se roda direto: é o pedaço que os outros chamam para abrir o Docker |
 
 **Todos sobem em modo destacado (`-d`) e devolvem o terminal**, desde
 13-set-2026. Antes ficavam anexados ao log, e daí vinha uma confusão razoável:
@@ -224,13 +241,13 @@ sistemas rodando ao mesmo tempo. **Não havia: é uma pilha só.** `docker compo
 up` não sobe nada novo se os containers já estão de pé — ele só se *anexa* ao
 log deles. Quatro janelas eram quatro leituras do mesmo log.
 
-Com `-d`, fechar a janela não para nada (e nunca parava — veja `parar.bat`
+Com `-d`, fechar a janela não para nada (e nunca parava — veja `atalhos\parar.bat`
 abaixo). Quando o log for de fato necessário, ele tem um atalho próprio:
-`ver-log.bat`.
+`atalhos\ver-log.bat`.
 
 **O `--build` não é o normal, é a exceção.** Ele reconstrói a imagem inteira —
 os 15 a 40 minutos. Só faz sentido quando muda a *lista de dependências*, e isso
-acontece raramente. O resto do tempo é `subir.bat`.
+acontece raramente. O resto do tempo é `atalhos\subir.bat`.
 
 #### Depois do `git pull`, o que é preciso rodar
 
@@ -244,7 +261,7 @@ O que varia é se o processo que está rodando **percebe**:
 | Processo | Percebe sozinho? | Por quê |
 |---|---|---|
 | **Vite** (frontend) | **sim**, com polling | vigia os arquivos — mas no Windows precisa de `VITE_USE_POLLING=1`, veja o quadro abaixo |
-| **uvicorn** (backend) | **no Windows, não** | roda com `--reload`, e o `--reload` depende dos mesmos eventos que não chegam. Por isso o `atualizar.bat` reinicia o backend por conta própria (~3 s) |
+| **uvicorn** (backend) | **no Windows, não** | roda com `--reload`, e o `--reload` depende dos mesmos eventos que não chegam. Por isso o `atalhos\atualizar.bat` reinicia o backend por conta própria (~3 s) |
 | **a imagem** (torch, node_modules) | só com `--build` | pacote instalado mora na imagem, não na pasta montada |
 
 > **O bind mount do Windows não repassa evento de arquivo, e isso custou uma
@@ -261,7 +278,7 @@ O que varia é se o processo que está rodando **percebe**:
 > Duas correções, uma para cada lado: o `docker-compose.yml` liga
 > `VITE_USE_POLLING=1` no frontend (o `vite.config.js` troca os eventos por uma
 > varredura a cada 300 ms; é barato porque só olha `dashboard/`), e o
-> `atualizar.bat` reinicia o backend explicitamente em vez de torcer para o
+> `atalhos\atualizar.bat` reinicia o backend explicitamente em vez de torcer para o
 > `--reload` perceber — no backend a mesma varredura sairia cara, porque o
 > repositório inteiro está montado em `/app` e `output/` cresce a cada job.
 
@@ -271,7 +288,7 @@ Daí a tabela:
 |---|---|
 | só `docs/*.md` | nada |
 | `.jsx`, `.css` | nada — o Vite recarrega o navegador (com `Ctrl+F5` se teimar) |
-| `.py` | `atualizar.bat` já reinicia o backend; à mão, `docker compose restart backend` |
+| `.py` | `atalhos\atualizar.bat` já reinicia o backend; à mão, `docker compose restart backend` |
 | `vite.config.js`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
 | `docker-compose.yml` | `docker compose up -d` (recria o container, sem rebuild) |
 | `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up -d --build` |
@@ -294,7 +311,7 @@ dependências*, nunca quando muda só o código.
 > de polling (`WATCHFILES_FORCE_POLLING=1`), e deliberadamente não está ligado —
 > o repositório inteiro está montado em `/app`, então a varredura passaria por
 > `output/` a cada ciclo, que é exatamente o problema do `StatReload` de volta
-> por outra porta. Em vez disso o `atualizar.bat` reinicia o backend quando o
+> por outra porta. Em vez disso o `atalhos\atualizar.bat` reinicia o backend quando o
 > `pull` traz código: são ~3 s, e não custam CPU o dia inteiro.
 
 ---
@@ -472,7 +489,7 @@ ultralytics, mediapipe e faster-whisper. **As seguintes sobem em segundos.**
 
 O `-d` é o que faz o terminal voltar quando termina, em vez de ficar anexado ao
 log para sempre. A construção continua aparecendo na tela — ela demora, convém
-ver. Para parar tudo depois: `parar.bat`, ou `docker compose down`.
+ver. Para parar tudo depois: `atalhos\parar.bat`, ou `docker compose down`.
 
 Sobem três serviços:
 
@@ -534,11 +551,11 @@ o que está escrito no log.
 normal.** É o `HEALTHCHECK` do Dockerfile perguntando ao backend se ele
 continua vivo, e `200` é a resposta certa. Linhas idênticas rolando para sempre
 têm a cara exata de um loop travado; aqui são a aparência de um sistema
-saudável. (`ver-log.bat` é o atalho para ver isso quando você quiser.)
+saudável. (`atalhos\ver-log.bat` é o atalho para ver isso quando você quiser.)
 
 **Fechar a janela não para nada** — e nunca parou, mesmo antes do `-d`: os três
 serviços têm `restart: unless-stopped` no compose, então o Docker os religa. O
-único jeito de encerrar de verdade é `parar.bat` (`docker compose down`).
+único jeito de encerrar de verdade é `atalhos\parar.bat` (`docker compose down`).
 
 ---
 
@@ -567,7 +584,7 @@ uma destas três:
 3. o `docker compose` subiu de outra pasta.
 
 Depois de corrigir o `.env`, é preciso **reiniciar** para ele ser lido de novo:
-`parar.bat` e depois `subir.bat` (essa segunda vez é rápida, não reconstrói).
+`atalhos\parar.bat` e depois `atalhos\subir.bat` (essa segunda vez é rápida, não reconstrói).
 
 E o painel abre em **http://localhost:5175**.
 

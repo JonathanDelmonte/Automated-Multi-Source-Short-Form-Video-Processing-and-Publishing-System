@@ -1,0 +1,25 @@
+Atalhos do dia a dia (Windows)
+==============================
+
+Duplo clique no Explorer, ou digite o nome no Prompt de Comando. Todos entram
+na pasta certa sozinhos e TODOS abrem o Docker Desktop se ele nao estiver
+rodando -- nao e preciso abrir nada antes.
+
+  subir.bat           o do dia a dia. Sobe em segundos e devolve o terminal.
+  atualizar.bat       git pull + sobe. Avisa se as dependencias mudaram.
+  parar.bat           para tudo de verdade (fechar a janela nao para).
+  ver-log.bat         mostra o log do backend ao vivo. A unica janela que rola.
+  abrir-painel.bat    abre http://localhost:5175 no navegador.
+
+  reconstruir.bat     SO quando muda requirements.txt, package.json ou o
+                      Dockerfile. Demora de 15 a 40 minutos.
+
+  subir-gpu.bat       o do dia a dia, usando a placa NVIDIA.
+  reconstruir-gpu.bat constroi a imagem com as libs de CUDA. Roda-se uma vez.
+  conferir-gpu.bat    responde se a placa chegou ao container.
+
+  _garantir-docker.bat  nao se roda direto. E o pedaco que os outros chamam
+                        para abrir o Docker Desktop e esperar o motor subir.
+
+Esta pasta inteira e conveniencia de quem roda no Windows: pode ser apagada
+sem afetar o projeto. O passo a passo completo esta em docs/COMO-EXECUTAR.md.

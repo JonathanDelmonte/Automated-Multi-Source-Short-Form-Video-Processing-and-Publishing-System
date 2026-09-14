@@ -9,7 +9,10 @@ REM poucos segundos e o HEALTHCHECK do Dockerfile perguntando se o backend
 REM continua vivo. 200 e a resposta certa.
 REM
 REM Ctrl+C fecha a leitura.
-cd /d "%~dp0"
+call "%~dp0_garantir-docker.bat"
+if %errorlevel% neq 0 ( pause & exit /b 1 )
+
+cd /d "%~dp0.."
 echo.
 echo Log do backend. Ctrl+C para sair (nao para o sistema).
 echo.

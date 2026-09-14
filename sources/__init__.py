@@ -31,6 +31,7 @@ from .base import (  # noqa: F401  (reexportados: e esta a superficie publica)
     is_http_url,
 )
 from .direct import DirectUrlAdapter
+from .gdrive import GoogleDriveAdapter
 from .local import LocalFileAdapter
 from .twitch import TwitchLiveAdapter, TwitchVodAdapter
 from .youtube import YouTubeAdapter
@@ -44,6 +45,7 @@ REGISTRY: tuple[type[SourceAdapter], ...] = (
     YouTubeAdapter,
     TwitchVodAdapter,
     TwitchLiveAdapter,
+    GoogleDriveAdapter,
     DirectUrlAdapter,
     LocalFileAdapter,
 )

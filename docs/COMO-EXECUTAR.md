@@ -604,6 +604,7 @@ você sabe que o problema é o pipeline, não o download.
 > | vídeo do YouTube | baixa (o log diz `🔌 Fonte: YouTube`) |
 > | VOD da Twitch (`/videos/<número>`) | baixa, avisando que VOD expira em 7 a 60 dias |
 > | clip da Twitch (`/clip/...` ou `clips.twitch.tv/...`) | baixa |
+> | link do Google Drive (`/file/d/...`) | baixa; privado precisa de `GDRIVE_COOKIES` |
 > | link direto de um `.mp4` | baixa do IP da sua máquina, sem proxy |
 > | **canal da Twitch ao vivo** (`twitch.tv/<canal>`) | **grava 15 min e corta esse pedaço** |
 > | lista de vídeos do canal (`twitch.tv/<canal>/videos`) | recusa na hora: é listagem, não vídeo |

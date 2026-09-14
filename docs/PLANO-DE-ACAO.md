@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Em curso: Fase 1 — ingestão; só falta o adapter do Google Drive |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). **Fase 1 completa em código**; falta exercitar cada fonte numa execução real |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -487,7 +487,7 @@ de 4h é processada sem estourar o orçamento diário de tokens.
 | 1.3 | estágio 02 Probe: ffprobe + WAV 16k mono antes de tudo | ✅ concluído |
 | 1.4 | pré-filtro heurístico (ADR-004) | ✅ concluído |
 | 1.5 | Twitch ao vivo, **em blocos** (é o que evita o worker de longa duração) | ✅ concluído |
-| 1.6 | Google Drive e upload de 10GB em streaming | ◐ upload feito; Drive pendente |
+| 1.6 | Google Drive e upload de 10GB em streaming | ✅ concluído |
 | 1.7 | YOLO preguiçoso e desligado por padrão (ADR-003) | ✅ concluído |
 
 O 1.1 vem antes da Twitch, que o §9 manda fazer primeiro, porque a Twitch **é** um
@@ -504,8 +504,23 @@ configurável, porque disco é restrição da máquina e não do projeto. Ele co
 com `UPLOADS_MAX_GB` (15) e `OUTPUT_MAX_GB` (25), e um teste falha se as duas
 contas deixarem de fechar.
 
-Fica pendente do 1.6 o **adapter do Google Drive**: precisa de OAuth com refresh
-token, que exige credenciais que só o autor pode criar.
+#### O Drive usa cookies, não OAuth — divergência deliberada do §4
+
+O §4 previa *"Drive API v3, `files.get?alt=media`, chunks"* com *"OAuth com
+refresh token"*. Isso é o desenho certo para um SaaS multiusuário, onde cada
+cliente autoriza a própria conta. Para uma ferramenta pessoal self-hosted é
+desproporcional: exige criar um projeto no Google Cloud, uma tela de
+consentimento, credenciais de cliente e um fluxo de refresh — tudo para o autor
+ler arquivos da própria conta.
+
+O yt-dlp já tem extrator de Google Drive, e ele cobre os dois casos que existem
+aqui: arquivo compartilhado por link baixa sem autenticação nenhuma, e arquivo
+privado baixa com `GDRIVE_COOKIES`, o mesmo mecanismo de jar Netscape que o
+YouTube e a Twitch já usam neste repositório.
+
+Quando a Fase 4 trouxer multiusuário de verdade, o OAuth volta a ser a resposta
+certa — e aí entra como **outra implementação atrás desta mesma interface**, que
+é o motivo de a camada existir.
 
 #### O pré-filtro corta por orçamento, não por qualidade (bloco 1.4)
 

@@ -72,6 +72,7 @@ saída, que é ergonomia de CLI.
 | `sources/youtube.py` | `youtube` | os hosts do YouTube |
 | `sources/twitch.py` | `twitch-vod` | `/videos/<id>`, `/<canal>/v/<id>`, `/<canal>/clip/<slug>`, `clips.twitch.tv` |
 | `sources/twitch.py` + `sources/twitch_live.py` | `twitch-live` | `/<canal>` — **grava um bloco** (bloco 1.5). `/<canal>/videos` continua recusada: é listagem, não vídeo |
+| `sources/gdrive.py` | `gdrive` | `drive.google.com` / `docs.google.com` — pasta é recusada |
 | `sources/direct.py` | `direct` | qualquer outra URL http(s) |
 | `sources/local.py` | `upload` | o que não é URL (o upload do painel, o `-i`) |
 

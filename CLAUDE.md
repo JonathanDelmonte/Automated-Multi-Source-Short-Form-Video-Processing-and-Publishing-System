@@ -205,6 +205,23 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   numa listagem nao responde nada) e no `main.py` antes do yt-dlp. Nao e um
   video: o yt-dlp a trataria como playlist e baixaria o canal inteiro.
 
+### Google Drive por cookies, nao OAuth (`sources/gdrive.py`, bloco 1.6)
+
+Divergencia deliberada do §4, que previa "Drive API v3 + OAuth com refresh
+token". OAuth e o desenho certo para SaaS multiusuario e desproporcional para
+ferramenta pessoal: projeto no Google Cloud, tela de consentimento,
+credenciais de cliente e fluxo de refresh, tudo para o autor ler arquivos da
+propria conta. O yt-dlp ja tem extrator de Drive e cobre os dois casos --
+compartilhado por link baixa sem nada, privado baixa com `GDRIVE_COOKIES`
+(jar proprio, `/app/cookies-gdrive.txt`).
+
+Quando a Fase 4 trouxer multiusuario, o OAuth entra como **outra
+implementacao atras desta mesma interface** -- e o motivo de a camada existir.
+
+**Pasta do Drive e recusada** por `assert_fetchable`: o yt-dlp nao suporta
+pasta, e sem a recusa a URL cai no adapter generico e falha com uma mensagem
+sobre extrator.
+
 ### Live da Twitch em blocos (`sources/twitch_live.py`, Fase 1 bloco 1.5)
 
 **Um job = um bloco, e essa e a decisao inteira.** O §4 chama a live de "worker

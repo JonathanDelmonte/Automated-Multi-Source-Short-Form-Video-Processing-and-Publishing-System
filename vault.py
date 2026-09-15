@@ -83,9 +83,24 @@ def _do_env(plataforma: str, handle: str) -> dict:
     return segredo
 
 
+def _seguro(nome: str, padrao: str) -> str:
+    """Um pedaco de caminho que nao sabe sair da pasta do cofre.
+
+    `..` some por inteiro, e nao vira `_.._`: o endereco vem do corpo de
+    `POST /api/contas`, e `vault://local/../canal` daria
+    `<DATA_DIR>/vault/../canal.json` -- um arquivo FORA do cofre, escolhido por
+    quem mandou a requisicao. Nenhuma plataforma ou handle de verdade precisa
+    de ponto-ponto, entao a regra nao custa nada e fecha a porta.
+    """
+    limpo = re.sub(r"[^A-Za-z0-9_.-]+", "_", nome or "")
+    limpo = limpo.strip(". ").replace("..", "")
+    return limpo or padrao
+
+
 def caminho_local(plataforma: str, handle: str) -> str:
-    seguro = re.sub(r"[^A-Za-z0-9_.-]+", "_", handle or "conta")
-    return os.path.join(_dir_de_dados(), "vault", plataforma, f"{seguro}.json")
+    return os.path.join(_dir_de_dados(), "vault",
+                        _seguro(plataforma, "plataforma"),
+                        f"{_seguro(handle, 'conta')}.json")
 
 
 def _do_arquivo(plataforma: str, handle: str) -> dict:

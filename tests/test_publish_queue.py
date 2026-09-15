@@ -143,6 +143,35 @@ class TestContas:
         assert r.status_code == 400
         assert "ja existe" in r.json()["detail"]
 
+    def test_endereco_de_cofre_torto_e_recusado_na_criacao(self):
+        """E nao na hora de publicar: um endereco errado descoberto no meio de
+        um lote e um corte que nao subiu por um erro de digitacao feito dias
+        antes."""
+        r = _chama("POST", "/api/contas",
+                   {"platform": "youtube", "handle": "c",
+                    "credentials_ref": "nao-e-endereco"})
+        assert r.status_code == 400
+        assert "cofre" in r.json()["detail"]
+
+    def test_apagar_diz_quantas_publicacoes_foram_junto(self, ambiente):
+        """A FK de `publications` e ON DELETE CASCADE (secao 7): apagar a conta
+        leva o historico dela. E o desenho, mas quem clica precisa saber."""
+        job_id = _job_com_cortes(ambiente, 2)
+        conta = _chama("POST", "/api/contas",
+                       {"platform": "youtube", "handle": "canal"}).json()
+        _chama("POST", "/api/publicar",
+               {"job_id": job_id, "account_id": conta["id"]})
+        r = _chama("DELETE", f"/api/contas/{conta['id']}")
+        assert r.status_code == 200
+        assert r.json()["publicacoes_apagadas"] == 2
+        assert _chama("GET", "/api/publicacoes").json()["publicacoes"] == []
+
+    def test_apagar_conta_sem_publicacao_diz_zero(self):
+        conta = _chama("POST", "/api/contas",
+                       {"platform": "youtube", "handle": "canal"}).json()
+        assert _chama("DELETE", f"/api/contas/{conta['id']}"
+                      ).json()["publicacoes_apagadas"] == 0
+
     def test_apagar_o_que_nao_existe_e_404(self):
         assert _chama("DELETE", f"/api/contas/{uuid.uuid4()}").status_code == 404
 

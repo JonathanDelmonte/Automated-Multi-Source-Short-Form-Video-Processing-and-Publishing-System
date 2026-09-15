@@ -92,6 +92,12 @@ def _gravar(dados: dict) -> None:
         os.replace(tmp, caminho)    # troca atomica, como o orcamento de LLM
     except OSError:
         pass
+    # Melhor-esforco, como o orcamento de LLM: duas publicacoes simultaneas
+    # podem ler o mesmo valor e uma das somas se perder. O arquivo nunca
+    # corrompe (a troca e atomica) e o erro e de UM upload a mais, que o
+    # YouTube recusa com `quotaExceeded` -- o que o driver ja traduz em
+    # "caiu na fila manual" em vez de job vermelho. Um lock de arquivo para
+    # isso custaria mais que o erro que evita.
 
 
 def usadas() -> int:

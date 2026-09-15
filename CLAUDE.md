@@ -421,6 +421,10 @@ driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
 - **O cofre** (`vault.py`) resolve `accounts.credentials_ref`, que a §7 exigia e
   ninguem lia. Backends `env` e `local` (arquivo 0600); mensagem de erro diz o
   NOME do campo que falta, nunca o valor -- o log do job aparece no painel.
+  **Cada pedaco do endereco e sanitizado** antes de virar caminho: o ref vem do
+  corpo de `POST /api/contas`, e `vault://local/../canal` daria um arquivo fora
+  do cofre escolhido por quem mandou a requisicao. O ref tambem e validado na
+  criacao da conta, e nao na hora de publicar.
 - **`python youtube_oauth.py`** e a unica forma de emitir o refresh token
   (consentimento no navegador, loopback -- o Google desativou o `oob`). Escopo
   `youtube.upload` e so ele: se o token vazar, a diferenca para o escopo

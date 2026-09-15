@@ -48,6 +48,7 @@ export default function PublicacoesTab() {
   const [projetos, setProjetos] = useState([]);
   const [envio, setEnvio] = useState({ job_id: '', account_id: '' });
   const [ultimoEnvio, setUltimoEnvio] = useState(null);
+  const [confirmando, setConfirmando] = useState(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -204,15 +205,36 @@ export default function PublicacoesTab() {
                     <span className="text-muted text-xs ml-auto text-right">
                       {DRIVERS[c.driver_agora] || c.driver_agora}
                     </span>
-                    <button
-                      className="text-muted hover:text-danger shrink-0"
-                      disabled={ocupado}
-                      onClick={() => acao(() =>
-                        apiFetch(`/api/contas/${c.id}`, { method: 'DELETE' }))}
-                      title="remover conta"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {confirmando === c.id ? (
+                      // Apagar a conta leva o histórico de publicação dela
+                      // junto (ON DELETE CASCADE, §7). Mesma confirmação que
+                      // apagar um projeto, e pelo mesmo motivo: o clique é
+                      // pequeno e o que ele leva não é.
+                      <span className="flex items-center gap-2 shrink-0">
+                        <button className="text-danger text-xs"
+                                disabled={ocupado}
+                                onClick={() => acao(async () => {
+                                  await apiFetch(`/api/contas/${c.id}`,
+                                                 { method: 'DELETE' });
+                                  setConfirmando(null);
+                                })}>
+                          apagar e o histórico
+                        </button>
+                        <button className="text-muted text-xs"
+                                onClick={() => setConfirmando(null)}>
+                          não
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        className="text-muted hover:text-danger shrink-0"
+                        disabled={ocupado}
+                        onClick={() => setConfirmando(c.id)}
+                        title="remover conta"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </li>
                 );
               })}

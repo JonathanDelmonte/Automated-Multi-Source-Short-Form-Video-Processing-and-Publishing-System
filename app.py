@@ -5031,10 +5031,13 @@ async def criar_conta(req: ContaIn):
 
 @app.delete("/api/contas/{account_id}")
 async def apagar_conta(account_id: str):
+    """Apaga a conta -- e, por cascata do schema, o historico de publicacao
+    dela. A resposta diz quantas linhas foram junto."""
     try:
-        if not await publish_queue.apagar_conta(account_id):
+        resumo = await publish_queue.apagar_conta(account_id)
+        if resumo is None:
             raise HTTPException(status_code=404, detail="Conta nao encontrada")
-        return {"success": True}
+        return {"success": True, **resumo}
     except HTTPException:
         raise
     except Exception as e:

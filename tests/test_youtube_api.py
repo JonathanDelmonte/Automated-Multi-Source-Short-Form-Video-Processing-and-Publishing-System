@@ -184,6 +184,35 @@ class TestCofre:
         for segredo in ("id-de-cliente", "segredo-de-cliente", "token-de-renovacao"):
             assert segredo not in juntas
 
+    @pytest.mark.parametrize("ref", [
+        "vault://local/../canal",
+        "vault://local/./canal",
+        "vault://local/youtube/..",
+        "vault://local/youtube/.",
+        "vault://local/....../canal",
+    ])
+    def test_nenhum_endereco_escreve_fora_da_pasta_do_cofre(self, ref):
+        """O endereco vem do corpo de `POST /api/contas`.
+
+        `vault://local/../canal` dava `<DATA_DIR>/vault/../canal.json` -- um
+        arquivo FORA do cofre, escolhido por quem mandou a requisicao. Nenhuma
+        plataforma nem handle de verdade precisa de ponto-ponto.
+        """
+        _, plataforma, handle = vault.partes(ref)
+        caminho = os.path.abspath(vault.caminho_local(plataforma, handle))
+        raiz = os.path.abspath(os.path.join(os.environ["DATA_DIR"], "vault"))
+        assert caminho.startswith(raiz + os.sep)
+
+    def test_endereco_com_barra_a_mais_e_recusado_antes(self):
+        """Duas barras extras nao viram nome sanitizado: nao sao um endereco."""
+        with pytest.raises(vault.VaultError):
+            vault.partes("vault://local/youtube/../../x")
+
+    def test_o_nome_util_sobrevive_a_limpeza(self):
+        """A defesa nao pode estragar o caso normal."""
+        assert vault.caminho_local("youtube", "canal-principal").endswith(
+            os.path.join("youtube", "canal-principal.json"))
+
     def test_existe_nao_levanta(self):
         assert vault.existe(None) is False
         assert vault.existe("lixo") is False

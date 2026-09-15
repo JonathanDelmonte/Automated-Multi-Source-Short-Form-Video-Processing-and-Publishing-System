@@ -75,6 +75,15 @@ async def criar_conta(platform: str, handle: str, driver_pref: str = "auto",
         raise FilaError(f"preferencia de driver desconhecida: {driver_pref}")
     if not (handle or "").strip():
         raise FilaError("a conta precisa de um handle")
+    if credentials_ref:
+        # Valida na criacao, e nao na hora de publicar: um endereco torto
+        # descoberto no meio de um lote e um corte que nao subiu por um erro de
+        # digitacao feito dias antes.
+        import vault
+        try:
+            vault.partes(credentials_ref)
+        except vault.VaultError as e:
+            raise FilaError(str(e))
     async with db.tenant() as t:
         existentes = await t.all(db_models.Account,
                                  db_models.Account.platform == platform,
@@ -89,14 +98,26 @@ async def criar_conta(platform: str, handle: str, driver_pref: str = "auto",
         return _conta_json(linha)
 
 
-async def apagar_conta(account_id: str) -> bool:
+async def apagar_conta(account_id: str) -> Optional[dict]:
+    """Apaga a conta e devolve o que foi junto, ou None se nao existia.
+
+    A FK de `publications` e `ON DELETE CASCADE` (secao 7), entao apagar uma
+    conta leva o historico de publicacao dela. Isso e o desenho, mas quem clica
+    precisa saber: o numero volta na resposta para o painel poder perguntar
+    antes, como ja faz ao apagar um projeto (que leva os cortes junto).
+    """
     async with db.tenant() as t:
         linha = await t.get(db_models.Account, account_id)
         if linha is None:
-            return False
+            return None
+        publicacoes = await t.all(
+            db_models.Publication,
+            db_models.Publication.account_id == account_id)
+        resumo = {"handle": linha.handle, "platform": linha.platform,
+                  "publicacoes_apagadas": len(publicacoes)}
         await t.session.delete(linha)
         await t.commit()
-        return True
+        return resumo
 
 
 # --------------------------------------------------------------------------- #

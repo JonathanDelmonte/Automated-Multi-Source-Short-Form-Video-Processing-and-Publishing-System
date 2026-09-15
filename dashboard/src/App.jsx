@@ -4,6 +4,7 @@ import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ProjectsList from './components/ProjectsList';
 import ProjectsGrid from './components/ProjectsGrid';
+import PublicacoesTab from './components/PublicacoesTab';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -896,6 +897,7 @@ function App() {
     { id: 'projects', icon: FolderOpen, label: 'Projetos', short: 'projetos', primary: true },
     { id: 'ai-agent', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
     { id: 'thumbnails', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
+    { id: 'publicar', icon: Share2, label: 'Publicação', short: 'publicar', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', icon: History, label: 'History', short: 'history' }] : []),
     { id: 'settings', icon: Settings, label: 'Settings', short: 'settings' },
   ].map((item, i) => ({ ...item, ord: String(i + 1).padStart(2, '0') }));
@@ -1374,6 +1376,8 @@ function App() {
           {/* {activeTab === 'gallery' && (
             <Gallery />
           )} */}
+
+          {activeTab === 'publicar' && <PublicacoesTab />}
 
           {activeTab === 'projects' && (
             <ProjectsGrid

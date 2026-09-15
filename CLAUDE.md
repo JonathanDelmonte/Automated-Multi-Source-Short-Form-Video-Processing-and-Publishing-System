@@ -448,6 +448,39 @@ dia, a legenda de cada um e um `LEIA-ME.txt` com a ordem sugerida;
   O filtro de dono ja esta la, no-op hoje, para que a Fase 4 nao tenha de
   lembrar dele depois.
 
+### Fila de publicacao (`publish_queue.py`, `/api/contas`, `/api/publicar`, bloco 3.5)
+
+Junta o resolvedor da §6, as linhas de `clips` do bloco 3.3 e as contas de
+plataforma. A partir daqui existe, fora da cabeca de quem publicou, a linha
+"este corte foi para este canal por este driver".
+
+- **O corpo de `/api/publicar` aceita `account_id`, nunca `driver`.** Deixar o
+  painel mandar o driver reabriria por fora a porta que o ADR-010 fechou --
+  bastaria um `driver: "browser"` numa requisicao. A conta e um endereco; o
+  driver e consequencia, e quem decide e `publishers.resolve`.
+- **A linha de `publications` nasce antes do upload** (`publishing`) e e fechada
+  depois. Gravar so no sucesso deixaria um upload morto no meio sem rastro, e a
+  unicidade `(clip, conta)` e o que impede o retry de postar duas vezes.
+- **Aqui, ao contrario do `job_registry`, o erro SOBE.** Sem banco nao ha como
+  impedir post duplicado, e um corte publicado duas vezes no mesmo canal e pior
+  que um corte nao publicado.
+- **So `driver.publish()` vai para o executor.** O resto fala com o banco, e o
+  engine async esta preso ao loop que o criou -- um `asyncio.run` dentro da
+  thread criaria um segundo loop e a conexao pertenceria ao errado. Um teste le
+  o AST para garantir.
+- **`marcar_publicado` e o unico caminho para `published`** na fila manual, e e
+  humano de proposito: o driver entregou o pacote e nao tem como saber que a
+  pessoa apertou publicar.
+- No painel, a aba **Publicação** (`PublicacoesTab.jsx`): pacote do dia, contas
+  (com o driver que atenderia cada uma agora), publicar um projeto e a fila.
+  Pequena de proposito, como o bloco 2.3b -- o frontend vai ser trocado.
+
+> `publishers/__init__.py` **exporta os submodulos** (`from . import pacote,
+> quota`) porque o `app.py` so faz `import publishers`. Sem isso e
+> `AttributeError` em producao e verde no teste, porque o arquivo de teste do
+> pacote importa o submodulo e deixa o atributo posto para a sessao inteira.
+> Ja aconteceu; ha um teste em subprocesso guardando.
+
 ### O pipeline escreve no banco (`job_registry.py`, Fase 3 bloco 3.3)
 
 Fecha a pendencia da Fase 1 -- `sources` e `jobs` nunca eram escritas -- e e
@@ -732,6 +765,10 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/edit` | Apply AI video effects |
 | POST | `/api/subtitle` | Generate and apply subtitles (auto-transcribes dubbed videos) |
 | POST | `/api/hook` | Add text hook overlays |
+| GET/POST/DELETE | `/api/contas` | Contas de plataforma (Fase 3) |
+| POST | `/api/publicar` | Publica cortes de um projeto numa conta |
+| GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
+| GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |

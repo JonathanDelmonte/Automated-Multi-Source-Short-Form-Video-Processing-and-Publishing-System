@@ -327,6 +327,35 @@ class TestTextoDaLegenda:
         assert render_caption(meta, "youtube") == "Titulo\n\nCorpo\n\n#a\n"
 
 
+class TestSubmodulosNoNamespace:
+    """`import publishers` tem de bastar para `publishers.pacote` e
+    `publishers.quota`.
+
+    O `app.py` so faz `import publishers`. Sem os submodulos no `__init__`,
+    `publishers.pacote.Item` e `AttributeError` em PRODUCAO e passa no teste --
+    porque o arquivo de teste do pacote faz `from publishers import pacote` e
+    esse import deixa o atributo posto para toda a sessao. Foi exatamente assim
+    que o bug se escondeu ate o bloco 3.5.
+    """
+
+    def test_o_que_o_app_usa_existe_sem_import_extra(self):
+        import subprocess
+        import sys
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import publishers; publishers.pacote.Item; publishers.quota.CUSTO_INSERT"],
+            capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+
+    def test_o_app_nao_importa_os_submodulos_por_fora(self):
+        """Se o `app.py` passar a importa-los direto, este teste perde o
+        sentido -- e a protecao volta a ser acidental."""
+        import pathlib as _p
+        fonte = _p.Path("app.py").read_text(encoding="utf-8")
+        assert "from publishers import" not in fonte
+        assert "import publishers.pacote" not in fonte
+
+
 class TestContratoSemDependenciaPesada:
 
     def test_o_pacote_abre_sem_o_main_e_sem_o_orm(self):

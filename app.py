@@ -5,6 +5,7 @@ import llm_backend
 import llm_cascade
 import sources
 import publishers
+import publish_queue
 import template as template_doc
 import db
 import db_models
@@ -4967,6 +4968,191 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Fila de publicacao (Fase 3, bloco 3.5) ---------------------------------
+# Junta o resolvedor da secao 6, as linhas de `clips` que o pipeline passou a
+# gravar no 3.3 e as contas de plataforma. A partir daqui existe, fora da
+# cabeca de quem publicou, a linha "este corte foi para este canal por este
+# driver".
+
+class ContaIn(BaseModel):
+    platform: str
+    handle: str
+    driver_pref: str = "auto"
+    credentials_ref: Optional[str] = None
+
+
+class PublicarIn(BaseModel):
+    job_id: str
+    account_id: str
+    #: Os cortes a publicar, por indice. Vazio publica todos os do job.
+    clips: Optional[List[int]] = None
+    visibility: str = "private"
+    scheduled_at: Optional[str] = None
+    dry_run: bool = False
+
+
+def _erro_da_fila(e: Exception) -> HTTPException:
+    print(f"⚠️ Fila de publicacao: banco indisponivel ({e})")
+    return HTTPException(
+        status_code=503,
+        detail="O banco nao respondeu. Rode `python db_seed.py` na pasta do "
+               "projeto e tente de novo.")
+
+
+@app.get("/api/contas")
+async def listar_contas():
+    """As contas de plataforma, com o driver que atenderia cada uma agora.
+
+    `driver_agora` e `capabilities` vem juntos de proposito: e o que o painel
+    usa para explicar por que um corte foi para a fila manual em vez de subir
+    -- sem credencial, sem quota, ou porque a conta pediu.
+    """
+    try:
+        return {"contas": await publish_queue.listar_contas(),
+                "plataformas": ["youtube", "tiktok", "instagram"],
+                "preferencias": list(db_models.DRIVER_PREFS),
+                "quota_youtube": publishers.quota.estado()}
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/contas")
+async def criar_conta(req: ContaIn):
+    try:
+        return await publish_queue.criar_conta(
+            req.platform, req.handle, req.driver_pref, req.credentials_ref)
+    except publish_queue.FilaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.delete("/api/contas/{account_id}")
+async def apagar_conta(account_id: str):
+    try:
+        if not await publish_queue.apagar_conta(account_id):
+            raise HTTPException(status_code=404, detail="Conta nao encontrada")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.get("/api/publicacoes")
+async def listar_publicacoes(status: Optional[str] = None):
+    try:
+        return {"publicacoes": await publish_queue.listar(status),
+                "status_possiveis": list(db_models.PUB_STATUSES)}
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/publicacoes/{pub_id}/publicado")
+async def marcar_publicado(pub_id: str, remote_id: Optional[str] = None):
+    """"Ja publiquei" -- o unico caminho que move a fila manual para
+    `published`, e ele e humano de proposito: o driver `manual` entregou o
+    pacote e nao tem como saber que a pessoa apertou publicar."""
+    try:
+        if not await publish_queue.marcar_publicado(pub_id, remote_id):
+            raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.delete("/api/publicacoes/{pub_id}")
+async def cancelar_publicacao(pub_id: str):
+    try:
+        if not await publish_queue.cancelar(pub_id):
+            raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
+        return {"success": True}
+    except publish_queue.FilaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/publicar")
+async def publicar_cortes(req: PublicarIn, request: Request):
+    """Publica cortes de um job numa conta.
+
+    **O corpo aceita `account_id`, nunca `driver`.** Deixar o painel mandar o
+    driver reabriria por fora a porta que o ADR-010 fechou: bastaria um
+    `driver: "browser"` numa requisicao. A conta e um endereco; o driver e
+    consequencia, e quem decide e `publishers.resolve`.
+
+    Os cortes vao um a um, e um que falha nao derruba os outros: o resultado
+    lista o desfecho de cada indice. Publicar em lote e ter metade dele
+    desaparecer por causa do terceiro corte seria pior que lento.
+    """
+    await _ensure_job_files(req.job_id, request)
+    job = jobs.get(req.job_id) or _job_view_from_disk(req.job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job nao encontrado")
+    await _assert_job_owner(request, job)
+
+    itens = _itens_do_job(req.job_id)
+    if not itens:
+        raise HTTPException(status_code=404,
+                            detail="Este projeto nao tem cortes para publicar")
+    escolhidos = ([i for i in itens if i.clip.index in set(req.clips)]
+                  if req.clips else itens)
+    if not escolhidos:
+        raise HTTPException(status_code=404,
+                            detail=f"Nenhum corte com os indices {req.clips}")
+
+    try:
+        async with db.tenant() as t:
+            conta = await t.get(db_models.Account, req.account_id)
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if conta is None:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+
+    opts = publishers.PublishOptions(visibility=req.visibility,
+                                     scheduled_at=req.scheduled_at,
+                                     dry_run=req.dry_run)
+    resultados = []
+    for item in escolhidos:
+        corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
+        if corte is None:
+            # Job anterior ao bloco 3.3, ou banco que falhou na hora de gravar.
+            # Dizer qual corte e por que e melhor que 404 no lote inteiro.
+            resultados.append({"clip_index": item.clip.index, "ok": False,
+                               "detail": "este corte nao esta no banco; "
+                                         "reprocesse o projeto para registra-lo"})
+            continue
+        # O arquivo pode ter mudado desde o fim do job (legenda, recorte), e e
+        # o atual que vai ao ar. Atualizar aqui deixa a linha descrevendo o que
+        # foi publicado, e nao o que existia quando o job acabou.
+        await job_registry.atualizar_render_key(
+            corte.id, os.path.basename(item.clip.path))
+        try:
+            resultado = await publish_queue.publicar(
+                corte, conta, item.clip.path, item.meta, opts)
+        except publish_queue.FilaError as e:
+            resultados.append({"clip_index": item.clip.index, "ok": False,
+                               "detail": str(e)})
+            continue
+        except Exception as e:
+            resultados.append({"clip_index": item.clip.index, "ok": False,
+                               "detail": f"{type(e).__name__}: {e}"})
+            continue
+        resultado["clip_index"] = item.clip.index
+        resultados.append(resultado)
+
+    publicados = sum(1 for r in resultados if r.get("ok"))
+    print(f"📤 {publicados}/{len(resultados)} corte(s) de {req.job_id} "
+          f"para {conta.platform}/{conta.handle}")
+    return {"resultados": resultados, "publicados": publicados,
+            "quota_youtube": publishers.quota.estado()}
 
 
 class RemoveSubtitlesRequest(BaseModel):

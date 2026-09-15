@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fases 1 e 2 completas em código; **Fase 3 em andamento** — blocos 3.1 a 3.3 feitos, e o 3.3 fechou a pendência da Fase 1: o pipeline agora escreve `sources`, `jobs` e `clips` |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fases 1 e 2 completas em código; **Fase 3 completa em código** — interface, resolvedor, `manual` com pacote do dia, `youtube-api` com contador de quota, e a fila de publicação. O bloco 3.3 fechou de passagem a pendência da Fase 1: o pipeline escreve `sources`, `jobs` e `clips` |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem

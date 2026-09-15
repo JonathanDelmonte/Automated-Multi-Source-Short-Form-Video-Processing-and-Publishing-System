@@ -129,16 +129,22 @@ def _score(clip: dict):
         return None
 
 
-def _rubrica(clip: dict, visual: bool) -> dict:
-    """O lado esquerdo da calibracao da Fase 5: o que o modelo disse do corte.
+def _rubrica(clip: dict, visual: bool, indice: int = 0) -> dict:
+    """Tudo o que se sabe do corte e que a secao 7 nao deu coluna.
 
     Os **segundos exatos** entram aqui. A secao 7 nao tem coluna de tempo por
     decisao (a secao 2 escolheu indice de palavra), e inventar uma seria
     desfazer essa escolha por conveniencia -- mas `start`/`end` sao literalmente
     a saida do modelo sobre este corte, que e o que `rubric_json` guarda. Sem
     eles, o corte exato que gerou o arquivo so existiria no arquivo.
+
+    `clip_index` e a posicao do corte no job -- o "Clip 3" do painel, do nome do
+    arquivo e da URL. Sem ele, ligar uma linha de `clips` ao corte que a pessoa
+    esta vendo dependeria de ordenar por `created_at` e contar, que funciona
+    ate dois inserts caírem no mesmo microssegundo. Uma publicacao apontando
+    para o corte errado e o tipo de erro que so se descobre depois de publicado.
     """
-    rubrica = {"visual": visual}
+    rubrica = {"visual": visual, "clip_index": int(indice)}
     for origem, destino in (("start", "start_s"), ("end", "end_s")):
         try:
             rubrica[destino] = round(float(clip.get(origem)), 3)
@@ -260,7 +266,7 @@ async def registrar_clipes(job_id: str, shorts: list, transcript=None,
                     job_id=job_id,
                     start_word_idx=inicio, end_word_idx=fim,
                     score=_score(clip),
-                    rubric_json=_rubrica(clip, visual=not palavras),
+                    rubric_json=_rubrica(clip, visual=not palavras, indice=i),
                     render_key=arquivos.get(i)))
                 gravados += 1
             await t.commit()
@@ -285,3 +291,46 @@ def adapter_de(url: Optional[str], caminho: Optional[str] = None) -> str:
         return sources.resolve(url).id
     except Exception:
         return "direct"
+
+
+async def clipe_do_job(job_id: str, indice: int):
+    """A linha de `clips` do corte numero `indice` deste job, ou None.
+
+    Procura por `rubric_json.clip_index` em vez de contar por `created_at`:
+    uma publicacao apontando para o corte errado nao da erro nenhum, so publica
+    o video errado.
+    """
+    try:
+        async with db.tenant() as t:
+            cortes = await t.all(db_models.Clip,
+                                 db_models.Clip.job_id == job_id)
+            for corte in cortes:
+                if (corte.rubric_json or {}).get("clip_index") == int(indice):
+                    return corte
+            return None
+    except Exception as e:
+        _avisar(e, f"achar corte {indice} de {job_id}")
+        return None
+
+
+async def atualizar_render_key(clip_id: str, render_key: str) -> bool:
+    """Aponta a linha do corte para o arquivo ATUAL.
+
+    O `render_key` foi gravado no fim do job; desde entao o corte pode ter
+    ganhado legenda ou sido recortado, e e o arquivo novo que vai ser
+    publicado. Atualizar no momento de publicar deixa a linha descrevendo o que
+    foi ao ar, e nao o que existia quando o job acabou.
+    """
+    if not render_key:
+        return False
+    try:
+        async with db.tenant() as t:
+            corte = await t.get(db_models.Clip, clip_id)
+            if corte is None:
+                return False
+            corte.render_key = render_key
+            await t.commit()
+            return True
+    except Exception as e:
+        _avisar(e, f"atualizar render_key de {clip_id}")
+        return False

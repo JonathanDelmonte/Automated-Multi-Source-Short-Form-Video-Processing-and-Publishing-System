@@ -35,7 +35,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import quota
+# Os submodulos entram no namespace de proposito: o `app.py` faz apenas
+# `import publishers` e usa `publishers.pacote.Item` / `publishers.quota`. Sem
+# esta linha isso e `AttributeError` em producao e passa no teste, porque o
+# arquivo de teste do pacote importa `from publishers import pacote` e o import
+# de la deixa o atributo posto para todo mundo.
+from . import pacote, quota
 from .aggregator import AggregatorPublisher
 from .base import (CAPABILITIES, DRIVER_IDS, Account, Cost, DriverDesligado,
                    PostMeta, PublishOptions, PublishResult, Publisher,
@@ -66,7 +71,7 @@ __all__ = [
     "PostMeta", "PublishOptions", "PublishResult", "Publisher",
     "PublisherError", "QuotaEsgotada", "REGISTRY", "RenderedClip",
     "RISCO_MAXIMO_AUTOMATICO", "capabilities_de", "driver_por_id",
-    "driver_ids", "entra_na_cascata", "quota", "resolve",
+    "driver_ids", "entra_na_cascata", "pacote", "quota", "resolve",
 ]
 
 

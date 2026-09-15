@@ -206,6 +206,30 @@ a traducao `safeArea` -> `margin_v`. Stdlib pura, entao roda no CI.
   para um trecho de 3s seria perder o clipe de vista. Sai com nome proprio
   (`preview_...`) e o corte intermediario e apagado.
 
+**CRUD (bloco 2.3)**: `/api/templates` (GET lista + presets + padrao, POST
+salva, DELETE apaga). Primeiro uso do banco por um caminho do pipeline.
+
+- **Salvar cria VERSAO, nunca sobrescreve**; apagar leva **todas** as versoes
+  daquele nome. Sobrescrever perderia o unico ganho da versao (voltar ao
+  estilo de antes); apagar so uma deixaria o template vivo com o estilo velho.
+- **O banco nasce no boot** (`db_seed.seed()` no lifespan, idempotente), e
+  **falha aberto**: banco quebrado nao impede a API de subir, porque o
+  pipeline funciona sem ele. Quem usar templates recebe 503 dizendo o que
+  rodar.
+- **O seed grava o `template.PADRAO`, nao o exemplo da secao 5.** O exemplo
+  referencia `logo.png`, `endcard.mp4` e `lofi_01.mp3`, que nao existem, e liga
+  `cuts.removeSilence`, que ninguem implementa -- como documentacao esta certo,
+  como linha que o painel lista e um template que promete o que nao faz.
+- **`maxWords` nao e `max_chars`.** A secao 5 conta PALAVRAS, o `generate_ass`
+  conta CARACTERES; a traducao ingenua (que o bloco 2.1 fez) virava bloco de
+  tres LETRAS a partir do proprio exemplo da secao 5. Hoje converte por
+  `CHARS_POR_PALAVRA`, documentado como aproximacao, e `maxChars` da o numero
+  exato.
+- **Dois sistemas de preset convivem**: os 11 `CAPTION_PRESETS` do
+  `SubtitleModal` sao escolhas rapidas por clipe, no navegador; o template e o
+  documento salvo, e manda no estilo inteiro. O seletor fica acima deles na
+  tela porque a ordem visual e a ordem de precedencia.
+
 ### Camada de ingestao (`sources/`, Fase 1 bloco 1.1)
 
 Uma fonte, uma classe, com `matches` / `probe` / `fetch`; o pipeline recebe

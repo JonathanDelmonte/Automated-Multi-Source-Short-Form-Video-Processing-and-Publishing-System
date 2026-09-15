@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código (com `sources`/`jobs` ainda por escrever); **Fase 2 em curso**, blocos 2.1 e 2.2 concluídos |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fase 1 completa em código (com `sources`/`jobs` ainda por escrever); **Fase 2 completa em código** |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -600,7 +600,29 @@ preview de 3 segundos. Travar as três decisões do §5 — `safeArea` respeitad
 |---|---|---|
 | 2.1 | o documento da §5 (`template.py`): defaults, validação, seis presets, `safeArea` → `margin_v` | ✅ concluído |
 | 2.2 | aplicar o template a um clipe em segunda passada, e o preview de 3 s | ✅ concluído |
-| 2.3 | CRUD no painel | |
+| 2.3 | CRUD no painel | ✅ concluído |
+
+#### Dois sistemas de preset convivem, e vale saber qual é qual
+
+O `SubtitleModal` já tinha **11 presets próprios** (`CAPTION_PRESETS`) antes de
+existir template. Eles não foram removidos, e a diferença importa para quem for
+trocar o frontend:
+
+| | presets do modal | template |
+|---|---|---|
+| onde vive | no navegador, no arquivo `.jsx` | no banco, versionado |
+| alcance | este clipe | o estilo inteiro, inclusive `safeArea` |
+| some quando | a aba fecha | nunca (é uma linha) |
+
+O seletor de template fica **acima** dos presets na tela de propósito: quando há
+um template escolhido, ele manda e os controles abaixo deixam de valer para o
+clipe. Ler a tela de cima para baixo é ler a ordem de precedência, e há uma
+linha dizendo isso quando um template está ativo.
+
+O frontend inteiro vai ser trocado (o autor já decidiu isso, e a Parte D de
+`OPORTUNIDADES.md` diz o que preservar), então a adição foi deliberadamente
+pequena: um seletor, dois botões e um `<video>`. O que é durável é o contrato do
+backend que eles exercitam.
 
 #### O ADR-002 precisa de uma nota: as duas aquisições já estavam aqui
 

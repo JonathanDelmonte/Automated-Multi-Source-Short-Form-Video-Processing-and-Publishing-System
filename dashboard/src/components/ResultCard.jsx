@@ -396,7 +396,10 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
                     input_filename: serverVideoFile,
                     // Edited caption text (clip-relative ms); null = server
                     // regenerates from the transcript as before.
-                    words: options.captions || null
+                    words: options.captions || null,
+                    // Documento da secao 5. Quando vem, o servidor ignora os
+                    // campos soltos acima -- ver `template.py` e o bloco 2.2.
+                    template: options.template || null
                 })
             });
 

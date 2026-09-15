@@ -85,6 +85,91 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll,
     const [uppercase, setUppercase] = useState(false);
     const [activePreset, setActivePreset] = useState(null);
 
+    // --- Templates salvos (Fase 2, bloco 2.3) ---
+    //
+    // Os 11 CAPTION_PRESETS acima e estes templates NAO sao a mesma coisa, e
+    // vale saber qual e qual antes de trocar o frontend: os presets sao
+    // escolhas rapidas para ESTE clipe, moram no navegador e somem quando a
+    // aba fecha. O template e o documento da secao 5 -- salvo, versionado, e
+    // ele manda no estilo inteiro quando escolhido, inclusive na area segura,
+    // que preset nenhum daqui controla.
+    const [templates, setTemplates] = useState([]);
+    const [templateId, setTemplateId] = useState('');
+    const [previewUrl, setPreviewUrl] = useState(null);
+    const [previewing, setPreviewing] = useState(false);
+    const [templateErro, setTemplateErro] = useState(null);
+
+    const templateEscolhido = templates.find((t) => t.id === templateId) || null;
+
+    useEffect(() => {
+        if (!isOpen) return;
+        apiFetch('/api/templates')
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => d && setTemplates(d.templates || []))
+            .catch(() => {});      // sem templates o modal funciona como antes
+    }, [isOpen]);
+
+    // O preview e sempre do clipe atual e nunca vira o clipe: o servidor grava
+    // com nome proprio e nao toca no metadata.
+    const handlePreview = async () => {
+        setPreviewing(true);
+        setTemplateErro(null);
+        try {
+            const res = await apiFetch('/api/subtitle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    clip_index: clipIndex,
+                    preview_seconds: 3,
+                    template: templateEscolhido ? templateEscolhido.spec : undefined,
+                    style: 'karaoke', effect, base_opacity: baseOpacity,
+                    uppercase, highlight_color: highlightColor,
+                    font_name: fontName, font_color: fontColor,
+                    border_color: borderColor, border_width: borderWidth,
+                    position, font_size: fontSize,
+                }),
+            });
+            const dados = await res.json();
+            if (!res.ok) throw new Error(dados.detail || 'falhou');
+            setPreviewUrl(`${dados.new_video_url}?t=${Date.now()}`);
+        } catch (e) {
+            setTemplateErro(e.message);
+        } finally {
+            setPreviewing(false);
+        }
+    };
+
+    const handleSalvarTemplate = async () => {
+        const nome = window.prompt('Nome do template:');
+        if (!nome || !nome.trim()) return;
+        setTemplateErro(null);
+        try {
+            const res = await apiFetch('/api/templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: nome.trim(),
+                    spec: {
+                        captions: {
+                            preset: 'karaoke_fill',
+                            font: fontName, color: fontColor,
+                            highlight: highlightColor, strokePx: borderWidth,
+                            sizePt: fontSize, effect, base_opacity: baseOpacity,
+                            uppercase, alignment: position,
+                        },
+                    },
+                }),
+            });
+            const dados = await res.json();
+            if (!res.ok) throw new Error(dados.detail || 'falhou');
+            setTemplates((atuais) => [...atuais.filter((t) => t.name !== dados.name), dados]);
+            setTemplateId(dados.id);
+        } catch (e) {
+            setTemplateErro(e.message);
+        }
+    };
+
     const applyPreset = (p) => {
         setActivePreset(p.id);
         setStyle(p.style);
@@ -239,6 +324,65 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll,
                 {/* Right: Controls */}
                 <div className="w-full md:w-80 flex flex-col">
                     <div className="space-y-5 flex-1 overflow-y-auto custom-scrollbar pr-1">
+                        {/* Template salvo (Fase 2, bloco 2.3).
+
+                            Fica ACIMA dos presets de propósito: quando há um
+                            template escolhido, ele manda no estilo inteiro e os
+                            controles abaixo deixam de valer para o clipe. Ler a
+                            tela de cima para baixo é ler a ordem de precedência. */}
+                        <div>
+                            <p className="eyebrow mb-2">Template salvo</p>
+                            <select
+                                value={templateId}
+                                onChange={(e) => { setTemplateId(e.target.value); setPreviewUrl(null); }}
+                                className="input-field w-full text-sm"
+                            >
+                                <option value="">— usar os controles abaixo —</option>
+                                {templates.map((t) => (
+                                    <option key={t.id} value={t.id}>
+                                        {t.name} · v{t.version}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="flex gap-2 mt-2">
+                                <button
+                                    onClick={handlePreview}
+                                    disabled={previewing}
+                                    className="btn-ghost flex-1 text-xs flex items-center justify-center gap-1.5"
+                                    title="Queima só os 3 primeiros segundos, para conferir o estilo sem esperar o clipe inteiro"
+                                >
+                                    {previewing && <Loader2 size={14} className="animate-spin" />}
+                                    {previewing ? 'gerando…' : 'prévia 3s'}
+                                </button>
+                                <button
+                                    onClick={handleSalvarTemplate}
+                                    className="btn-ghost flex-1 text-xs"
+                                    title="Salva os controles atuais como um template novo (cria uma versão)"
+                                >
+                                    salvar como…
+                                </button>
+                            </div>
+                            {templateErro && (
+                                <p className="text-xs text-red-400 mt-2">{templateErro}</p>
+                            )}
+                            {previewUrl && (
+                                <video
+                                    src={previewUrl}
+                                    className="w-full rounded-input border border-rule mt-2"
+                                    controls
+                                    autoPlay
+                                    muted
+                                    loop
+                                    playsInline
+                                />
+                            )}
+                            {templateEscolhido && (
+                                <p className="text-xs text-muted mt-2">
+                                    O template manda: os controles abaixo não valem para este clipe.
+                                </p>
+                            )}
+                        </div>
+
                         {/* Caption presets (server-side karaoke burn) */}
                         <div>
                             <p className="eyebrow mb-2">Preset</p>
@@ -456,6 +600,9 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll,
                                 // Remotion data
                                 remotion: useRemotionPreview ? subtitleConfig : null,
                                 captions: textEdited ? captions : null,
+                                // Quando ha template escolhido, ele manda: o
+                                // servidor ignora os campos soltos acima.
+                                template: templateEscolhido ? templateEscolhido.spec : null,
                             };
                             const bulkRunning = bulkProgress?.running;
                             return (

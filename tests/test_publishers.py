@@ -16,6 +16,24 @@ from publishers import (Account, Cost, DriverDesligado, PostMeta,
 from publishers.manual import ManualPublisher, caption_path, render_caption
 
 
+@pytest.fixture(autouse=True)
+def sem_credencial_e_com_quota_limpa(tmp_path, monkeypatch):
+    """Isola a cascata do ambiente de quem roda o teste.
+
+    Sem isto, uma `YOUTUBE_CLIENT_ID` no `.env` da maquina do autor faria o
+    `youtube-api` entrar na cascata e estes testes falharem por um motivo que
+    nao tem nada a ver com o que eles verificam. O contador de quota tambem vai
+    para um diretorio proprio: um arquivo de quota de verdade em `output/`
+    mudaria a resposta de `disponivel()`.
+    """
+    for nome in list(os.environ):
+        if nome.startswith("YOUTUBE_"):
+            monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "saida"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "dados"))
+    yield
+
+
 def conta(**kw):
     base = dict(id="acc-1", platform="youtube", handle="canal")
     base.update(kw)

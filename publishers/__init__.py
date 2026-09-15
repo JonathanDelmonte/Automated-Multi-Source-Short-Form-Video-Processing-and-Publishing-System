@@ -35,21 +35,27 @@ from __future__ import annotations
 
 from typing import Optional
 
+from . import quota
 from .aggregator import AggregatorPublisher
 from .base import (CAPABILITIES, DRIVER_IDS, Account, Cost, DriverDesligado,
                    PostMeta, PublishOptions, PublishResult, Publisher,
                    PublisherError, QuotaEsgotada, RenderedClip)
 from .browser import BrowserPublisher
 from .manual import ManualPublisher
+from .youtube_api import YouTubeApiPublisher
 
 # O teto de risco da cascata automatica. Zero, e nao "baixo": nao existe risco
 # de conta aceitavel para ganhar automacao que a fila manual ja resolve.
 RISCO_MAXIMO_AUTOMATICO = 0.0
 
-# A ordem e a cascata da secao 6. O `youtube-api` entra na frente no bloco 3.4.
+# A ordem E a cascata da secao 6, na letra:
+#
+#     youtubeApi.ifQuotaLeft() ?? aggregator.ifSubscribed() ?? manualQueue
+#
 # O `manual` e o piso e termina a busca; o `browser` fica depois dele de
 # proposito, para que nem um erro no teto de risco o torne alcancavel.
 REGISTRY: tuple[type[Publisher], ...] = (
+    YouTubeApiPublisher,
     AggregatorPublisher,
     ManualPublisher,
     BrowserPublisher,
@@ -60,7 +66,7 @@ __all__ = [
     "PostMeta", "PublishOptions", "PublishResult", "Publisher",
     "PublisherError", "QuotaEsgotada", "REGISTRY", "RenderedClip",
     "RISCO_MAXIMO_AUTOMATICO", "capabilities_de", "driver_por_id",
-    "driver_ids", "entra_na_cascata", "resolve",
+    "driver_ids", "entra_na_cascata", "quota", "resolve",
 ]
 
 

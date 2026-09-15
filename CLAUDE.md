@@ -396,6 +396,36 @@ driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
   `manual` nao sabe que texto escrever e o `youtube-api` nao acha o token.
 - `aggregator` e `browser` sao stubs que levantam `DriverDesligado`.
 
+**O driver `youtube-api`** (`publishers/youtube_api.py`, `quota.py`, `vault.py`,
+`youtube_oauth.py`, bloco 3.4) publica no canal proprio pela API oficial.
+
+- **6 uploads por dia**: 1600 unidades por `videos.insert` contra 10.000/dia, o
+  numero exato que o plano manda respeitar. O contador existe para que o 7o
+  **caia na fila manual**, nao para virar `quotaExceeded` e um job vermelho.
+- **O dia do contador e o do Pacifico**, que e quando a quota do YouTube zera.
+  Contar em UTC daria 7-8 horas por dia de discordancia com a API. Sem `tzdata`
+  no sistema, cai para UTC-8 fixo -- o horario mais tarde, entao erra para o
+  lado de segurar o upload.
+- **Debita ANTES da chamada.** O YouTube cobra quando aceita a requisicao: um
+  upload que morre no meio ja gastou as 1600, e contar so no sucesso deixaria o
+  contador abaixo da verdade justamente no dia ruim.
+- **HTTP direto com `httpx`**, sem `google-api-python-client`: sao tres
+  requisicoes, e o cliente oficial traria `google-auth` e amigos para uma imagem
+  que ja carrega torch e mediapipe. A rede esta isolada em tres funcoes
+  (`_token_de_acesso`, `_abrir_sessao`, `_enviar_arquivo`) e o que decide esta
+  em funcoes puras -- o CI nao alcanca as primeiras e cobre todas as segundas.
+- **`privacidade()` cai para `private`** com qualquer valor fora da lista: um
+  erro de digitacao num campo de visibilidade nao pode ser o que publica um
+  corte para o mundo. E o driver **avisa quando o YouTube rebaixa**, que e a
+  diferenca entre "publiquei" e "subiu, mas ninguem ve".
+- **O cofre** (`vault.py`) resolve `accounts.credentials_ref`, que a §7 exigia e
+  ninguem lia. Backends `env` e `local` (arquivo 0600); mensagem de erro diz o
+  NOME do campo que falta, nunca o valor -- o log do job aparece no painel.
+- **`python youtube_oauth.py`** e a unica forma de emitir o refresh token
+  (consentimento no navegador, loopback -- o Google desativou o `oob`). Escopo
+  `youtube.upload` e so ele: se o token vazar, a diferenca para o escopo
+  `youtube` completo e a diferenca entre um video indesejado e um canal vazio.
+
 **O pacote do dia** (`publishers/pacote.py`, bloco 3.2) e a entrega que a §6
 pede por escrito: `GET /api/publicacoes/pacote` devolve um ZIP com os cortes do
 dia, a legenda de cada um e um `LEIA-ME.txt` com a ordem sugerida;

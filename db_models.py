@@ -134,6 +134,16 @@ class User(Base, TenantScoped):
 # 3. accounts -- uma conta de plataforma, com preferencia de driver (secao 6)
 # --------------------------------------------------------------------------- #
 
+# `auto` nao e um driver: e a ausencia de preferencia, e o padrao. Sem ele a
+# coluna nascia valendo `manual`, e como a cascata da secao 6 respeita a
+# preferencia da conta, TODA conta nasceria presa na fila manual -- o
+# `youtube-api` nunca seria escolhido, por mais quota que sobrasse. Foi um
+# teste do bloco 3.1 que mostrou isso: um valor default virou, sem querer, uma
+# decisao. Com `auto` no lugar, `manual` na coluna volta a significar o que
+# parece significar: "esta conta eu publico a mao, nao automatize".
+DRIVER_PREFS = ("auto", "manual", "youtube-api", "aggregator", "browser")
+
+
 class Account(Base, TenantScoped):
     __tablename__ = "accounts"
 
@@ -142,9 +152,11 @@ class Account(Base, TenantScoped):
     handle: Mapped[str] = mapped_column(String(255), nullable=False)
     # Endereco no cofre. NUNCA o token. Ver vault_ref().
     credentials_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    # Qual driver da secao 6 atende esta conta. `manual` e o default da fase 1;
-    # `browser` existe na arquitetura mas nasce desligado (secao 1).
-    driver_pref: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    # Qual driver da secao 6 atende esta conta. `auto` e o padrao: deixa a
+    # cascata decidir, que na pratica e a fila manual ate haver credencial de
+    # plataforma configurada. `browser` existe na arquitetura mas nasce
+    # desligado (secao 1) e nunca e escolhido pela cascata.
+    driver_pref: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
 
@@ -155,8 +167,14 @@ class Account(Base, TenantScoped):
                          name="uq_accounts_tenant_platform_handle"),
         CheckConstraint("platform in ('youtube','tiktok','instagram')",
                         name="ck_accounts_platform"),
-        CheckConstraint("driver_pref in ('manual','youtube-api','aggregator','browser')",
-                        name="ck_accounts_driver_pref"),
+        # A grafia importa: `test_alembic_upgrade_produz_o_mesmo_schema_que_o
+        # _metadata` compara o TEXTO do CHECK entre a migracao e o metadata, e
+        # `f"... in {tupla}"` sairia com espaco depois da virgula enquanto a
+        # migracao escreve sem. Derivado da tupla assim, os dois nao divergem
+        # nem por valor nem por formato.
+        CheckConstraint(
+            "driver_pref in (%s)" % ",".join(f"'{p}'" for p in DRIVER_PREFS),
+            name="ck_accounts_driver_pref"),
         Index("ix_accounts_tenant_id_id", "tenant_id", "id", unique=True),
     )
 

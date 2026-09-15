@@ -309,7 +309,18 @@ class TestCredenciais:
         assert ref == "vault://local/youtube/canal-principal"
         assert not re.search(r"(sk-|gsk_|ya29\.|Bearer )", ref)
 
-    def test_conta_nasce_sem_credencial(self, banco):
+    def test_conta_nasce_sem_credencial_e_sem_preferencia(self, banco):
+        """`auto`, e nao `manual`.
+
+        A coluna nasceu valendo `manual` -- que e mesmo o default da fase 1 na
+        secao 6 --, e isso estava errado por um motivo que so apareceu quando a
+        cascata do bloco 3.1 foi escrita: ela respeita a preferencia da conta, e
+        uma preferencia gravada em TODA linha nao e preferencia, e um pino. Com
+        `manual` ali, o `youtube-api` nunca seria escolhido, por mais quota que
+        sobrasse. `auto` e a ausencia de preferencia; o default da fase 1
+        continua sendo manual, so que por ser o piso da cascata (que e onde
+        essa decisao mora) em vez de por estar escrito em cada conta.
+        """
         async def _t():
             async with db.tenant() as t:
                 c = t.add(Account(platform="youtube", handle="canal"))
@@ -317,7 +328,17 @@ class TestCredenciais:
                 return c.credentials_ref, c.driver_pref
         ref, driver = corre(_t)
         assert ref is None
-        assert driver == "manual", "o driver manual e o default da fase 1 (secao 6)"
+        assert driver == "auto"
+
+    def test_preferencia_invalida_e_recusada_pelo_banco(self, banco):
+        from sqlalchemy.exc import IntegrityError
+
+        async def _t():
+            async with db.tenant() as t:
+                t.add(Account(platform="youtube", handle="c", driver_pref="ftp"))
+                await t.commit()
+        with pytest.raises(IntegrityError):
+            corre(_t)
 
 
 # --------------------------------------------------------------------------- #

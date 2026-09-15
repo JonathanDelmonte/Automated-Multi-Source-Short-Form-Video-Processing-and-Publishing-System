@@ -62,7 +62,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 009 |
+| `docs/DECISOES.md` | ADR-001 a 010 |
 | `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
@@ -367,6 +367,34 @@ nota: o erro de um limiar mal calibrado e silencioso.
   tres.
 - **Os numeros das janelas descartadas vao para o log de proposito**: calibrar
   isto e trabalho da Fase 5 e precisa de casos reais.
+
+### Camada de publicacao (`publishers/`, Fase 3 bloco 3.1, ADR-010)
+
+Um driver, uma classe, com `disponivel` / `capability` / `cost` / `publish`. O
+pipeline entrega um `RenderedClip` e nao sabe para onde vai -- mesmo padrao do
+`sources/`, e pelo mesmo motivo: stdlib puro, entao a regra de negocio (qual
+driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
+
+- **O `browser` fica fora da cascata automatica por RISCO, nao por nome**
+  (ADR-010). `resolve()` so aceita driver com `cost().risk_score <=
+  RISCO_MAXIMO_AUTOMATICO`, que e **zero**. Nao trocar por
+  `if driver.id == "browser"`: uma lista de excecoes por nome nao protege do
+  proximo driver arriscado, e o preco do esquecimento e a conta, nao um bug.
+- **O `manual` e o piso e ENCERRA a cascata.** `resolve()` sempre devolve
+  alguma coisa -- "nenhum driver atende" nao e um estado possivel, e e isso que
+  torna a cascata segura de deixar automatica. Nada registrado depois do
+  `manual` e alcancavel; o `browser` esta depois dele de proposito.
+- **O `manual` nao e a versao capada.** Ele escreve, ao lado do corte, a
+  legenda pronta para colar: titulo, descricao da plataforma daquela conta e as
+  hashtags que ainda faltam. **Um arquivo por corte e por plataforma** -- "pronto
+  pra colar" so e verdade se der para selecionar tudo e colar. E termina em
+  `scheduled`, nunca em `published`: quem aperta publicar e a pessoa.
+- **`driver_pref` e preferencia dentro do que a cascata ja aceita**, nunca
+  ampliacao. O padrao e `auto` (migracao `8c5d2e91b740`): com o antigo `manual`,
+  toda conta nascia presa na fila manual e o `youtube-api` nunca seria escolhido.
+- **`publish()` recebe a `account`**, que a §6 esquece de passar. Sem ela o
+  `manual` nao sabe que texto escrever e o `youtube-api` nao acha o token.
+- `aggregator` e `browser` sao stubs que levantam `DriverDesligado`.
 
 ### Fluxo de git
 

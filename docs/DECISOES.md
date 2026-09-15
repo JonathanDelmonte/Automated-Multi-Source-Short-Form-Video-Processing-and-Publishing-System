@@ -490,3 +490,88 @@ alcança".
 
 **Revisão se:** o projeto virar SaaS. Aí a superfície volta a ter função — mas escrita
 para este produto, não herdada.
+
+---
+
+## ADR-010 — O que mantém o `browser` fora da cascata é o risco, não o nome
+
+**Data:** 2026-09-15 · **Status:** aceita e executada no bloco 3.1
+**Aberta pela Fase 3**
+
+A §6 define a cascata de publicação com um comentário que é, na prática, um
+requisito de segurança:
+
+```
+resolve(platform, account) =>
+  youtubeApi.ifQuotaLeft() ?? aggregator.ifSubscribed() ?? manualQueue
+// browser NUNCA entra aqui automaticamente
+```
+
+A leitura óbvia é escrever `if driver.id == "browser": continue` no resolvedor.
+Funciona hoje, e é a forma errada de escrever isto.
+
+**Uma lista de exceções por nome só protege contra o que já aconteceu.** O dia
+em que existir um segundo driver arriscado — um agregador que faz login por
+sessão do navegador, um cliente não oficial de alguma plataforma —, ele entra na
+cascata por omissão. Ninguém revisa a lista de exceções ao adicionar coisa nova;
+é justamente o tipo de regra que se esquece porque parece resolvida.
+
+E o custo do esquecimento não é um bug comum. A §1 é explícita: **a punição por
+detecção não é erro HTTP tratável — é shadowban ou perda da conta**, e num
+projeto de cortes a conta é o ativo. Não há retry, não há fallback, não há
+mensagem de erro para tratar. A falha é silenciosa e permanente.
+
+**Decisão:** a regra é sobre a propriedade, não sobre o nome. A §6 já pedia
+`riskScore` na assinatura de `cost()`, e ele passa a ter uma função: **a cascata
+automática só aceita driver com risco zero** (`RISCO_MAXIMO_AUTOMATICO = 0.0`).
+O `browser` declara `1.0` e sai; um driver arriscado futuro sai pelo mesmo
+motivo, sem que ninguém precise ter lembrado dele.
+
+O teto é zero, e não "baixo". Um teto tolerante é o começo da conversa que
+termina com a conta banida por conveniência — e o que se ganharia é automação
+que a fila manual já entrega.
+
+São três camadas, e nenhuma depende das outras:
+
+1. o `risk_score` acima do teto tira o driver da cascata;
+2. o `manual` responde `disponivel()` sempre e **encerra** a busca — nada
+   registrado depois dele é alcançável por `resolve()`, e o `browser` está
+   depois dele;
+3. o próprio `browser.disponivel()` exige `PUBLISHER_BROWSER=1`, então nem o
+   caminho explícito (`driver_por_id`) responde numa instalação que não ligou.
+
+`accounts.driver_pref` é **preferência dentro do que a cascata já aceita**,
+nunca ampliação: preferir um driver arriscado não o torna elegível. É o que
+impede um clique errado no painel de virar uma conta perdida.
+
+**Duas consequências que não estavam previstas:**
+
+**`driver_pref` nascia valendo `manual`, e isso era um pino disfarçado de
+padrão.** A cascata respeita a preferência da conta; uma preferência gravada em
+toda linha não é preferência. Com `manual` ali, o `youtube-api` nunca seria
+escolhido por conta nenhuma, por mais quota que sobrasse — a camada inteira
+entregaria sempre o mesmo resultado, e o sintoma seria "nunca publica sozinho",
+que ninguém liga a um valor default numa coluna. Quem mostrou foi um teste do
+bloco 3.1. O valor `auto` entrou pela migração `8c5d2e91b740` e passou a ser o
+padrão; `manual` na coluna volta a significar uma escolha de verdade: *esta
+conta eu publico à mão*.
+
+**`publish()` recebe a `account`, que a §6 não passa.** O pseudocódigo da seção
+entrega a conta para `resolve(platform, account)` e para `capability(account)` e
+a esquece em `publish(clip, meta, opts)` — mas nenhum driver funciona sem ela: o
+`manual` precisa da plataforma para escolher qual texto escrever, o
+`youtube-api` precisa do `credentials_ref` para achar o token. Ela vem como
+parâmetro próprio, e não dentro de `PublishOptions`, porque não é uma opção: é
+para onde vai.
+
+**`publish` e `capability` são síncronos**, apesar do `Promise<...>` da §6 — ali
+o TypeScript descreve o formato do contrato, não o modelo de concorrência. O
+upload do YouTube é subida em blocos com biblioteca síncrona e o pacote do
+`manual` é trabalho de disco; os dois rodam num executor a partir do `app.py`,
+que é o que o `download_all_clips` já faz com o ZIP dele. Prometer `async` só
+adicionaria uma camada em volta de trabalho bloqueante.
+
+**Revisão se:** aparecer plataforma sem API pública que o projeto precise de
+verdade **e** o autor decidir aceitar o risco de conta. Aí o `browser` deixa de
+ser stub — e continua fora da cascata automática, porque a decisão acima é sobre
+automação, não sobre existir.

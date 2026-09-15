@@ -95,8 +95,12 @@ parecem arbitrarias no codigo estao justificadas la.
     nao desfazer: sem ele as FKs compostas sao decoracao (ja aconteceu).
   - `tests/test_db_schema.py` quebra se uma tabela nova nascer sem `tenant_id`.
   - **Auth e a Fase 4.** Ate la tudo pertence ao tenant fixo
-    `00000000-0000-0000-0000-000000000001`, e nada do pipeline usa o banco
-    ainda: `sources` e `jobs` passam a ser escritas na Fase 1.
+    `00000000-0000-0000-0000-000000000001`.
+  - **O pipeline ESCREVE no banco desde o bloco 3.3**: `sources` e `jobs` no
+    submit, `clips` no fim do job, `accounts` e `publications` pela fila de
+    publicacao. Antes disso so `templates` era escrita. Tudo falha aberto -- o
+    pipeline nunca dependeu do banco --, mas a Fase 3 depende: `publications`
+    tem FK composta para `clips`.
 - **MediaPipe e o tracking padrao** (ADR-003); YOLOv8 (AGPL-3.0) fica atras de
   flag desligada -- **feito no bloco 1.7** (`face_tracker.py`). Eram dois
   problemas no mesmo lugar: o de licenca (o detector era o fallback *automatico*

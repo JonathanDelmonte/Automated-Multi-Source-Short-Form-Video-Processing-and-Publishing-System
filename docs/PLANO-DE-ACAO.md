@@ -671,6 +671,45 @@ O contador de quota tem número exato para respeitar: 1.600 unidades por
 **Pronto quando:** os cortes do dia vão para o YouTube sozinhos e o resto cai na fila
 manual.
 
+**Resultado — completa em código (15-set-2026), em cinco blocos.**
+
+| Bloco | O que entrou |
+|---|---|
+| 3.1 | `publishers/`: contrato, resolvedor, driver `manual`, stubs `aggregator` e `browser` (ADR-010) |
+| 3.2 | O pacote do dia: `GET /api/publicacoes/pacote` — cortes + legenda pronta por corte |
+| 3.3 | O pipeline escreve `sources`, `jobs` e `clips` (fecha a pendência da Fase 1) |
+| 3.4 | `youtube-api` + contador de quota + cofre (`vault.py`) + `youtube_oauth.py` |
+| 3.5 | Contas, `POST /api/publicar`, a fila e a aba **Publicação** no painel |
+
+**A metade "o resto cai na fila manual" está inteira**, e por construção: o `manual`
+responde `disponivel()` sempre e encerra a cascata, então "nenhum driver atende" não é
+um estado possível. Sem credencial, sem quota ou por escolha da conta, o corte sai com
+a legenda pronta ao lado em vez de virar um job vermelho.
+
+**A metade "vão para o YouTube sozinhos" tem duas leituras, e só uma está feita.**
+*Sem passo manual nenhum na publicação* — sim: com credencial e quota, quem resolve é
+a cascata e o upload acontece sem ninguém escrever título, descrição ou apertar
+publicar. *No horário certo, sem ninguém mandar* — não: hoje o gatilho é um botão no
+painel. **O agendador é a Fase 4 pelo próprio §9**, e o ADR-007 já o registrou assim,
+com jitter como requisito e os números (quantos por dia, quais janelas, espaçamento)
+como a decisão em aberto §10.2 — a ser tomada lá, com informação. Adiantá-lo aqui
+significaria escolher esses números no escuro.
+
+**Três migrações, e todas porque o schema encontrou a realidade ao ganhar o primeiro
+escritor.** `8c5d2e91b740` (`driver_pref` aceita `auto` e nasce assim — com `manual`
+como padrão, *toda* conta nascia presa à fila manual e o `youtube-api` nunca seria
+escolhido), `4a7e1c30d8b2` (a faixa de palavras de `clips` vira anulável — vídeo mudo
+não tem palavra a indexar, e sem isso o corte não podia ser gravado, logo não podia ser
+publicado) e `6d9f4b12e0c7` (`jobs.status` aceita `cancelled`, que o §7 esqueceu e
+`publications` já tinha). As três rodadas de verdade, ida e volta, contra banco com
+linha dentro.
+
+**"Em código" é a ressalva que importa, e aqui ela pesa mais que nas fases anteriores.**
+Nenhum vídeo real passou por este caminho, e este é o primeiro que **sai da máquina**:
+um erro na Fase 1 custa um job refeito, um erro aqui é um vídeo no canal. Antes do
+primeiro uso de verdade, publicar com `visibility: "private"` (que já é o padrão) e
+conferir o resultado no YouTube Studio.
+
 ### Fase 4 — auth e multi-tenancy real · ~1,5 semana
 
 Reduzida de ~2 semanas porque o schema já está pronto desde a Fase 0.5 — é exatamente

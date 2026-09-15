@@ -1,5 +1,6 @@
 import os
 import job_metrics
+import job_registry
 import llm_backend
 import llm_cascade
 import sources
@@ -1283,6 +1284,10 @@ async def run_job_wrapper(job_id):
         # state, so drop the resume manifest. It only survives if the container
         # was killed mid-run, which is exactly when we want to resume.
         _clear_resume_manifest(job_id)
+        # Fecha a linha do job e grava os cortes (Fase 3, bloco 3.3). Antes do
+        # arquivo em R2 e do webhook porque e o unico passo daqui que a Fase 3
+        # precisa que exista: `publications` tem FK composta para `clips`.
+        await _fechar_job_no_banco(job_id)
         # Settle the minute reservation (managed jobs only): commit on success,
         # release otherwise so the minutes go back to the user.
         await _settle_reservation(job_id)
@@ -1303,6 +1308,77 @@ async def run_job_wrapper(job_id):
         concurrency_semaphore.release()
         job_queue.task_done()
         print(f"✅ Released slot for job: {job_id}")
+
+
+#: `jobs.status` do banco a partir do status em memoria. O upstream usa
+#: `processing` onde a secao 7 usa `running`, e `cancelled` so entrou na coluna
+#: na migracao `6d9f4b12e0c7` -- antes dela um job cancelado teria de ser
+#: gravado como `failed`, que e a mentira que o cancelamento existe para nao
+#: contar.
+_STATUS_NO_BANCO = {
+    'completed': 'completed',
+    'failed': 'failed',
+    'cancelled': 'cancelled',
+    'processing': 'running',
+    'queued': 'queued',
+}
+
+
+def _transcript_do_job(job_id):
+    """A transcricao gravada pelo `main.py` no metadata do job, ou None.
+
+    Um video sem fala grava `{"language": "none", "segments": []}`, que e
+    diferente de nao achar o arquivo: no primeiro caso sabemos que nao ha
+    palavra a indexar, no segundo nao sabemos nada. Os dois terminam com a
+    faixa nula, mas so o primeiro e o desenho.
+    """
+    try:
+        metas = glob.glob(os.path.join(OUTPUT_DIR, job_id, "*_metadata.json"))
+        if not metas:
+            return None
+        with open(metas[0], 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('transcript') if isinstance(data, dict) else None
+    except (OSError, ValueError) as e:
+        print(f"⚠️  Transcricao de {job_id} ilegivel para o banco: {e}")
+        return None
+
+
+async def _fechar_job_no_banco(job_id):
+    """Grava o desfecho do job e os cortes que ele produziu.
+
+    Roda uma vez por job, no `finally` do wrapper, e nao a cada estagio: o
+    marcador de estagio e consumido na **thread** que le o stdout do
+    subprocesso, e escrever num engine async a partir dali seria complicar um
+    caminho quente para registrar o que a barra de progresso ja mostra ao vivo.
+    O que o banco precisa saber e onde o job parou -- e isso se sabe no fim.
+    """
+    job = jobs.get(job_id)
+    if job is None:
+        return
+    status = _STATUS_NO_BANCO.get(job.get('status') or '', 'failed')
+    await job_registry.marcar_job(
+        job_id, status=status, marcador=job.get('stage'),
+        error=(job.get('error') or None) if status == 'failed' else None,
+        timings=_job_timings(job_id))
+    if status != 'completed':
+        return
+    clips = (job.get('result') or {}).get('clips') or []
+    if not clips:
+        return
+    # A transcricao vem do metadata em DISCO, e nao do `result` em memoria:
+    # aquele dict e `{'clips', 'cost_analysis'}` e nunca teve transcricao. Com
+    # a leitura errada a derivacao do indice de palavra devolveria (None, None)
+    # para todo corte -- a coluna aceita nulo (video mudo), entao a tabela
+    # encheria de nulo em silencio, sem um erro sequer.
+    transcript = _transcript_do_job(job_id)
+    arquivos = {i: os.path.basename((c or {}).get('video_url') or '')
+                for i, c in enumerate(clips)
+                if (c or {}).get('video_url')}
+    gravados = await job_registry.registrar_clipes(
+        job_id, clips, transcript=transcript, arquivos=arquivos)
+    if gravados:
+        print(f"🗃️  {gravados} corte(s) de {job_id} no banco")
 
 
 async def _archive_managed_job(job_id):
@@ -1897,6 +1973,10 @@ async def run_job(job_id, job_data):
     
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
+    # `processing` na memoria e `running` no banco: a lista da secao 7 e quem
+    # nomeia a coluna, e traduzir aqui e mais barato que uma migracao para
+    # acomodar o vocabulario do upstream.
+    await job_registry.marcar_job(job_id, status='running')
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
     
     try:
@@ -2399,6 +2479,12 @@ async def process_endpoint(
     if url and DISABLE_YOUTUBE_URL:
         raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment. Please upload a file you own.")
 
+    # Duracao da fonte para `sources.duration_ms` (bloco 3.3). Cada caminho de
+    # entrada ja mede a sua -- o probe de qualidade para URL, o ffprobe para
+    # upload --, e a variavel so junta as medidas num lugar so em vez de as
+    # recalcular. Zero significa "nao medida", e a coluna e anulavel por isso.
+    source_seconds_for_db = 0
+
     # Fonte reconhecida cujo tipo ainda nao tem como ser buscado -- hoje, a live
     # da Twitch. O `main.py` tambem recusa, e recusar aqui e o que faz a
     # diferenca aparecer: no formulario, na hora, em vez de virar um job
@@ -2420,6 +2506,7 @@ async def process_endpoint(
         # Hard reject, no confirm-and-retry: a too-short source fails the same
         # way on every retry, so letting the user force it just burns the job.
         source_duration = int(probe.get("duration") or 0)
+        source_seconds_for_db = source_duration
         if MIN_SOURCE_SECONDS > 0 and 0 < source_duration < MIN_SOURCE_SECONDS:
             _reject_short_source(source_duration)
         max_height = int(probe.get("max_height") or 0)
@@ -2546,6 +2633,7 @@ async def process_endpoint(
         # upload; the transcript rides along so the pipeline skips Whisper.
         src = thumb_session["video_path"]
         src_duration = _media_duration_seconds(src)
+        source_seconds_for_db = src_duration
         if MIN_SOURCE_SECONDS > 0 and 0 < src_duration < MIN_SOURCE_SECONDS:
             shutil.rmtree(job_output_dir, ignore_errors=True)
             _reject_short_source(src_duration)
@@ -2567,6 +2655,7 @@ async def process_endpoint(
         # with the job like any other upload; the slot is consumed.
         src = upload_slot["path"]
         src_duration = _media_duration_seconds(src)
+        source_seconds_for_db = src_duration
         if MIN_SOURCE_SECONDS > 0 and 0 < src_duration < MIN_SOURCE_SECONDS:
             shutil.rmtree(job_output_dir, ignore_errors=True)
             _reject_short_source(src_duration)
@@ -2595,6 +2684,7 @@ async def process_endpoint(
                 buffer.write(content)
 
         upload_duration = _media_duration_seconds(input_path)
+        source_seconds_for_db = upload_duration
         if MIN_SOURCE_SECONDS > 0 and 0 < upload_duration < MIN_SOURCE_SECONDS:
             os.remove(input_path)
             shutil.rmtree(job_output_dir, ignore_errors=True)
@@ -2639,6 +2729,18 @@ async def process_endpoint(
         'webhook_secret': webhook_secret,
         'base_url': api_base,
     }
+
+    # Registra a fonte e o job no banco (Fase 3, bloco 3.3). Falha aberto: o
+    # pipeline nunca dependeu do banco e nao passa a depender agora. O que se
+    # perde sem ele e memoria -- e `publications` tem FK para `clips`, entao
+    # sem esta linha o job de hoje nao tem como ser publicado pela fila amanha.
+    source_id = await job_registry.registrar_fonte(
+        adapter=job_registry.adapter_de(url),
+        entrada=url or os.path.basename(input_path or "upload"),
+        duration_ms=int(source_seconds_for_db * 1000) if source_seconds_for_db else None,
+        storage_key=None if url else input_path)
+    if source_id:
+        await job_registry.registrar_job(job_id, source_id)
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
     # restart (see _recover_jobs_from_disk).

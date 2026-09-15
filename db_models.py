@@ -249,7 +249,12 @@ class Source(Base, TenantScoped):
 # --------------------------------------------------------------------------- #
 
 STAGES = ("ingest", "probe", "transcribe", "detect", "reframe", "compose", "publish")
-JOB_STATUSES = ("queued", "running", "completed", "failed")
+# `cancelled` entrou na migracao `6d9f4b12e0c7`, quando o bloco 3.3 foi gravar o
+# primeiro job de verdade. A lista da secao 7 nao o previa, e `publications` ja
+# o tinha -- foi esquecimento, nao decisao. Registrar um job cancelado como
+# `failed` seria a mesma mentira que o `app.py` ja recusa contar em memoria
+# ("cancelado nao e failed: um processo morto por sinal volta com codigo != 0").
+JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
 
 
 class Job(Base, TenantScoped):
@@ -294,8 +299,18 @@ class Clip(Base, TenantScoped):
     job_id: Mapped[str] = mapped_column(ID, nullable=False)
     # A decisao portada do autoclip: o LLM devolve contagem de item em lista,
     # nao aritmetica de tempo. O timestamp e derivado na hora de cortar.
-    start_word_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_word_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    #
+    # **Anulaveis desde o bloco 3.3, e o motivo importa.** O pipeline herdado
+    # faz o inverso do que a secao 2 desenhou: o LLM devolve segundos e o
+    # indice de palavra e derivado da transcricao na hora de gravar a linha.
+    # Isso funciona -- e a derivacao e exata -- menos num caso: **video sem
+    # fala**. Ali `get_visual_clips` escolhe por imagem, nao ha palavra
+    # nenhuma, e a faixa de palavras nao existe. As colunas nasceram NOT NULL e
+    # a consequencia era que um corte de video mudo nao podia ser gravado, e
+    # entao nao podia ser publicado pela fila. Nulo aqui significa exatamente
+    # isso: este corte nao veio de fala. Ver a migracao `4a7e1c30d8b2`.
+    start_word_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_word_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # A rubrica que o LLM aplicou. E o lado esquerdo da calibracao da Fase 5:
     # cruzar isto com a retencao real de `metrics`.
@@ -309,8 +324,22 @@ class Clip(Base, TenantScoped):
                              name="fk_clips_tenant"),
         ForeignKeyConstraint(["tenant_id", "job_id"], ["jobs.tenant_id", "jobs.id"],
                              ondelete="CASCADE", name="fk_clips_job"),
-        CheckConstraint("start_word_idx >= 0", name="ck_clips_start_nao_negativo"),
-        CheckConstraint("end_word_idx > start_word_idx", name="ck_clips_fim_depois_do_inicio"),
+        # Um CHECK so, e nao dois, porque a regra virou condicional: ou os dois
+        # sao nulos (corte de video mudo) ou formam uma faixa valida. Dois
+        # CHECKs independentes deixariam passar `start` preenchido com `end`
+        # nulo, que e uma faixa pela metade.
+        #
+        # Os `is not null` no segundo ramo nao sao redundantes, e a primeira
+        # versao disto sem eles deixava a faixa pela metade passar: com
+        # `end_word_idx` nulo, `end_word_idx > start_word_idx` vale NULL, o
+        # `and` inteiro vira NULL, e **CHECK so recusa quando o resultado e
+        # FALSE** -- NULL passa. Logica de tres valores, e o banco estava certo.
+        # Descoberto rodando a migracao, nao lendo o diff.
+        CheckConstraint(
+            "(start_word_idx is null and end_word_idx is null) or "
+            "(start_word_idx is not null and end_word_idx is not null "
+            "and start_word_idx >= 0 and end_word_idx > start_word_idx)",
+            name="ck_clips_faixa_de_palavras"),
         CheckConstraint("score is null or (score >= 0 and score <= 100)",
                         name="ck_clips_score_0_100"),
         Index("ix_clips_tenant_id_id", "tenant_id", "id", unique=True),

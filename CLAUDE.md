@@ -418,6 +418,46 @@ dia, a legenda de cada um e um `LEIA-ME.txt` com a ordem sugerida;
   O filtro de dono ja esta la, no-op hoje, para que a Fase 4 nao tenha de
   lembrar dele depois.
 
+### O pipeline escreve no banco (`job_registry.py`, Fase 3 bloco 3.3)
+
+Fecha a pendencia da Fase 1 -- `sources` e `jobs` nunca eram escritas -- e e
+**pre-requisito da Fase 3**, porque `publications` tem FK composta para `clips`.
+Grava em tres momentos: fonte + job no submit, `running` ao comecar, e desfecho
++ cortes no `finally` do `run_job_wrapper` (`app._fechar_job_no_banco`).
+
+- **Tudo falha aberto**, como o `db_seed.seed()` no lifespan. O banco e o
+  registro do pipeline, nao um participante: perder o registro de um job e
+  ruim, perder o job e pior. Nenhuma funcao do modulo levanta.
+- **`jobs.id` E o `job_id` do pipeline.** O `db_models.new_id` ja previa isso;
+  um id proprio obrigaria a manter um mapa entre painel, pasta e banco.
+- **O indice de palavra e DERIVADO da transcricao**, com fim exclusivo (fatia
+  de lista) -- o CHECK exige `end > start` e com fim inclusivo um corte de uma
+  palavra so seria recusado. A §2 desenhou o contrario (o LLM devolvendo o
+  indice), mas o pipeline herdado pede segundos; os segundos exatos ficam no
+  `rubric_json`, que e onde a saida do modelo pertence.
+- **A transcricao vem do metadata em DISCO**, nunca do `result` em memoria --
+  aquele dict e `{'clips', 'cost_analysis'}` e nunca teve transcricao. Ler dali
+  devolveria faixa nula para todo corte, e como a coluna aceita nulo (video
+  mudo) a tabela encheria de nulo sem um erro sequer.
+- **`registrar_clipes` e idempotente por job**: um job retomado depois de um
+  redeploy roda o fim do pipeline de novo, e `publications` tem unicidade por
+  corte.
+- **O estagio so vai ao banco no fim.** O marcador e consumido na *thread* que
+  le o stdout do subprocesso; escrever num engine async dali complicaria um
+  caminho quente para registrar o que a barra ja mostra ao vivo.
+
+**Tres migracoes**, e todas porque o schema encontrou a realidade pela primeira
+vez ao ganhar um escritor:
+`8c5d2e91b740` (`accounts.driver_pref` aceita `auto` e nasce assim),
+`4a7e1c30d8b2` (a faixa de palavras de `clips` vira anulavel -- video mudo nao
+tem palavra a indexar, e sem isso o corte nao podia ser publicado) e
+`6d9f4b12e0c7` (`jobs.status` aceita `cancelled`, que a §7 esqueceu e
+`publications` ja tinha).
+
+> Ao escrever CHECK com coluna anulavel, lembrar que **CHECK so recusa quando o
+> resultado e FALSE**: `end > start` com `end` nulo vale NULL e passa. Os
+> `is not null` no `ck_clips_faixa_de_palavras` nao sao redundantes.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

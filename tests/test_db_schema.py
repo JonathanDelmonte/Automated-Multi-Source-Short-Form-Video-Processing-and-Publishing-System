@@ -260,6 +260,37 @@ class TestConstraints:
                     return "recusou"
         assert corre(_t) == "recusou"
 
+    @pytest.mark.parametrize("inicio,fim,aceita", [
+        (0, 10, True),          # faixa normal
+        (None, None, True),     # corte de video mudo: nao ha palavra a indexar
+        (5, None, False),       # faixa pela metade
+        (None, 5, False),       # idem, do outro lado
+        (-1, 5, False),         # indice negativo
+        (7, 7, False),          # faixa vazia
+    ])
+    def test_clips_faixa_de_palavras(self, banco, inicio, fim, aceita):
+        """As duas metades da faixa andam juntas, ou nenhuma existe.
+
+        O caso `(5, None)` e o que motivou este teste ser por tabela: a
+        primeira versao do CHECK o deixava passar, porque `end > start` com
+        `end` nulo vale NULL e **CHECK so recusa quando o resultado e FALSE**.
+        O banco estava certo; a expressao e que estava incompleta.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        async def _t():
+            async with db.tenant() as t:
+                src = t.add(Source(adapter="upload", input="x.mp4"))
+                await t.flush()
+                job = t.add(Job(source_id=src.id))
+                await t.flush()
+                t.add(Clip(job_id=job.id, start_word_idx=inicio, end_word_idx=fim))
+                try:
+                    await t.commit(); return True
+                except IntegrityError:
+                    return False
+        assert corre(_t) is aceita
+
     def test_o_mesmo_corte_na_mesma_conta_uma_vez_so(self, banco):
         """Evita post duplicado por reprocessamento ou retomada de job."""
         from sqlalchemy.exc import IntegrityError

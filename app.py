@@ -3,6 +3,7 @@ import job_metrics
 import llm_backend
 import llm_cascade
 import sources
+import publishers
 import template as template_doc
 import db
 import db_models
@@ -3049,6 +3050,179 @@ async def download_all_clips(job_id: str, request: Request):
         filename=f"openshorts_clips_{job_id[:8]}.zip",
         background=BackgroundTask(os.remove, zip_path),
     )
+
+
+# --- Fila manual: o pacote do dia (Fase 3, bloco 3.2) -----------------------
+# A secao 6 e explicita sobre o driver `manual` nao ser a versao capada: "ele
+# automatiza 90% do trabalho... Faca ele entregar um pacote por dia: os cortes
+# do dia mais um arquivo de legenda pronta pra colar". Estes dois endpoints sao
+# essa entrega. O ZIP e montado por `publishers.pacote`, que nao sabe onde o
+# pipeline guarda nada -- quem acha o arquivo atual de cada corte e este
+# arquivo, que ja resolve as versoes derivadas em `_canonical_clip_file`.
+
+def _post_meta_do_clip(clip: dict) -> publishers.PostMeta:
+    """O `PostMeta` a partir de um item de `shorts` do metadata.
+
+    **Nao ha `video_description_for_youtube` no prompt de deteccao** -- so
+    TikTok e Instagram. Entao a descricao de um Short sai da queda de
+    `PostMeta.description_for`, que pega a primeira que existir. E o
+    comportamento certo: um texto escrito para vertical curto serve aos tres, e
+    nao ter descricao nao pode impedir a publicacao.
+    """
+    return publishers.PostMeta(
+        title=(clip.get('video_title_for_youtube_short')
+               or clip.get('title') or '').strip(),
+        descriptions={
+            'tiktok': clip.get('video_description_for_tiktok') or '',
+            'instagram': clip.get('video_description_for_instagram') or '',
+        },
+    )
+
+
+def _itens_do_job(job_id: str):
+    """Os cortes de um job como itens de pacote, ou lista vazia.
+
+    Falha aberto em tudo: um job cuja pasta sumiu, cujo metadata esta corrompido
+    ou que nunca terminou nao pode derrubar o pacote dos outros.
+    """
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    try:
+        metas = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    except OSError:
+        return []
+    if not metas:
+        return []
+    try:
+        with open(metas[0], 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    base_name = os.path.basename(metas[0]).replace('_metadata.json', '')
+    mem_clips = ((jobs.get(job_id) or {}).get('result') or {}).get('clips') or []
+
+    itens = []
+    for i, clip in enumerate(data.get('shorts') or []):
+        if not isinstance(clip, dict):
+            continue
+        # Mesma ordem de preferencia do `download_all_clips`: o registro em
+        # memoria conhece as reedicoes (legenda, hook, recut), o metadata em
+        # disco nunca carrega `video_url`, e o nome canonico e a ultima
+        # reserva.
+        url = None
+        if i < len(mem_clips):
+            url = (mem_clips[i] or {}).get('video_url')
+        url = url or clip.get('video_url')
+        filename = (os.path.basename(url.split('/')[-1]) if url
+                    else _canonical_clip_file(output_dir, base_name, i))
+        try:
+            duracao = max(0.0, float(clip.get('end', 0)) - float(clip.get('start', 0)))
+        except (TypeError, ValueError):
+            duracao = 0.0
+        rendered = publishers.RenderedClip(
+            path=os.path.join(output_dir, filename), job_id=job_id, index=i,
+            title=(clip.get('video_title_for_youtube_short') or '').strip(),
+            duration_s=duracao)
+        itens.append(publishers.pacote.Item(clip=rendered,
+                                            meta=_post_meta_do_clip(clip)))
+    return itens
+
+
+async def _cortes_por_dia(request) -> dict:
+    """Todos os cortes em disco, agrupados pela data do arquivo do corte.
+
+    A data e a do **arquivo do corte**, e nao a do job: um job de ontem que
+    ganhou legenda hoje produz um arquivo de hoje, e o pacote de hoje e onde a
+    pessoa vai procurar por ele.
+
+    **Este e o unico caminho da API que atravessa TODOS os jobs de uma vez**, e
+    por isso o filtro de dono esta aqui mesmo sendo hoje um no-op (self-host,
+    `_assert_job_owner` retorna cedo com `BILLING_ENABLED` falso). Um endpoint
+    que junta o disco inteiro num ZIP e exatamente o que nao pode ganhar escopo
+    de tenant depois, na pressa da Fase 4 -- o buraco ja teria vazado por
+    meses. Mesma forma do `list_jobs`: quem nao e do dono e pulado, nao
+    recusado, senao um job de outro derrubaria o pacote inteiro.
+    """
+    _recover_jobs_from_disk()
+    por_dia = {}
+    try:
+        entradas = os.listdir(OUTPUT_DIR)
+    except OSError:
+        return por_dia
+    for job_id in entradas:
+        if not _JOB_ID_RE.match(job_id):
+            continue
+        if BILLING_ENABLED:
+            registro = jobs.get(job_id) or _job_view_from_disk(job_id)
+            if registro is None:
+                continue
+            try:
+                await _assert_job_owner(request, registro)
+            except HTTPException:
+                continue
+        for item in _itens_do_job(job_id):
+            try:
+                dia = publishers.pacote.dia_de(os.path.getmtime(item.clip.path))
+            except OSError:
+                continue
+            por_dia.setdefault(dia, []).append(item)
+    return por_dia
+
+
+@app.get("/api/publicacoes/dias")
+async def listar_dias_com_cortes(request: Request):
+    """Os dias que tem corte, do mais recente para o mais antigo.
+
+    E o que o painel desenha para oferecer o pacote. `dia` vem no formato ISO
+    e no fuso da maquina do servidor (ver `publishers.pacote.dia_de`).
+    """
+    por_dia = await _cortes_por_dia(request)
+    dias = [{"dia": dia, "cortes": len(itens)}
+            for dia, itens in sorted(por_dia.items(), reverse=True)]
+    return {"dias": dias, "hoje": publishers.pacote.hoje()}
+
+
+@app.get("/api/publicacoes/pacote")
+async def baixar_pacote_do_dia(request: Request,
+                               dia: Optional[str] = None,
+                               plataforma: str = "youtube"):
+    """O pacote do dia: os cortes mais a legenda pronta para colar.
+
+    **Sem `dia`, vale o dia mais recente que TEM corte**, e nao "hoje". Pedir o
+    pacote as nove da manha e receber um ZIP vazio porque o job da noite caiu no
+    dia anterior seria o tipo de precisao que so atrapalha -- e a data vai
+    escrita no nome do arquivo e dentro do LEIA-ME, entao nao ha como confundir
+    qual dia veio.
+    """
+    if plataforma not in ("youtube", "tiktok", "instagram"):
+        raise HTTPException(status_code=400,
+                            detail=f"Plataforma desconhecida: {plataforma}")
+
+    por_dia = await _cortes_por_dia(request)
+    if not por_dia:
+        raise HTTPException(status_code=404,
+                            detail="Nenhum corte em disco para empacotar.")
+    escolhido = dia or max(por_dia)
+    itens = por_dia.get(escolhido)
+    if not itens:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Nenhum corte em {escolhido}. Dias com corte: "
+                   f"{', '.join(sorted(por_dia, reverse=True)[:5])}")
+
+    nome = publishers.pacote.nome_do_pacote(escolhido, plataforma)
+    destino = os.path.join(OUTPUT_DIR, f"pacote_{uuid.uuid4().hex[:8]}_{nome}")
+    loop = asyncio.get_event_loop()
+    resultado = await loop.run_in_executor(
+        None, lambda: publishers.pacote.montar(itens, destino, plataforma,
+                                               escolhido))
+    print(f"📦 Pacote de {resultado.dia} ({plataforma}): "
+          f"{resultado.cortes} corte(s)"
+          + (f", {len(resultado.faltando)} sem arquivo" if resultado.faltando else ""))
+    return FileResponse(destino, media_type="application/zip", filename=nome,
+                        background=BackgroundTask(os.remove, destino))
 
 
 # --- Project restore (paid mode) --------------------------------------------

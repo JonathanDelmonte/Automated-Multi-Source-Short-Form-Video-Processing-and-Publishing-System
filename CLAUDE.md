@@ -396,6 +396,28 @@ driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
   `manual` nao sabe que texto escrever e o `youtube-api` nao acha o token.
 - `aggregator` e `browser` sao stubs que levantam `DriverDesligado`.
 
+**O pacote do dia** (`publishers/pacote.py`, bloco 3.2) e a entrega que a §6
+pede por escrito: `GET /api/publicacoes/pacote` devolve um ZIP com os cortes do
+dia, a legenda de cada um e um `LEIA-ME.txt` com a ordem sugerida;
+`GET /api/publicacoes/dias` lista os dias que tem corte.
+
+- **O montador nao sabe onde o pipeline guarda nada.** Recebe
+  `(RenderedClip, PostMeta)` que o `app.py` montou -- achar o arquivo ATUAL de
+  um corte e conhecimento do `app.py`, que ja resolve `subtitled_` / `recut_` /
+  `hooked_` em `_canonical_clip_file`. Copiar aquilo para ca criaria uma segunda
+  verdade que empacotaria a versao sem legenda.
+- **Um corte sem arquivo em disco nao derruba o pacote**: sai da lista e e
+  nomeado no LEIA-ME.
+- **O dia e a data do ARQUIVO do corte**, nao a do job -- um job de ontem que
+  ganhou legenda hoje entra no pacote de hoje. E, sem `dia`, vale o dia mais
+  recente que TEM corte, nao "hoje".
+- **Nao ha `video_description_for_youtube` no prompt de deteccao** (so TikTok e
+  Instagram), entao a descricao de um Short sai da queda de
+  `PostMeta.description_for`.
+- `_cortes_por_dia` e **o unico caminho da API que atravessa todos os jobs**.
+  O filtro de dono ja esta la, no-op hoje, para que a Fase 4 nao tenha de
+  lembrar dele depois.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

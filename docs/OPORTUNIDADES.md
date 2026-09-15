@@ -201,7 +201,7 @@ Os buracos reais, que continuam sendo trabalho a fazer.
 | # | O plano quer | Situação | Peso |
 |---|---|---|---|
 | B1 | **`SourceAdapter`**: Twitch VOD/live, Google Drive, canal do YouTube por `playlistItems.list` | só upload e URL do yt-dlp | **Fase 1, o maior** |
-| B2 | **`Publisher`** e seus drivers, com o `manual` como default | nada; a publicação do upstream era paga e saiu na Fase 0.3 | **Fase 3** |
+| B2 | **`Publisher`** e seus drivers, com o `manual` como default | ~~nada~~ **feito na Fase 3** (15-set-2026): `publishers/`, `manual` com pacote do dia, `youtube-api` com quota, `aggregator`/`browser` como stub | ✅ |
 | B3 | **Diarização** no estágio 03 | não existe. O que há é `active_speaker.py`, que lê **movimento de boca em vídeo** — resolve "quem está falando agora na tela", não "quantas pessoas há e qual disse o quê" | pré-requisito de rubrica por falante |
 | B4 | **`safeArea`** do template (12% topo / 18% base) lido no render | **parcial**, e melhor do que parecia — ver abaixo | fiação da Fase 2 |
 | B5 | **`cuts.removeSilence`** | no spec, sem implementação | densidade do corte |
@@ -269,9 +269,12 @@ Ordenado por (valor ÷ esforço), não por empolgação.
    nada do que foi achado aqui o adianta. Começar pelo canal do YouTube via
    `playlistItems.list`, que a seção 4 marca como o único caminho sem risco de
    ToS.
-5. **`Publisher` com o driver `manual` (B2, Fase 3).** O plano tem razão em
-   chamá-lo de "90% do trabalho": pacote diário de cortes com título,
-   descrição e hashtags prontos para colar.
+5. ~~**`Publisher` com o driver `manual` (B2, Fase 3).**~~ **Feito**
+   (15-set-2026). O plano tinha razão em chamá-lo de "90% do trabalho": o
+   pacote diário sai em `GET /api/publicacoes/pacote`, com um `.txt` por corte
+   e por plataforma — título, descrição e hashtags, sem rótulo a apagar depois
+   de colar. O que sobrou para a Fase 4 é o **gatilho**: hoje é um botão, e o
+   agendador com jitter é o ADR-007.
 
 ### Ganhos que o plano não sabia que podia ter
 
@@ -282,7 +285,10 @@ Ordenado por (valor ÷ esforço), não por empolgação.
    publicar no YouTube ou só em Shorts/Reels/TikTok.
 8. **MCP como caminho de automação (A4).** Se o objetivo declarado é "100%
    automatizado", um agente que já sabe operar o pipeline é uma alternativa
-   séria a escrever o agendador da Fase 4 do zero.
+   séria a escrever o agendador da Fase 4 do zero. **Ficou mais forte com a
+   Fase 3**: `/api/publicar` é mais uma ferramenta que o agente já saberia
+   chamar, e o resolvedor garante que nem um agente confuso alcança o driver de
+   risco (ADR-010) — a porta não é a educação de quem chama, é o `risk_score`.
 
 ### Vindo do primeiro uso real (13-set-2026)
 

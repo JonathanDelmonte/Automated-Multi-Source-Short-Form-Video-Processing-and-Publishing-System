@@ -670,11 +670,15 @@ certa.
 
 ---
 
-## Opcional — O banco
+## Passo 7 — O banco (não é mais opcional)
 
-Nada do pipeline usa o banco ainda (`sources` e `jobs` passam a ser escritas na
-Fase 1), mas vale confirmar que funciona na sua máquina. Com o stack no ar,
-abra **outro** Prompt de Comando (o primeiro está ocupado mostrando o log):
+Desde a Fase 3 o pipeline **escreve** no banco: cada job deixa uma linha em
+`sources`, uma em `jobs` e uma por corte em `clips` — e é a linha de `clips` que
+permite publicar depois. Sem banco o pipeline continua funcionando (ele falha
+aberto de propósito), mas a aba **Publicação** fica sem nada para mostrar.
+
+Com o stack no ar, abra **outro** Prompt de Comando (o primeiro está ocupado
+mostrando o log):
 
 ```bat
 cd /d C:\cortes
@@ -683,6 +687,63 @@ docker compose exec backend python db_seed.py --no-ddl
 ```
 
 Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
+
+---
+
+## Passo 8 — Publicar
+
+Abra a aba **Publicação** no painel (porta 5175).
+
+### O caminho que já funciona sem configurar nada
+
+**Pacote do dia.** Um botão, um ZIP: os cortes do dia mais um `.txt` por corte
+com título, descrição e hashtags — sem rótulo e sem cabeçalho, para selecionar
+tudo e colar. É o driver `manual`, e ele é o padrão de propósito: automatiza o
+trabalho todo menos abrir o app e apertar publicar.
+
+Dentro do ZIP há um `LEIA-ME.txt` com a ordem sugerida, que é a ordem em que a
+detecção já entregou — do melhor para o pior.
+
+### Para o YouTube subir sozinho
+
+Uma vez só, e não dá para pular: a API do YouTube exige um token que só nasce de
+um consentimento no navegador.
+
+1. Em <https://console.cloud.google.com>: criar um projeto, habilitar a
+   **YouTube Data API v3**, e em *Credenciais* criar um **ID do cliente OAuth**
+   do tipo **Aplicativo de computador**. Anote o Client ID e o Client Secret.
+2. Na pasta do projeto, **fora** do Docker (o navegador precisa abrir na sua
+   máquina):
+
+```bat
+cd /d C:\cortes
+python youtube_oauth.py
+```
+
+Ele abre a tela do Google, você autoriza, e o segredo é guardado em
+`data\vault\youtube\canal.json` com permissão restrita. O script imprime
+também as três linhas de `.env` equivalentes, se você preferir ambiente a
+arquivo — nesse caso, cole no `.env` e reinicie o backend.
+
+3. No painel, em **contas**, adicione a conta com o mesmo nome que você passou
+   em `--handle` (o padrão é `canal`). A linha passa a dizer *"sobe sozinho pela
+   API oficial"* em vez de *"fila manual"*.
+
+**São 6 uploads por dia**, e o número não é escolha nossa: a API cobra 1.600
+unidades por vídeo contra 10.000/dia. O sétimo do dia **cai na fila manual
+sozinho** — não vira erro. O contador zera à meia-noite no horário do Pacífico,
+não no seu.
+
+### Na primeira vez, publique privado
+
+O padrão já é `private`. Publique um corte, confira no YouTube Studio que o
+título, a descrição e o vídeo estão certos, e só então mude. **Este é o primeiro
+caminho do projeto que sai da sua máquina**: um erro no resto custa um job
+refeito, um erro aqui é um vídeo no seu canal.
+
+Se você pedir `public` e o vídeo subir como `private`, o painel diz isso na
+linha do resultado — costuma ser o app OAuth que ainda não passou pela
+verificação do Google, e não um erro do projeto.
 
 ---
 

@@ -582,7 +582,7 @@ Entrou como `direct`, e o `CHECK` de `sources.adapter` foi ampliado por migraç�
 o dado: `upload` é arquivo que entrou pelo nosso endpoint e fica até a limpeza; `direct`
 é link de terceiro que pode expirar em 60 minutos. A coluna existe para distinguir isso.
 
-### Fase 2 — motor de template · ~1 semana · ◀ EM CURSO
+### Fase 2 — motor de template · ~1 semana · ✅ COMPLETA EM CÓDIGO
 
 Reduzida de ~2 semanas por ADR-002. Em vez de escrever o motor, trazer do `clippyme`
 por `git diff` com ancestral comum: o compositor de segunda passada e os seis presets
@@ -592,7 +592,9 @@ O que continua sendo trabalho próprio: o schema JSON do §5, o CRUD no painel, 
 preview de 3 segundos. Travar as três decisões do §5 — `safeArea` respeitada (12% topo,
 18% base), template aplicado no download e não no render, preview antes de queimar GPU.
 
-**Pronto quando:** trocar de template não reprocessa o vídeo.
+**Pronto quando:** trocar de template não reprocessa o vídeo. **Satisfeito no
+código**: `POST /api/subtitle` com `template` requeima sobre o clipe já
+renderizado — nenhum reframe, nenhum corte. Falta exercitar num clipe real.
 
 #### Blocos
 

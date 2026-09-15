@@ -17,28 +17,22 @@ import asyncio
 import sys
 
 import db
+import template
 from db_models import Template, Tenant, User
 
-#: O template da secao 5, palavra por palavra. Fica aqui e nao num JSON solto
-#: porque o seed precisa dele para criar a versao 1, e duplicar o arquivo
-#: garantiria divergencia. `safeArea` nao e enfeite: o TikTok cobre 12% em cima
-#: e 18% embaixo, e legenda fora dessa faixa e o erro no 1 de quem automatiza.
-TEMPLATE_PADRAO = {
-    "name": "Padrão Cortes v3",
-    "aspect": "9:16",
-    "hook": {"mode": "text_punch", "durationMs": 1200, "font": "Anton",
-             "from": "clip.title"},
-    "captions": {"preset": "karaoke_fill", "font": "Anton", "sizePt": 84,
-                 "yAnchor": 0.72, "highlight": "#FFD400", "strokePx": 6,
-                 "maxWords": 3},
-    "overlays": [
-        {"asset": "logo.png", "anchor": "top-right", "marginPx": 48, "opacity": 0.9},
-        {"asset": "endcard.mp4", "anchor": "full", "atEnd": True, "durationMs": 2000},
-    ],
-    "audio": {"bgm": "lofi_01.mp3", "gainDb": -22, "ducking": "sidechain"},
-    "cuts": {"removeSilence": True, "thresholdDb": -35, "maxGapMs": 400},
-    "safeArea": {"topPct": 12, "bottomPct": 18},
-}
+#: O template semeado e o `template.PADRAO` -- uma fonte de verdade so, e nao
+#: uma copia que diverge no primeiro campo novo.
+#:
+#: **Ele NAO e mais o exemplo da secao 5, e a troca foi deliberada** (bloco
+#: 2.3). O exemplo de la referencia `logo.png`, `endcard.mp4` e `lofi_01.mp3`,
+#: que nao existem, e liga `cuts.removeSilence`, que ninguem implementa ainda.
+#: Como documentacao ele esta certo: mostra a forma do documento inteiro. Como
+#: linha semeada num banco que o painel vai listar, ele seria um template que
+#: promete o que nao faz -- e o usuario descobriria isso aplicando.
+#:
+#: O exemplo completo continua no `docs/PLANO-TECNICO.md`, secao 5, que e onde
+#: exemplo deve morar.
+TEMPLATE_PADRAO = template.PADRAO
 
 SEED_EMAIL = "self-host@localhost"
 

@@ -4,6 +4,9 @@ import llm_backend
 import llm_cascade
 import sources
 import template as template_doc
+import db
+import db_models
+import db_seed
 import re
 import sys
 import uuid
@@ -1702,6 +1705,20 @@ async def lifespan(app: FastAPI):
     _install_drain_signal_handler()
     asyncio.create_task(_handover_watch())
     asyncio.create_task(_resume_scan())
+    # O banco nasce no boot (Fase 2, bloco 2.3). O seed e idempotente e cria o
+    # schema, o tenant fixo do self-host e o template padrao -- sem isto, a
+    # primeira visita a aba de templates falharia com "no such table" numa
+    # instalacao que nunca rodou `python db_seed.py`.
+    #
+    # **Falha aberto**: um banco quebrado nao pode impedir o resto da API de
+    # subir, porque o pipeline inteiro ainda funciona sem ele. Quem for usar
+    # templates recebe um 503 que diz o que rodar.
+    try:
+        await db_seed.seed()
+    except Exception as e:
+        print(f"⚠️ Banco nao inicializado ({e}); a aba de templates vai pedir "
+              f"`python db_seed.py`. O resto da API nao depende dele.")
+
     # Start worker and cleanup
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
@@ -4568,6 +4585,113 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
         "success": True,
         "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
+
+# --------------------------------------------------------------------------- #
+# Templates (Fase 2, bloco 2.3)
+# --------------------------------------------------------------------------- #
+#
+# Primeiro uso do banco por um caminho do pipeline: ate aqui so os testes de
+# schema chamavam `db.tenant()`. A tabela `templates` existe desde a Fase 0.5,
+# com `spec_json` e versao.
+#
+# **Salvar cria uma VERSAO nova, nunca sobrescreve.** A secao 5 chama isto de
+# "documento de configuracao versionado", e a tabela ja tem a restricao unica
+# em (tenant, nome, versao). Sobrescrever perderia a unica coisa que a versao
+# serve para dar: poder voltar ao estilo de antes depois de mexer.
+
+class TemplateIn(BaseModel):
+    name: Optional[str] = None
+    spec: dict
+
+
+def _erro_de_banco(e: Exception) -> HTTPException:
+    """O banco nasce no boot; se nao nasceu, a mensagem diz o que rodar."""
+    print(f"⚠️ Templates: banco indisponivel ({e})")
+    return HTTPException(
+        status_code=503,
+        detail="O banco de templates nao respondeu. Rode `python db_seed.py` "
+               "na pasta do projeto e tente de novo.")
+
+
+@app.get("/api/templates")
+async def listar_templates():
+    """A ultima versao de cada template, mais os presets de legenda.
+
+    Os presets vao junto de proposito: o painel precisa dos dois para montar a
+    tela, e duas chamadas para pintar um seletor sao uma a mais.
+    """
+    try:
+        async with db.tenant() as t:
+            linhas = await t.all(db_models.Template)
+    except Exception as e:
+        raise _erro_de_banco(e)
+
+    ultimas = {}
+    for linha in linhas:
+        atual = ultimas.get(linha.name)
+        if atual is None or linha.version > atual.version:
+            ultimas[linha.name] = linha
+
+    return {
+        "templates": [
+            {"id": l.id, "name": l.name, "version": l.version, "spec": l.spec_json}
+            for l in sorted(ultimas.values(), key=lambda x: x.name.lower())
+        ],
+        "presets": sorted(template_doc.PRESETS_DE_LEGENDA),
+        "padrao": template_doc.PADRAO,
+    }
+
+
+@app.post("/api/templates")
+async def salvar_template(corpo: TemplateIn):
+    """Salva uma versao nova. O nome do corpo vence o do spec, se vier."""
+    spec = dict(corpo.spec or {})
+    if corpo.name:
+        spec["name"] = corpo.name
+    try:
+        spec = template_doc.normalizar(spec)
+    except template_doc.TemplateInvalido as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        async with db.tenant() as t:
+            anteriores = await t.all(db_models.Template,
+                                     db_models.Template.name == spec["name"])
+            versao = max((l.version for l in anteriores), default=0) + 1
+            linha = t.add(db_models.Template(name=spec["name"], spec_json=spec,
+                                             version=versao))
+            await t.commit()
+            return {"id": linha.id, "name": linha.name, "version": linha.version,
+                    "spec": spec}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_de_banco(e)
+
+
+@app.delete("/api/templates/{template_id}")
+async def apagar_template(template_id: str):
+    """Apaga o template inteiro -- **todas** as versoes daquele nome.
+
+    Apagar so uma versao deixaria o template vivo com o estilo antigo, que nao
+    e o que alguem quer dizer com "apagar este template".
+    """
+    try:
+        async with db.tenant() as t:
+            alvo = await t.get(db_models.Template, template_id)
+            if alvo is None:
+                raise HTTPException(status_code=404, detail="Template nao encontrado")
+            irmas = await t.all(db_models.Template,
+                                db_models.Template.name == alvo.name)
+            for linha in irmas:
+                await t.session.delete(linha)
+            await t.commit()
+            return {"success": True, "name": alvo.name, "versoes_apagadas": len(irmas)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_de_banco(e)
+
 
 class RemoveSubtitlesRequest(BaseModel):
     job_id: str

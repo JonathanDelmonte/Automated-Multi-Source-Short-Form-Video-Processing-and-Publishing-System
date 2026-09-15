@@ -173,11 +173,43 @@ class TestKwargsDeLegenda:
     @pytest.mark.parametrize("da_secao5,do_render", [
         ("sizePt", "fontsize"), ("font", "font_name"),
         ("highlight", "highlight_color"), ("strokePx", "border_width"),
-        ("maxWords", "max_chars"),
+        ("maxChars", "max_chars"),
     ])
     def test_traduz_os_nomes_da_secao_5(self, da_secao5, do_render):
         k = t.kwargs_de_legenda({"captions": {"preset": "limpo", da_secao5: 77}})
         assert k[do_render] == 77
+
+
+class TestPalavrasNaoSaoCaracteres:
+    """A §5 fala em PALAVRAS; o `generate_ass` conta CARACTERES.
+
+    A tradução ingênua entre as duas — que foi o que o bloco 2.1 fez — produzia
+    blocos de três LETRAS a partir de `maxWords: 3`, que é exatamente o que o
+    exemplo da própria §5 traz. Só apareceria no clipe queimado.
+    """
+
+    def test_tres_palavras_nao_viram_tres_caracteres(self):
+        k = t.kwargs_de_legenda({"captions": {"preset": "limpo", "maxWords": 3}})
+        assert k["max_chars"] > 15, "três palavras não cabem em três caracteres"
+
+    def test_o_exemplo_da_secao_5_produz_bloco_usavel(self):
+        import db_seed
+        # O seed usa o template.PADRAO agora, mas o exemplo da §5 continua
+        # sendo entrada legítima e não pode produzir legenda ilegível.
+        exemplo = {"captions": {"preset": "karaoke_fill", "maxWords": 3}}
+        assert t.kwargs_de_legenda(exemplo)["max_chars"] == 21
+        assert db_seed.TEMPLATE_PADRAO is t.PADRAO, "uma fonte de verdade só"
+
+    def test_piso_para_nao_gerar_bloco_de_uma_letra(self):
+        assert t.chars_por_palavras(1) >= 8
+
+    def test_max_chars_continua_exato_para_quem_quiser_o_numero(self):
+        k = t.kwargs_de_legenda({"captions": {"preset": "limpo", "maxChars": 30}})
+        assert k["max_chars"] == 30
+
+    def test_valor_nao_numerico_levanta(self):
+        with pytest.raises(t.TemplateInvalido, match="maxWords"):
+            t.kwargs_de_legenda({"captions": {"preset": "limpo", "maxWords": "tres"}})
 
     def test_y_anchor_e_ignorado_porque_a_posicao_vem_do_safe_area(self):
         k = t.kwargs_de_legenda({"captions": {"preset": "limpo", "yAnchor": 0.72}})

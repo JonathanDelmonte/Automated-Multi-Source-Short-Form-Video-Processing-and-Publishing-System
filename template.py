@@ -222,6 +222,28 @@ def margem_vertical(spec: dict | None) -> int:
     return int(round(PLAY_RES_Y * pct / 100.0))
 
 
+#: Caracteres por palavra, com o espaco. A secao 5 fala em PALAVRAS
+#: (`maxWords: 3`) e o `generate_ass` conta CARACTERES (`max_chars`) -- sao
+#: unidades diferentes, e a traducao ingenua entre elas produzia blocos de tres
+#: LETRAS. Sete e a media que cobre portugues e ingles com folga (a media de
+#: ambos fica perto de 5 letras, mais o espaco, mais um pouco para nao cortar a
+#: palavra seguinte cedo demais).
+#:
+#: **E aproximacao, e esta escrito que e.** O certo seria o `generate_ass`
+#: aceitar um teto por palavras, que e mudanca no caminho de queima herdado do
+#: upstream; ate la, `maxChars` esta disponivel para quem quiser o numero exato.
+CHARS_POR_PALAVRA = 7
+
+
+def chars_por_palavras(palavras) -> int:
+    """`maxWords` -> `max_chars`, com um piso que nao produz bloco de uma letra."""
+    try:
+        n = int(palavras)
+    except (TypeError, ValueError):
+        raise TemplateInvalido(f"captions.maxWords: esperava numero, veio {palavras!r}")
+    return max(8, n * CHARS_POR_PALAVRA)
+
+
 def kwargs_de_legenda(spec: dict | None) -> dict:
     """Os argumentos de `subtitles.generate_ass` que este template pede.
 
@@ -236,9 +258,12 @@ def kwargs_de_legenda(spec: dict | None) -> dict:
     # permite ao documento ser legivel sem conhecer a assinatura dele.
     traducao = {"sizePt": "fontsize", "font": "font_name", "highlight": "highlight_color",
                 "strokePx": "border_width", "color": "font_color",
-                "maxWords": "max_chars"}
+                "maxChars": "max_chars"}
     for chave, valor in legendas.items():
         if chave == "yAnchor":
             continue          # posicao vem de safeArea, nao daqui
+        if chave == "maxWords":
+            base["max_chars"] = chars_por_palavras(valor)
+            continue
         base[traducao.get(chave, chave)] = valor
     return base

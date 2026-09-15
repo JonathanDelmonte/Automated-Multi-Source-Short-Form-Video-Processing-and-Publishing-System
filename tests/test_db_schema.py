@@ -348,15 +348,34 @@ class TestSeed:
         # Um UUID sorteado a cada seed orfanaria toda linha ja gravada.
         assert db.SELF_HOST_TENANT_ID == "00000000-0000-0000-0000-000000000001"
 
-    def test_o_template_padrao_respeita_a_area_segura(self, banco):
-        """12% em cima e 18% embaixo: o erro no 1 de quem automatiza corte."""
+    def _spec_semeado(self):
         async def _t():
             async with db.tenant() as t:
                 return (await t.all(Template))[0].spec_json
-        spec = corre(_t)
+        return corre(_t)
+
+    def test_o_template_padrao_respeita_a_area_segura(self, banco):
+        """12% em cima e 18% embaixo: o erro no 1 de quem automatiza corte."""
+        spec = self._spec_semeado()
         assert spec["safeArea"] == {"topPct": 12, "bottomPct": 18}
         assert spec["aspect"] == "9:16"
-        assert spec["captions"]["yAnchor"] == 0.72
+
+    def test_o_template_semeado_faz_o_que_promete(self, banco):
+        """Ate o bloco 2.3 o seed gravava o EXEMPLO da secao 5, que referencia
+        `logo.png`, `endcard.mp4` e `lofi_01.mp3` -- nenhum existe -- e liga
+        `cuts.removeSilence`, que ninguem implementa. Como documentacao esta
+        certo; como linha que o painel vai listar e um template que promete o
+        que nao faz, e o usuario descobriria aplicando."""
+        spec = self._spec_semeado()
+        assert spec["overlays"] == [], "sem sobreposicao que aponte para arquivo inexistente"
+        assert spec["audio"]["bgm"] is None
+        assert spec["cuts"]["removeSilence"] is False
+
+    def test_o_seed_nao_tem_copia_propria_do_documento(self, banco):
+        import db_seed
+        import template
+        assert db_seed.TEMPLATE_PADRAO is template.PADRAO, (
+            "duas copias divergem no primeiro campo novo")
 
 
 # --------------------------------------------------------------------------- #

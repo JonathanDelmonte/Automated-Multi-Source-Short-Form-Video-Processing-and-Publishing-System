@@ -39,14 +39,62 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import (AsyncEngine, AsyncSession, async_sessionmaker,
                                     create_async_engine)
 
+from contextvars import ContextVar
+
 from db_models import Base, TenantScoped
 
 T = TypeVar("T")
 
-#: Tenant do modo self-host. Auth e a Fase 4; ate la todo dado e deste tenant,
-#: e o `db_seed` o cria com este id fixo para que as linhas sejam estaveis
-#: entre execucoes (um UUID sorteado a cada seed orfanaria tudo).
+#: Tenant do modo self-host. Enquanto nenhum usuario tiver senha (ver `auth.py`)
+#: todo dado e deste tenant, e o `db_seed` o cria com este id fixo para que as
+#: linhas sejam estaveis entre execucoes (um UUID sorteado a cada seed
+#: orfanaria tudo).
 SELF_HOST_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+#: O tenant da requisicao em curso (Fase 4, bloco 4.2).
+#:
+#: **E um `ContextVar` e nao um parametro, e isso foi decidido contando.** Havia
+#: 22 chamadas de `db.tenant()` espalhadas por `app.py`, `publish_queue.py` e
+#: `job_registry.py`. Enfiar um `tenant_id` em todas significaria 22 lugares
+#: para acertar e, pior, 22 lugares onde ESQUECER nao da erro: a chamada
+#: esquecida continua compilando, continua respondendo, e passa a ler o tenant
+#: errado em silencio -- que e a falha exata que a Fase 0.5 gastou uma fase
+#: inteira para tornar impossivel no banco.
+#:
+#: Com a variavel de contexto, o default de `tenant()` **e** o tenant da sessao,
+#: entao o sitio esquecido fica certo por omissao. O proprio docstring de
+#: `tenant()` ja previa isto desde a Fase 0.5: "o resto do codigo nao muda".
+#:
+#: `contextvars` e por tarefa asyncio, entao duas requisicoes simultaneas nao se
+#: enxergam. O que NAO herda o contexto e uma tarefa criada fora da requisicao
+#: -- e o caso do worker da fila, que roda o job muito depois de a resposta ter
+#: ido embora. La o tenant vem gravado no proprio job. Ver `_rodar_no_tenant`.
+_tenant_atual: ContextVar[str] = ContextVar("tenant_atual",
+                                            default=SELF_HOST_TENANT_ID)
+
+
+def tenant_atual() -> str:
+    """O tenant que vale agora, sem abrir sessao."""
+    return _tenant_atual.get()
+
+
+def usar_tenant(tenant_id: str):
+    """Passa a valer `tenant_id` daqui para a frente neste contexto.
+
+    Devolve o `Token` do `contextvars` para quem precisar desfazer -- o que so
+    importa em codigo que compartilha contexto, como o worker da fila.
+    """
+    return _tenant_atual.set(tenant_id or SELF_HOST_TENANT_ID)
+
+
+def restaurar_tenant(token) -> None:
+    try:
+        _tenant_atual.reset(token)
+    except (ValueError, LookupError):
+        # Token de outro contexto: acontece se alguem guardou o token e o usou
+        # noutra tarefa. Nao ha o que restaurar, e levantar aqui esconderia o
+        # erro de verdade la atras.
+        pass
 
 _engine: Optional[AsyncEngine] = None
 _sessions: Optional[async_sessionmaker[AsyncSession]] = None
@@ -221,12 +269,17 @@ class TenantScope:
 
 
 @asynccontextmanager
-async def tenant(tenant_id: str = SELF_HOST_TENANT_ID):
-    """Escopo de tenant. Sem argumento, o tenant fixo do self-host.
+async def tenant(tenant_id: Optional[str] = None):
+    """Escopo de tenant. Sem argumento, **o tenant da requisicao em curso**.
 
-    Na Fase 4 o `tenant_id` passa a vir da sessao autenticada e este default
-    sai; o resto do codigo nao muda, que e exatamente o "sabado de trabalho"
-    que a secao 7 previu.
+    Era o tenant fixo do self-host ate o bloco 4.2; agora o default e o
+    `ContextVar` acima, que a tranca do `app.py` preenche a partir da sessao. O
+    fixo continua valendo quando ninguem preencheu -- instalacao sem auth,
+    script de linha de comando, worker sem job. E o "sabado de trabalho" que a
+    secao 7 previu: o resto do codigo nao mudou.
+
+    Passar o id explicitamente continua valendo e e o certo quando a resposta
+    NAO pode depender do ambiente -- resolver de quem e uma sessao, por exemplo.
     """
     async with session() as s:
-        yield TenantScope(s, tenant_id)
+        yield TenantScope(s, tenant_id or tenant_atual())

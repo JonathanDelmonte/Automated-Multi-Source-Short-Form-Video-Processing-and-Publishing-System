@@ -588,6 +588,35 @@ def _reapply_captions(job_id, clip_index, video_path):
         return None
 
 
+#: O tenant dono de um job, gravado ao lado dos arquivos dele.
+#:
+#: Existe pelo mesmo motivo do `.owner` que o upstream ja escrevia: o manifesto
+#: de resume e apagado quando o job termina, entao um job COMPLETO recuperado do
+#: disco depois de um restart nao teria de onde saber de quem e. Sem isto, todo
+#: projeto de ontem voltaria pertencendo ao tenant do self-host.
+ARQUIVO_TENANT = ".tenant"
+
+
+def _tenant_do_disco(job_path: str) -> str:
+    """O tenant gravado na pasta do job. Um job anterior ao bloco 4.2 nao tem o
+    arquivo, e cair no self-host e o certo -- era o unico tenant que existia."""
+    try:
+        with open(os.path.join(job_path, ARQUIVO_TENANT), encoding="utf-8") as fh:
+            return fh.read().strip() or db.SELF_HOST_TENANT_ID
+    except OSError:
+        return db.SELF_HOST_TENANT_ID
+
+
+def _gravar_tenant_do_job(job_path: str, tenant_id: str) -> None:
+    try:
+        os.makedirs(job_path, exist_ok=True)
+        with open(os.path.join(job_path, ARQUIVO_TENANT), "w",
+                  encoding="utf-8") as fh:
+            fh.write(tenant_id)
+    except OSError as e:
+        print(f"⚠️ Nao consegui gravar o tenant do job em {job_path}: {e}")
+
+
 def _recover_jobs_from_disk():
     """Rebuild completed jobs from OUTPUT_DIR after a restart (issue #46 / #18).
 
@@ -629,6 +658,7 @@ def _recover_jobs_from_disk():
                 'logs': ["♻️ Job recovered from disk after server restart."],
                 'output_dir': job_path,
                 'user_id': owner,
+                'tenant_id': _tenant_do_disco(job_path),
                 'result': {'clips': clips, 'cost_analysis': data.get('cost_analysis')},
             }
             recovered += 1
@@ -886,7 +916,8 @@ def _install_drain_signal_handler():
 
 
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
-                           webhook_url=None, webhook_secret=None, base_url=None):
+                           webhook_url=None, webhook_secret=None, base_url=None,
+                           tenant_id=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
@@ -903,6 +934,10 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "webhook_url": webhook_url,
                 "webhook_secret": webhook_secret,
                 "base_url": base_url,
+                # Sem isto, um job retomado depois de um deploy gravaria os
+                # cortes no tenant do self-host em vez do dono -- e a linha de
+                # `clips` no tenant errado nao volta sozinha.
+                "tenant_id": tenant_id,
             }, f)
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
@@ -1021,6 +1056,10 @@ def _resume_interrupted_jobs() -> set:
             'webhook_url': m.get("webhook_url"),
             'webhook_secret': m.get("webhook_secret"),
             'base_url': m.get("base_url"),
+            # Um manifesto anterior ao bloco 4.2 nao tem o campo; cair no
+            # self-host e o certo, porque e o unico tenant que existia quando
+            # ele foi escrito.
+            'tenant_id': m.get("tenant_id") or db.SELF_HOST_TENANT_ID,
         }
         _enqueue_job(job_id, int(m.get("priority", 2)))
         resumed += 1
@@ -1274,9 +1313,17 @@ async def _track_proxy_usage(job_id):
 
 
 async def run_job_wrapper(job_id):
-    """Wrapper to run job and release semaphore"""
+    """Wrapper to run job and release semaphore.
+
+    **Repoe o tenant do job antes de qualquer coisa** (bloco 4.2). Esta tarefa
+    nasce no worker da fila, e nao na requisicao que submeteu o video -- entao
+    ela NAO herda o `ContextVar` que a tranca preencheu, e sem isto todo job
+    gravaria `sources`, `jobs` e `clips` no tenant do self-host. Um job do
+    segundo tenant apareceria no projeto do primeiro.
+    """
+    job = jobs.get(job_id)
+    db.usar_tenant((job or {}).get('tenant_id') or db.SELF_HOST_TENANT_ID)
     try:
-        job = jobs.get(job_id)
         if job:
             await run_job(job_id, job)
     except Exception as e:
@@ -2485,6 +2532,13 @@ async def process_endpoint(
     if url and DISABLE_YOUTUBE_URL:
         raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment. Please upload a file you own.")
 
+    # O tenant desta requisicao, lido UMA vez e carregado junto do job. O worker
+    # roda depois da resposta, numa tarefa que nao herda o contexto (bloco 4.2)
+    # -- sem isto um job do segundo tenant gravaria os cortes no primeiro. Fica
+    # aqui, antes de qualquer ramo, porque e contexto da requisicao e nao
+    # resultado de nenhum deles.
+    tenant_do_job = db.tenant_atual()
+
     # Duracao da fonte para `sources.duration_ms` (bloco 3.3). Cada caminho de
     # entrada ja mede a sua -- o probe de qualidade para URL, o ffprobe para
     # upload --, e a variavel so junta as medidas num lugar so em vez de as
@@ -2734,6 +2788,7 @@ async def process_endpoint(
         'webhook_url': webhook_url,
         'webhook_secret': webhook_secret,
         'base_url': api_base,
+        'tenant_id': tenant_do_job,
     }
 
     # Registra a fonte e o job no banco (Fase 3, bloco 3.3). Falha aberto: o
@@ -2747,6 +2802,11 @@ async def process_endpoint(
         storage_key=None if url else input_path)
     if source_id:
         await job_registry.registrar_job(job_id, source_id)
+
+    # O tenant vai para a pasta do job pelo mesmo motivo do `.owner` logo
+    # abaixo: o manifesto de resume some quando o job termina, e um projeto
+    # completo recuperado do disco precisa continuar sabendo de quem e.
+    _gravar_tenant_do_job(job_output_dir, tenant_do_job)
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
     # restart (see _recover_jobs_from_disk).
@@ -2763,7 +2823,7 @@ async def process_endpoint(
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
                            watermark=jobs[job_id]['watermark'],
                            webhook_url=webhook_url, webhook_secret=webhook_secret,
-                           base_url=api_base)
+                           base_url=api_base, tenant_id=tenant_do_job)
 
     _enqueue_job(job_id, priority)
 
@@ -5156,9 +5216,16 @@ async def tranca_da_api(request: Request, call_next):
         return await call_next(request)
     if not await _auth_ativa():
         return await call_next(request)
-    if await _sessao(request) is None:
+    sessao = await _sessao(request)
+    if sessao is None:
         return JSONResponse(status_code=401,
                             content={"detail": "Faca login para continuar."})
+    # A partir daqui todo `db.tenant()` desta requisicao le o tenant desta
+    # sessao, sem que nenhum dos 22 sitios de chamada precise saber disso
+    # (bloco 4.2). Guardado tambem no `request.state` para quem precisa do id
+    # sem abrir sessao de banco.
+    db.usar_tenant(sessao["tenant_id"])
+    request.state.sessao = sessao
     return await call_next(request)
 
 

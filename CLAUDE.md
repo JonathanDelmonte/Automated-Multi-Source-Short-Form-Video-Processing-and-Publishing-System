@@ -568,6 +568,34 @@ tabela desde a Fase 0.5, faltava quem autenticasse.
   nao manda cabecalho `Authorization`. O `media_auth.py` ja sabe assinar o token
   de capacidade para isso, e ligar e o bloco 4.3.
 
+### O tenant vem da sessao (`db._tenant_atual`, Fase 4 bloco 4.2)
+
+`db.tenant()` sem argumento deixou de significar "o tenant fixo" e passou a
+significar **o tenant da requisicao em curso**. Os 22 sitios de chamada em
+`app.py`, `publish_queue.py` e `job_registry.py` nao mudaram uma linha -- que e
+o que o docstring de `db.tenant()` previa desde a Fase 0.5.
+
+- **E `ContextVar` e nao parametro, e a escolha foi contada.** Enfiar um
+  `tenant_id` em 22 chamadas seria 22 lugares para acertar e, pior, 22 onde
+  esquecer **nao da erro**: a chamada esquecida continua respondendo e passa a
+  ler o tenant errado em silencio. Com o contexto, o sitio esquecido fica certo
+  por omissao.
+- **A isolacao inteira depende de um detalhe do Starlette**: um `ContextVar`
+  posto no middleware tem de valer dentro do endpoint. Se uma versao futura
+  rodar `call_next` numa tarefa que nao herda o contexto, o default vira o
+  tenant errado -- sem erro e sem log.
+  `test_o_contexto_atravessa_o_middleware` e o alarme. Nao apagar.
+- **O worker da fila NAO herda o contexto**: ele roda depois da resposta. O
+  tenant viaja dentro do proprio job (`jobs[id]['tenant_id']`), e o
+  `run_job_wrapper` o repoe antes de qualquer coisa. Sem isso, todo job
+  gravaria `sources`/`jobs`/`clips` no self-host.
+- **Tres lugares guardam o tenant de um job**, e cada um cobre um buraco do
+  outro: o dict em memoria (some no restart), o manifesto de resume (some
+  quando o job termina) e o arquivo `.tenant` na pasta (fica). E o mesmo papel
+  do `.owner` que o upstream ja escrevia.
+- Um job ou manifesto anterior a este bloco cai no self-host: era o unico
+  tenant que existia quando foi escrito, e chutar outro seria inventar dono.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

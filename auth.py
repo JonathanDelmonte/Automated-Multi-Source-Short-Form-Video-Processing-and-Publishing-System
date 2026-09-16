@@ -132,6 +132,55 @@ def _caminho_do_segredo() -> str:
     return os.path.join(base, ARQUIVO_SEGREDO)
 
 
+#: Tamanho do segredo sorteado. Os arquivos antigos tem exatamente estes bytes
+#: crus; os novos tem o base64 deles, que ocupa 43 caracteres.
+TAMANHO_DO_SEGREDO = 32
+
+
+def _decodificar_segredo(bruto: bytes) -> bytes:
+    """O que esta no arquivo, virando os bytes que assinam.
+
+    **O arquivo e base64, e nao os bytes crus, e a razao e um defeito medido.**
+    A versao anterior gravava `secrets.token_bytes(32)` cru e lia com
+    `.read().strip()`. Mas `bytes.strip()` corta espaco em branco ASCII
+    (` \t\n\r\x0b\x0c`), e 6 dos 256 valores possiveis sao exatamente esses:
+    **4,7% dos segredos sorteados comecam ou terminam com um deles** (medido em
+    200 mil sorteios; o teorico e 1 - (250/256)^2 = 4,63%). Nesses casos o
+    processo que sorteou assina com 32 bytes e o processo seguinte le 31 -- o
+    "segredo novo a cada restart" que esta funcao existe para impedir, so que
+    em vez de sempre, uma instalacao em 21, e sem erro nenhum no log. Num
+    deploy rolante e pior: as duas instancias dividem o volume e discordam da
+    chave, entao o token emitido por uma e recusado pela outra.
+
+    Base64 nao tem espaco em branco no alfabeto, entao o `.strip()` volta a ser
+    o que se queria dele -- tirar o `\n` final de um arquivo de texto -- sem
+    tocar no conteudo.
+
+    Os dois formatos antigos continuam valendo, e a diferenca entre eles e
+    justamente o `strip`:
+
+    - **Bytes crus sorteados** (o que a versao anterior gravava) nao sao ASCII
+      -- 32 bytes aleatorios cabendo todos abaixo de 128 tem chance 2^-32 --,
+      entao caem no `UnicodeDecodeError` e voltam **inteiros**, que e o conserto.
+    - **Texto escrito a mao** (`echo meu-segredo > .session_secret`) e ASCII,
+      entao continua sendo lido sem o `\n` final, exatamente como antes. Trocar
+      o formato nao pode deslogar quem ja estava dentro.
+    """
+    try:
+        texto = bruto.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return bruto
+    if not texto:
+        return bruto
+    try:
+        decodificado = _b64d(texto)
+    except (ValueError, TypeError):
+        return texto.encode("ascii")
+    if len(decodificado) == TAMANHO_DO_SEGREDO:
+        return decodificado
+    return texto.encode("ascii")
+
+
 def segredo_de_sessao() -> bytes:
     """A chave que assina os tokens.
 
@@ -152,20 +201,21 @@ def segredo_de_sessao() -> bytes:
     caminho = _caminho_do_segredo()
     try:
         with open(caminho, "rb") as fh:
-            guardado = fh.read().strip()
+            bruto = fh.read()
+        guardado = _decodificar_segredo(bruto)
         if guardado:
             _segredo_em_memoria = guardado
             return guardado
     except OSError:
         pass
-    novo = secrets.token_bytes(32)
+    novo = secrets.token_bytes(TAMANHO_DO_SEGREDO)
     try:
         os.makedirs(os.path.dirname(caminho) or ".", exist_ok=True)
         # 0600 desde a criacao: gravar e so depois arrumar a permissao deixa uma
         # janela em que o segredo esta legivel para todo mundo no container.
         fd = os.open(caminho, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as fh:
-            fh.write(novo)
+            fh.write(_b64e(novo).encode("ascii") + b"\n")
     except OSError as e:
         # Sem disco gravavel o token ainda funciona nesta instancia; o preco e
         # que um restart desloga. Melhor que recusar login.

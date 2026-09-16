@@ -749,6 +749,28 @@ pertencendo a alguém em quem ninguém consegue entrar.
 qualquer um de volta seria um serviço pago ou um projeto no Google Cloud para o autor
 entrar na própria ferramenta, na própria máquina. `hashlib.scrypt` da stdlib.
 
+**Um defeito real saiu daqui, e quem o achou foi o CI.** O run 43 falhou em
+`test_o_segredo_sobrevive_ao_restart` e passou nos dois runs seguintes — o formato
+clássico de um teste instável que se ignora. Não era instabilidade do teste, era
+instabilidade do código, e o teste só a expunha quando o sorteio colaborava: o segredo
+de sessão era gravado como 32 bytes crus e lido com `.read().strip()`, e `bytes.strip()`
+corta espaço em branco ASCII. Seis dos 256 valores possíveis são exatamente esses, então
+**4,7% dos segredos sorteados** (medido em 200 mil sorteios; o teórico é
+1 − (250/256)² = 4,63%) começam ou terminam com um deles — e nesses casos quem sorteou
+assina com 32 bytes e quem reinicia lê 31.
+
+O efeito é precisamente o que `segredo_de_sessao()` existe para impedir, escrito no
+docstring dela: "um segredo novo a cada restart desconectaria todo mundo a cada deploy".
+Só que uma instalação em 21, e sem uma linha de log. Num deploy rolante é pior, porque
+as duas instâncias dividem o volume e discordam da chave: o token emitido por uma é
+recusado pela outra enquanto as duas servem tráfego.
+
+Corrigido gravando **base64** — cujo alfabeto não tem espaço em branco, então o `strip`
+volta a fazer só o que se queria dele, tirar o `\n` final. Arquivo antigo de bytes crus
+continua valendo inteiro; texto escrito à mão continua perdendo o `\n`. O teste
+probabilístico virou determinístico: os seis bytes de espaço, nas duas pontas, com o
+sorteio fixado — 14 casos que falham no código antigo e passam no novo.
+
 ### O aviso de LAN, que esta fase existia para poder retirar
 
 Até a Fase 4 valia sem ressalva: **não expor à internet pública.** Não havia

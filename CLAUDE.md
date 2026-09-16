@@ -620,6 +620,16 @@ primeira". O 4.2 cuidou dos dados; aqui e o que mais aparece na tela.
   "ignore")`.** Os 32 bytes sao aleatorios e o `ignore` DESCARTA os que nao
   formam UTF-8: medido, sobram 13 a 21 caracteres. A chave encolhe e envieza
   sem quebrar nada -- so protege menos do que parece.
+- **O arquivo do segredo e base64, e o `.strip()` da leitura depende disso.**
+  A primeira versao gravava `secrets.token_bytes(32)` cru e lia com
+  `.read().strip()` -- mas `bytes.strip()` come espaco em branco ASCII, e 6 dos
+  256 valores sao exatamente esses: **4,7% dos segredos** (medido em 200 mil
+  sorteios) comecam ou terminam com um deles, e ai quem sorteou assina com 32
+  bytes e quem reinicia le 31. E o "segredo novo a cada restart" que a funcao
+  existe para impedir, so que uma instalacao em 21 e sem uma linha de log; num
+  deploy rolante, as duas instancias dividem o volume e discordam da chave.
+  O CI pegou uma vez (run 43). Arquivo antigo de bytes crus continua valendo
+  **inteiro**, sem `strip`; texto escrito a mao continua perdendo o `\n` final.
 - **`/thumbnails/` continua aberto**, e e limitacao conhecida: as sessoes de
   thumbnail nao tem carimbo de tenant, e o upstream as serve publicamente de
   proposito. Fecha-las exige carimba-las primeiro.

@@ -160,6 +160,66 @@ class TestToken:
         auth.esquecer_segredo()          # como se o processo tivesse reiniciado
         assert auth.ler_token(t) is not None
 
+    @pytest.mark.parametrize("branco", list(b" \t\n\r\x0b\x0c"))
+    @pytest.mark.parametrize("ponta", ["inicio", "fim"])
+    def test_o_segredo_sobrevive_a_um_byte_de_espaco_nas_pontas(
+            self, ambiente, monkeypatch, branco, ponta):
+        """A versao deterministica do teste acima, e a razao de ele existir.
+
+        O teste anterior so pega este defeito quando o sorteio colabora: a
+        versao antiga gravava os 32 bytes crus e os lia com `.read().strip()`,
+        e `bytes.strip()` come espaco em branco ASCII -- 6 dos 256 valores.
+        **4,7% dos segredos** (medido em 200 mil sorteios; teorico
+        1 - (250/256)^2) comecam ou terminam com um deles, e ai quem sorteou
+        assina com 32 bytes e quem reinicia le 31. O CI pegou uma vez, no run
+        43; deixar assim seria esperar o proximo 1-em-21.
+
+        Aqui o sorteio nao decide: cada byte de espaco e testado nas duas
+        pontas."""
+        sorteado = (bytes([branco]) + b"x" * 31 if ponta == "inicio"
+                    else b"x" * 31 + bytes([branco]))
+        monkeypatch.setattr(auth.secrets, "token_bytes", lambda n: sorteado)
+        auth.esquecer_segredo()
+        t = auth.gerar_token("u1", "t1")
+        assert auth.segredo_de_sessao() == sorteado
+        auth.esquecer_segredo()          # como se o processo tivesse reiniciado
+        assert auth.segredo_de_sessao() == sorteado
+        assert auth.ler_token(t) is not None
+
+    def test_o_arquivo_do_segredo_e_texto_e_nao_bytes_crus(self, ambiente):
+        """E o que torna o `.strip()` da leitura seguro: o alfabeto do base64
+        nao tem espaco em branco, entao so o `\n` final sai."""
+        segredo = auth.segredo_de_sessao()
+        caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)
+        with open(caminho, "rb") as fh:
+            bruto = fh.read()
+        bruto.decode("ascii")            # levanta se tiver byte cru
+        assert auth._b64d(bruto.decode("ascii").strip()) == segredo
+
+    def test_segredo_legado_gravado_cru_continua_valendo_inteiro(self, ambiente):
+        """Trocar o formato nao pode deslogar quem ja estava dentro.
+
+        Um arquivo da versao anterior tem 32 bytes sorteados; nao sendo ASCII
+        (a chance de 32 bytes caberem todos abaixo de 128 e 2^-32), volta cru
+        e **sem** `strip` -- inclusive o `\t` da ponta, que era o defeito."""
+        legado = bytes([200]) + b"y" * 30 + b"\t"
+        caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho, "wb") as fh:
+            fh.write(legado)
+        auth.esquecer_segredo()
+        assert auth.segredo_de_sessao() == legado
+
+    def test_segredo_escrito_a_mao_ignora_a_quebra_de_linha(self, ambiente):
+        """`echo meu-segredo > .session_secret` e texto, e continua lido como
+        antes -- sem o `\n`. So os bytes crus deixaram de ser aparados."""
+        caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho, "wb") as fh:
+            fh.write(b"um-segredo-escrito-a-mao\n")
+        auth.esquecer_segredo()
+        assert auth.segredo_de_sessao() == b"um-segredo-escrito-a-mao"
+
     def test_o_arquivo_do_segredo_e_0600(self, ambiente):
         auth.segredo_de_sessao()
         caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)

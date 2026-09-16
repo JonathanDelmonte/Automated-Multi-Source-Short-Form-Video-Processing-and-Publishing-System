@@ -794,6 +794,42 @@ Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a t
 valiosa do projeto". É ela que permite trocar a rubrica do LLM por retenção medida, e
 fechar o ADR-006 com dado. A instrumentação da Fase 0.5 é o que alimenta isso.
 
+**Resultado — a maquinaria está pronta (16-set-2026); a calibração, por definição,
+não.** Esta fase é contínua: ela não "fica pronta", ela passa a rodar. O que foi
+construído são as três peças que faltavam entre ter dados e ter conclusão.
+
+| Bloco | O que entrou |
+|---|---|
+| 5.1 | `metrics_collector.py`: views e retenção entram na tabela que estava vazia |
+| 5.2 | `calibracao.py`: cruza `clips.score` com o resultado medido |
+| 5.3 | `timings_report.py`: onde vai o tempo de processamento |
+
+**O achado do 5.1 mudou um desenho.** Coletar métrica exige escopo OAuth que o
+bloco 3.4 **deliberadamente** não pediu — `videos.list` de um vídeo privado precisa de
+`youtube.readonly`, retenção precisa da API de Analytics. A saída não foi ampliar o
+token de publicação (que existe com escopo mínimo por um motivo escrito): foi um
+segundo consentimento, só de leitura, guardado separado. Duas credenciais pequenas em
+vez de uma grande. Há teste garantindo que o escopo de upload continua mínimo —
+*"a Fase 5 precisou"* é exatamente o tipo de motivo que desfaz uma decisão boa sem
+ninguém notar.
+
+**O 5.2 tem uma recusa embutida, e ela é o ponto.** Abaixo de dez cortes medidos o
+relatório **não publica coeficiente**. Um rho de 0,9 com n=5 acontece por acaso com
+frequência alta, e uma vez escrito num relatório ele vira a razão de alguém mexer nos
+pesos. É o mesmo movimento que o ADR-006 recusou (não virar um número não sabido em
+constante), que o pré-filtro recusou (cortar por orçamento e não por qualidade) e que
+o `layout_picker` recusou (decisão entre opções fechadas, não medida contínua). Os
+dados crus saem de qualquer jeito: olhar é honesto, afirmar não é.
+
+**O 5.3 foi feito antes do 5.2**, e por um motivo: é o único bloco desta fase com dado
+**hoje**. O 5.2 precisa de publicações medidas, que ainda não existem; o 5.3 lê os
+`timings_json` que as execuções já deixaram. Ele é o que transforma *"está demorando
+muito"* em número — e mede sem consertar, por escolha.
+
+**O que falta, e não depende de código:** publicar. A calibração começa a existir
+depois de algumas dezenas de cortes publicados e medidos. Até lá o relatório responde
+honestamente que a amostra não dá, que é a resposta certa.
+
 ---
 
 ## Cronograma

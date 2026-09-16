@@ -809,6 +809,64 @@ agendador nunca o ultrapassa.
 
 ---
 
+## Passo 11 — Descobrir por que está devagar
+
+Na aba **Publicação**, o cartão **onde vai o tempo**. Ele lê as medições que as suas
+execuções já deixaram — não precisa rodar nada de novo.
+
+O número grande é o **fator**: quantos minutos de processamento cada minuto de vídeo
+custou. Um vídeo de 10 minutos que leva 40 dá `4,0×`. É o único número que dá para
+comparar entre execuções, porque não depende de quão longo era o vídeo.
+
+Abaixo dele, uma barra por estágio, **na ordem em que acontecem** — ler nessa ordem é
+o que deixa ver onde ele engasga.
+
+As observações apontam para coisas que dá para conferir, não para palpites. A mais
+provável, se a transcrição dominar:
+
+> **Sem GPU, a transcrição roda em CPU e ninguém avisa.** `WHISPER_DEVICE=cuda` cai
+> para CPU **em silêncio** quando o container não enxerga a placa. E são dois passos
+> separados: `--build-arg GPU=1` instala as libs na imagem, e o
+> `docker-compose.gpu.yml` é que reserva o dispositivo:
+>
+> ```bat
+> docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+> ```
+
+Se o tempo estiver **fora de estágio nenhum**, o relatório diz isso também — aí é fila,
+subida do subprocesso, ou um pedaço que ninguém instrumentou, e não o pipeline.
+
+---
+
+## Passo 12 — Métricas (só depois de publicar)
+
+A tabela `metrics` é o que permite, daqui a alguns meses, trocar "o LLM achou este
+corte bom" por "este corte reteve 62%". Ela só enche se você emitir a credencial de
+**leitura**, uma vez:
+
+```bat
+cd /d C:\cortes
+python youtube_oauth.py --leitura
+```
+
+**O token de publicação não serve, e não serve de propósito.** Ele tem escopo só de
+upload — se vazar, a diferença para o escopo completo é a diferença entre um vídeo
+indesejado e um canal vazio. A credencial de leitura é outra, só com escopos
+`readonly`, guardada em outro arquivo: a que publica não lê, a que lê não publica, e
+nenhuma das duas apaga.
+
+Depois disso o servidor mede sozinho a cada 6 horas. Para conferir na hora:
+
+```bat
+curl -X POST http://localhost:8000/api/metricas/coletar -H "Authorization: Bearer SEU_TOKEN"
+```
+
+E `GET /api/calibracao` mostra o cruzamento entre o que o modelo previu e o que deu.
+**Ele vai dizer que a amostra é pequena, e isso é a resposta certa** — com menos de
+dez cortes medidos, qualquer correlação é ruído com um número em cima.
+
+---
+
 ## Armadilhas, todas vindas do código (ou do Windows)
 
 | Sintoma | Causa | Solução |

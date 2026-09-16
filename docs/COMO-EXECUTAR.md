@@ -522,12 +522,19 @@ No Windows basta o driver NVIDIA normal (ele traz suporte a WSL 2 desde 2021).
 **Confirme que a placa chegou**, porque a falha aqui é silenciosa:
 
 ```bat
-docker compose exec backend python -c "import torch; print(torch.cuda.is_available())"
+docker compose exec backend python diagnostico.py
 ```
 
-`True` é GPU de verdade. `False` significa que ela não chegou ao container — e
-aí o `WHISPER_DEVICE=cuda` cai para CPU sozinho, sem erro nenhum. Funciona, só
-que lento, que é o pior modo de falhar.
+A linha `placa p/ o whisper` responde. `sim` é GPU de verdade; `nao` significa
+que ela não chegou ao container — e aí o `WHISPER_DEVICE=cuda` cai para CPU
+sozinho, sem erro nenhum. Funciona, só que lento, que é o pior modo de falhar.
+
+**A pergunta é feita ao `ctranslate2`, e não ao `torch`** — é o ctranslate2 que
+o faster-whisper usa de fato. Não é preciosismo: os dois são bibliotecas
+diferentes com exigências diferentes de CUDA/cuDNN, e o caso em que o torch
+enxerga a placa e o ctranslate2 não é conhecido. `torch.cuda.is_available()`
+respondendo `True` com a transcrição rodando em CPU é exatamente a falha
+silenciosa disfarçada de conferência feita.
 
 **Subiu quando o `-d` devolver o terminal e os três aparecerem de pé:**
 
@@ -651,13 +658,27 @@ do log do job, na janela do Prompt de Comando:
 
 ```
 📊 Custo deste job:
-   01_ingest               0.8s
-   03_transcribe         142.3s
-   04_detect              18.1s    6 chamada(s)    31200 tokens  [groq]
-   05_06_render          201.4s
-   TOTAL                 362.6s    6 chamada(s)    31200 tokens
+   01_ingest                 0.8s
+   02_probe                  6.2s
+   03_transcribe          1310.0s
+   04_detect                18.1s  1 chamada(s)  31200 tokens  [groq]
+   05_06_render            960.0s (ocupado 2700s em 9x)
+   └ 05_corte               50.0s
+   └ 06_legenda             77.0s
+   └ 06_reenquadra         173.0s
+   TOTAL                  2295.1s  1 chamada(s)  31200 tokens
    12.4 min de fala → 2516 tokens/min falado
 ```
+
+As linhas com `└` são os passes **dentro** do render, e não somam com ele: a
+cadeia de um corte é corte → reenquadramento → [marca d'água] → [gancho] →
+legenda, e cada seta é um encode inteiro do clipe.
+
+O `(ocupado ... em 9x)` aparece quando um estágio rodou em paralelo: o primeiro
+número é o tempo que **você esperou**, o segundo é o trabalho gasto somando os
+`CLIP_WORKERS`. Até 16-set-2026 só existia o segundo, apresentado como se fosse
+o primeiro — o render vinha multiplicado por 3 e o relatório acusava a
+transcrição no lugar dele.
 
 Também em `output\<job-id>\<nome>.timings.json`, e no `/api/status/<job-id>`,
 campo `timings`.
@@ -667,6 +688,31 @@ calcular, por medição e não por estimativa, quanto custaria uma live de 4 h �
 é o insumo para calibrar o pré-filtro heurístico na Fase 1. O ADR-004 estimou
 ~75.000 tokens para uma live de 4 h; este número diz se a estimativa estava
 certa.
+
+### Se estiver lento
+
+```bat
+docker compose exec backend python diagnostico.py
+```
+
+Ele junta a medição com o ambiente e conclui só quando tem as duas metades. "A
+transcrição é 70% do tempo" não é defeito nenhum num vídeo muito falado; "o
+whisper está em CPU" é apenas verdade numa máquina sem placa. Juntas, viram o
+próximo passo.
+
+Dois padrões vêm de fábrica e nenhum dos dois reclama:
+
+| Variável | Nasce | Numa máquina com placa |
+|---|---|---|
+| `WHISPER_DEVICE` | `cpu` | `cuda` (+ `WHISPER_COMPUTE=float16`) |
+| `FFMPEG_ENCODER` | `x264` | `auto` (usa h264_nvenc, cai para x264 sozinho) |
+
+O segundo pesa mais do que parece: **não é um encode por corte**, são 3 a 5 do
+mesmo clipe, e os dois primeiros a `-crf 18`.
+
+Rode o diagnóstico **dentro do container** (`docker compose exec`). Fora dele as
+sondagens não alcançam a placa nem o ffmpeg da imagem, e a resposta que ele dá é
+"não deu para saber" — que ele nunca apresenta como "não".
 
 ---
 

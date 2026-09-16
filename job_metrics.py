@@ -26,25 +26,53 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from contextlib import contextmanager
 from typing import Optional
 
 _job: dict = {}
-_stack: list[str] = []
+
+#: Protege `_job` e `_abertos`. O laco de cortes do `main.py` roda em
+#: `ThreadPoolExecutor` (`CLIP_WORKERS`, 3 por padrao), entao varias threads
+#: medem o MESMO estagio ao mesmo tempo.
+_lock = threading.RLock()
+
+#: A pilha de estagios abertos, **por thread**. Era global, e num pool de
+#: cortes isso credita a chamada de LLM de um worker ao estagio de outro: quem
+#: estiver no topo da pilha compartilhada na hora ganha os tokens, e quem
+#: ganha depende do escalonador. Por thread, cada worker credita ao proprio.
+_local = threading.local()
+
+#: `(sub, nome) -> {"n": abertos agora, "t0": quando o primeiro abriu}`. E o
+#: que permite medir PAREDE alem de OCUPADO -- ver `_medir`.
+_abertos: dict = {}
+
+
+def _pilha() -> list:
+    p = getattr(_local, "pilha", None)
+    if p is None:
+        p = []
+        _local.pilha = p
+    return p
 
 
 def reset(output_dir: str = ".", base_name: str = "job") -> None:
     """Zera o coletor para um job novo."""
-    global _job, _stack
-    _job = {
-        "base_name": base_name,
-        "output_dir": output_dir,
-        "started_at": time.time(),
-        "stages": {},     # nome -> {seconds, calls, tokens_in, tokens_out, providers}
-        "facts": {},      # duracao da fonte, duracao falada, n de cortes...
-    }
-    _stack = []
+    global _job
+    with _lock:
+        _job = {
+            "base_name": base_name,
+            "output_dir": output_dir,
+            "started_at": time.time(),
+            # nome -> {seconds, wall_seconds, entries, calls, tokens_in,
+            #          tokens_out, providers}
+            "stages": {},
+            "substages": {},  # medidos DENTRO de um estagio; nao somam com ele
+            "facts": {},      # duracao da fonte, duracao falada, n de cortes...
+        }
+        _abertos.clear()
+    _pilha().clear()
 
 
 def set_destination(output_dir: str, base_name: str) -> None:
@@ -58,10 +86,23 @@ def set_destination(output_dir: str, base_name: str) -> None:
         _job["base_name"] = base_name or "job"
 
 
-def _slot(name: str) -> dict:
-    return _job.setdefault("stages", {}).setdefault(
-        name, {"seconds": 0.0, "calls": 0, "tokens_in": 0, "tokens_out": 0,
-               "providers": {}})
+def _slot(name: str, sub: bool = False) -> dict:
+    onde = "substages" if sub else "stages"
+    return _job.setdefault(onde, {}).setdefault(
+        name, {"seconds": 0.0, "wall_seconds": 0.0, "entries": 0, "calls": 0,
+               "tokens_in": 0, "tokens_out": 0, "providers": {}})
+
+
+def _aberto_agora() -> tuple:
+    """`(nome, sub)` do passe aberto nesta thread, ou o balde de fora.
+
+    Devolve o par e nao so o nome porque `add_llm` precisa saber em QUAL
+    dicionario creditar: o `hook_grounding` chama o Gemini de dentro de um
+    substage, e procurar o nome nos dois dicionarios erra enquanto o slot ainda
+    nao existe -- os tokens iam para `stages` e nunca saiam de la.
+    """
+    p = _pilha()
+    return p[-1] if p else ("sem_estagio", False)
 
 
 #: Prefixo do marcador que o `app.py` le no stdout para saber em que estagio o
@@ -76,33 +117,97 @@ STAGE_MARKER = "__STAGE__"
 
 
 @contextmanager
+def _medir(name: str, sub: bool, marcar: bool):
+    """O motor de `stage` e `substage`. Mede DUAS grandezas, e sao diferentes.
+
+    **`seconds` e OCUPADO; `wall_seconds` e PAREDE.** Num estagio sequencial as
+    duas coincidem. No laco de cortes nao: com `CLIP_WORKERS=3`, tres workers
+    medem `05_06_render` ao mesmo tempo, e somar a duracao de cada um da o
+    trabalho gasto (util: sao CPU-segundos), **nao** o tempo que a pessoa
+    esperou. A versao anterior so somava, entao um render de 200 s de parede
+    reportava 600 s -- fatia de 1,0 sobre a parede do job, `fora_de_estagio`
+    negativo (silenciado por um `max(0, ...)`) e, porque o relatorio escolhe o
+    primeiro estagio acima de 50%, a transcricao acusada no lugar do render.
+    Um instrumento que aponta o culpado errado e pior que nenhum.
+
+    A parede e a **uniao dos intervalos**, calculada na entrada: `n` conta
+    quantos estao abertos com este nome, `t0` guarda quando o primeiro abriu, e
+    so quando o ultimo fecha e que o trecho inteiro entra. Sobreposicao conta
+    uma vez; um estagio que abre e fecha varias vezes soma cada trecho.
+
+    `marcar` separa as duas funcoes que a versao anterior misturava: o marcador
+    no stdout e a BARRA DE PROGRESSO do painel, que so conhece os cinco nomes
+    de `app.PIPELINE_STAGES` -- um nome fora dessa lista vira `stage_index` 0,
+    ou seja, a barra volta para o comeco. Medicao fina nao pode custar isso,
+    entao `substage` mede sem anunciar.
+    """
+    if not _job:
+        reset()
+    _pilha().append((name, sub))
+    with _lock:
+        # O slot nasce na ENTRADA e nao na saida: `add_llm` credita ao passe
+        # aberto, e um passe aberto tem de existir para ser creditado.
+        _slot(name, sub)
+    if marcar:
+        # O `flush` e obrigatorio: o stdout do subprocesso e um pipe, logo
+        # bufferizado em blocos, e sem ele o marcador chegaria minutos depois
+        # -- tarde demais para servir de progresso.
+        print(f"{STAGE_MARKER}BEGIN {name}", flush=True)
+    t0 = time.time()
+    with _lock:
+        a = _abertos.setdefault((sub, name), {"n": 0, "t0": t0})
+        if a["n"] == 0:
+            a["t0"] = t0
+        a["n"] += 1
+    try:
+        yield
+    finally:
+        t1 = time.time()
+        with _lock:
+            s = _slot(name, sub)
+            s["seconds"] += t1 - t0
+            s["entries"] += 1
+            a = _abertos.get((sub, name))
+            if a is not None:
+                a["n"] -= 1
+                if a["n"] <= 0:
+                    a["n"] = 0
+                    s["wall_seconds"] += t1 - a["t0"]
+        p = _pilha()
+        if p and p[-1] == (name, sub):
+            p.pop()
+        if marcar:
+            print(f"{STAGE_MARKER}END {name}", flush=True)
+
+
 def stage(name: str):
-    """Mede o tempo de parede de um estagio e o empilha para atribuicao de tokens.
+    """Um estagio do pipeline: mede e move a barra de progresso.
 
     Reentrante e acumulativo: chamar o mesmo nome de novo soma ao total, que e o
     que se quer no laco de cortes (`05_06_render` roda uma vez por corte).
 
-    Anuncia entrada e saida no stdout (`STAGE_MARKER`) para o `app.py` saber
-    onde o job esta. O `flush` e obrigatorio: o stdout do subprocesso e um pipe,
-    logo bufferizado em blocos, e sem ele o marcador chegaria minutos depois --
-    tarde demais para servir de progresso.
+    O nome precisa estar em `app.PIPELINE_STAGES`, ou a barra volta ao inicio.
+    Para medir por dentro de um estagio, use `substage`.
     """
-    if not _job:
-        reset()
-    _stack.append(name)
-    print(f"{STAGE_MARKER}BEGIN {name}", flush=True)
-    t0 = time.time()
-    try:
-        yield
-    finally:
-        _slot(name)["seconds"] += time.time() - t0
-        if _stack and _stack[-1] == name:
-            _stack.pop()
-        print(f"{STAGE_MARKER}END {name}", flush=True)
+    return _medir(name, sub=False, marcar=True)
+
+
+def substage(name: str):
+    """Um pedaco DENTRO de um estagio: mede sem mexer na barra.
+
+    Existe para o laco de cortes, onde a barra tem de continuar dizendo
+    "cortando e renderizando" enquanto a medicao separa o corte, o
+    reenquadramento, o gancho e a legenda -- cada um um encode inteiro.
+
+    Nao soma com os estagios: `snapshot` os devolve em `substages`, e somar as
+    duas listas contaria o mesmo tempo duas vezes.
+    """
+    return _medir(name, sub=True, marcar=False)
 
 
 def current_stage() -> Optional[str]:
-    return _stack[-1] if _stack else None
+    p = _pilha()
+    return p[-1][0] if p else None
 
 
 def add_llm(cost: Optional[dict]) -> None:
@@ -113,19 +218,24 @@ def add_llm(cost: Optional[dict]) -> None:
     """
     if not _job or not cost:
         return
-    s = _slot(current_stage() or "sem_estagio")
-    s["calls"] += 1
-    s["tokens_in"] += int(cost.get("input_tokens") or 0)
-    s["tokens_out"] += int(cost.get("output_tokens") or 0)
+    entrada = int(cost.get("input_tokens") or 0)
+    saida = int(cost.get("output_tokens") or 0)
     prov = str(cost.get("provider") or cost.get("model") or "desconhecido")
-    p = s["providers"].setdefault(prov, {"calls": 0, "tokens": 0})
-    p["calls"] += 1
-    p["tokens"] += int(cost.get("input_tokens") or 0) + int(cost.get("output_tokens") or 0)
+    nome, sub = _aberto_agora()
+    with _lock:
+        s = _slot(nome, sub)
+        s["calls"] += 1
+        s["tokens_in"] += entrada
+        s["tokens_out"] += saida
+        p = s["providers"].setdefault(prov, {"calls": 0, "tokens": 0})
+        p["calls"] += 1
+        p["tokens"] += entrada + saida
 
 
 def fact(key: str, value) -> None:
-    if _job:
-        _job.setdefault("facts", {})[key] = value
+    with _lock:
+        if _job:
+            _job.setdefault("facts", {})[key] = value
 
 
 def spoken_seconds_from(transcript: Optional[dict]) -> float:
@@ -147,27 +257,56 @@ def spoken_seconds_from(transcript: Optional[dict]) -> float:
 
 
 def totals() -> dict:
-    st = _job.get("stages", {})
+    """Os totais do job.
+
+    `seconds` soma a PAREDE dos estagios, nao o ocupado: e o numero que se
+    compara com `wall_seconds` para saber quanto do job ficou fora de estagio
+    nenhum. O ocupado sai em `busy_seconds`, que num laco paralelo e maior.
+
+    Chamadas e tokens somam estagios **e** substages -- um token gasto dentro
+    do laco de cortes (o `hook_grounding` chama o Gemini por corte) e um token
+    gasto, e omiti-lo aqui subestimaria a conta do job.
+    """
+    with _lock:
+        st = list(_job.get("stages", {}).values())
+        sub = list(_job.get("substages", {}).values())
+    todos = st + sub
     return {
-        "seconds": round(sum(s["seconds"] for s in st.values()), 1),
-        "calls": sum(s["calls"] for s in st.values()),
-        "tokens": sum(s["tokens_in"] + s["tokens_out"] for s in st.values()),
+        "seconds": round(sum(s.get("wall_seconds", s["seconds"]) for s in st), 1),
+        "busy_seconds": round(sum(s["seconds"] for s in st), 1),
+        "calls": sum(s["calls"] for s in todos),
+        "tokens": sum(s["tokens_in"] + s["tokens_out"] for s in todos),
     }
+
+
+def _vista(slots: dict) -> dict:
+    return {k: {"seconds": round(v["seconds"], 2),
+                "wall_seconds": round(v.get("wall_seconds", v["seconds"]), 2),
+                "entries": v.get("entries", 0),
+                "calls": v["calls"],
+                "tokens_in": v["tokens_in"], "tokens_out": v["tokens_out"],
+                "providers": dict(v["providers"])}
+            for k, v in slots.items()}
 
 
 def snapshot() -> dict:
-    """O dict que vai para o sidecar, e um dia para `jobs.timings_json`."""
+    """O dict que vai para o sidecar, e um dia para `jobs.timings_json`.
+
+    Cada estagio traz `seconds` (ocupado) **e** `wall_seconds` (parede). Um
+    sidecar anterior a esta mudanca so tem `seconds`, e quem le tem de cair
+    para ele -- `timings_report` faz isso, porque os primeiros jobs medidos
+    sao justamente os que ninguem tinha lido ainda.
+    """
     if not _job:
         return {}
-    out = {
-        "facts": dict(_job.get("facts", {})),
-        "stages": {k: {"seconds": round(v["seconds"], 2), "calls": v["calls"],
-                       "tokens_in": v["tokens_in"], "tokens_out": v["tokens_out"],
-                       "providers": v["providers"]}
-                   for k, v in _job.get("stages", {}).items()},
-        "totals": totals(),
-        "wall_seconds": round(time.time() - _job.get("started_at", time.time()), 1),
-    }
+    with _lock:
+        out = {
+            "facts": dict(_job.get("facts", {})),
+            "stages": _vista(_job.get("stages", {})),
+            "substages": _vista(_job.get("substages", {})),
+            "totals": totals(),
+            "wall_seconds": round(time.time() - _job.get("started_at", time.time()), 1),
+        }
     spoken = out["facts"].get("spoken_seconds")
     tokens = out["totals"]["tokens"]
     if spoken and tokens:
@@ -182,17 +321,27 @@ def summary_line() -> str:
     if not _job:
         return ""
     snap = snapshot()
-    linhas = ["📊 Custo deste job:"]
-    for nome, s in sorted(snap["stages"].items()):
-        parte = f"   {nome:<18} {s['seconds']:>8.1f}s"
+
+    def _linha(nome, s, recuo=""):
+        # A parede e o que a pessoa esperou; o ocupado so aparece quando for
+        # maior, que e o sinal de que aquele estagio rodou em paralelo.
+        parte = f"   {recuo + nome:<20} {s['wall_seconds']:>8.1f}s"
+        if s["seconds"] - s["wall_seconds"] > 0.5:
+            parte += f" (ocupado {s['seconds']:.0f}s em {s['entries']}x)"
         if s["calls"]:
             tot = s["tokens_in"] + s["tokens_out"]
             quem = ", ".join(sorted(s["providers"]))
-            parte += f"  {s['calls']:>3} chamada(s)  {tot:>7} tokens  [{quem}]"
-        linhas.append(parte)
+            parte += f"  {s['calls']} chamada(s)  {tot} tokens  [{quem}]"
+        return parte
+
+    linhas = ["📊 Custo deste job:"]
+    for nome, s in sorted(snap["stages"].items()):
+        linhas.append(_linha(nome, s))
+    for nome, s in sorted(snap.get("substages", {}).items()):
+        linhas.append(_linha(nome, s, recuo="└ "))
     t = snap["totals"]
-    linhas.append(f"   {'TOTAL':<18} {snap['wall_seconds']:>8.1f}s"
-                  f"  {t['calls']:>3} chamada(s)  {t['tokens']:>7} tokens")
+    linhas.append(f"   {'TOTAL':<20} {snap['wall_seconds']:>8.1f}s"
+                  f"  {t['calls']} chamada(s)  {t['tokens']} tokens")
     if t.get("tokens_per_spoken_minute"):
         fala = snap["facts"].get("spoken_seconds", 0) / 60.0
         linhas.append(f"   {fala:.1f} min de fala → "

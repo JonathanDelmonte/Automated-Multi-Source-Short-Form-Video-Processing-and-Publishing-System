@@ -40,6 +40,18 @@ FATIA_DOMINANTE = 0.5
 ORDEM_DOS_ESTAGIOS = ("01_ingest", "02_probe", "03_transcribe", "04_detect",
                       "05_06_render")
 
+#: Os passes medidos DENTRO de `05_06_render`, na ordem em que um corte os
+#: atravessa. Cada um e um encode inteiro do clipe (menos o hook grounding, que
+#: e uma chamada de LLM), e ate 16-set-2026 todos eram invisiveis.
+ORDEM_DOS_SUBESTAGIOS = ("05_corte", "06_reenquadra", "06_marca_dagua",
+                         "06_hook_grounding", "06_gancho", "06_legenda")
+
+#: Acima desta razao entre a soma dos estagios e a parede do job, a medida nao
+#: fecha. O caso real e o dado anterior a 16-set-2026: o laco de cortes somava
+#: a duracao de cada worker no mesmo estagio, entao com `CLIP_WORKERS=3` o
+#: render vinha ate 3x. A folga de 2% e arredondamento.
+TOLERANCIA_DE_SOMA = 1.02
+
 
 def _numero(valor, padrao=0.0) -> float:
     try:
@@ -47,6 +59,20 @@ def _numero(valor, padrao=0.0) -> float:
     except (TypeError, ValueError):
         return padrao
     return n if n == n and n not in (float("inf"), float("-inf")) else padrao
+
+
+def _parede_do_estagio(slot: dict) -> float:
+    """Quanto tempo o job passou NESTE estagio -- parede, nao ocupado.
+
+    `wall_seconds` so existe a partir de 16-set-2026. Antes havia so `seconds`,
+    que no laco paralelo de cortes e a SOMA dos workers: um render de 200 s com
+    `CLIP_WORKERS=3` gravou 600 s. Cair para `seconds` e o certo mesmo assim --
+    e o unico numero que aquele job tem, e nos estagios sequenciais (que sao
+    quatro dos cinco) as duas grandezas coincidem. Quem avisa que o numero do
+    render nao fecha e `medida_inflada`.
+    """
+    parede = _numero(slot.get("wall_seconds"), padrao=-1.0)
+    return parede if parede >= 0 else _numero(slot.get("seconds"))
 
 
 def resumo_de_um(timings: Optional[dict]) -> Optional[dict]:
@@ -66,10 +92,16 @@ def resumo_de_um(timings: Optional[dict]) -> Optional[dict]:
     if not parede:
         # Sem tempo de parede ainda da para somar os estagios -- e o que um job
         # interrompido deixa.
-        parede = sum(_numero((v or {}).get("seconds"))
+        parede = sum(_parede_do_estagio(v)
                      for v in estagios.values() if isinstance(v, dict))
     fonte = _numero(fatos.get("source_seconds"))
     falada = _numero(fatos.get("spoken_seconds"))
+    por_estagio = {nome: _parede_do_estagio(v)
+                   for nome, v in estagios.items() if isinstance(v, dict)}
+    subestagios = timings.get("substages") or {}
+    if not isinstance(subestagios, dict):
+        subestagios = {}
+    soma = sum(por_estagio.values())
     return {
         "wall_seconds": round(parede, 1),
         "source_seconds": round(fonte, 1),
@@ -79,8 +111,13 @@ def resumo_de_um(timings: Optional[dict]) -> Optional[dict]:
         # Zero e "nao medido" aqui: sem a duracao da fonte nao da para dizer se
         # 40 minutos foi rapido ou lento, e inventar 1,0x seria pior que nada.
         "fator_tempo_real": round(parede / fonte, 2) if fonte > 0 else None,
-        "estagios": {nome: round(_numero((v or {}).get("seconds")), 1)
-                     for nome, v in estagios.items() if isinstance(v, dict)},
+        "estagios": {n: round(s, 1) for n, s in por_estagio.items()},
+        "substages": {nome: round(_parede_do_estagio(v), 1)
+                      for nome, v in subestagios.items() if isinstance(v, dict)},
+        # A soma dos estagios nao cabe na parede do job: medida de antes do
+        # conserto de 16-set-2026. Vale registrar, nao esconder -- e a unica
+        # forma de quem le saber que a ordem de culpa daquele job nao serve.
+        "medida_inflada": bool(parede > 0 and soma > parede * TOLERANCIA_DE_SOMA),
     }
 
 
@@ -90,6 +127,7 @@ def agregar(varios: Iterable[Optional[dict]]) -> dict:
     if not resumos:
         return {"jobs": 0, "estagios": [], "fator_tempo_real": None,
                 "wall_seconds": 0.0, "source_seconds": 0.0,
+                "substages": [], "jobs_com_medida_inflada": 0,
                 "tokens_por_minuto_falado": None, "observacoes": []}
 
     parede = sum(r["wall_seconds"] for r in resumos)
@@ -111,9 +149,33 @@ def agregar(varios: Iterable[Optional[dict]]) -> dict:
                  "fatia": round(seg / parede, 3) if parede > 0 else None}
                 for nome, seg in sorted(por_estagio.items(), key=lambda kv: _ordem(kv[0]))]
 
+    por_sub: dict = {}
+    for r in resumos:
+        for nome, seg in (r.get("substages") or {}).items():
+            por_sub[nome] = por_sub.get(nome, 0.0) + seg
+
+    def _ordem_sub(nome: str):
+        return (ORDEM_DOS_SUBESTAGIOS.index(nome)
+                if nome in ORDEM_DOS_SUBESTAGIOS else len(ORDEM_DOS_SUBESTAGIOS))
+
+    # A fatia do substage e sobre a parede do JOB, e nao sobre a do render: a
+    # pergunta que se faz olhando esta lista e "quanto do job foi queimar
+    # legenda?", que so tem resposta na mesma escala das outras linhas.
+    substages = [{"estagio": nome,
+                  "seconds": round(seg, 1),
+                  "fatia": round(seg / parede, 3) if parede > 0 else None}
+                 for nome, seg in sorted(por_sub.items(), key=lambda kv: _ordem_sub(kv[0]))]
+
+    inflados = sum(1 for r in resumos if r.get("medida_inflada"))
     em_estagios = sum(por_estagio.values())
     agregado = {
         "jobs": len(resumos),
+        "substages": substages,
+        # Quantos jobs desta amostra foram medidos com o laco de cortes somando
+        # os workers. Neles a fatia do render vem multiplicada e a ordem de
+        # culpa nao vale -- e a observacao diz isso em vez de o `max(0, ...)`
+        # abaixo esconder a conta que nao fecha.
+        "jobs_com_medida_inflada": inflados,
         # O tempo de parede que nao esta em estagio NENHUM. Nao e resto de
         # arredondamento: e espera na fila, subida do subprocesso, ou um
         # pedaco do pipeline que ninguem instrumentou. Se for grande, e ele o
@@ -146,6 +208,21 @@ def observacoes(agregado: dict) -> list:
     if fator:
         saida.append(
             f"Cada minuto de video custou {fator:.1f} minuto(s) de processamento.")
+
+    # Antes de qualquer conclusao: dizer quando o proprio numero nao fecha. A
+    # versao anterior calava isto -- somava os workers no estagio do render e
+    # depois clampava a sobra negativa com `max(0, ...)`, entao o relatorio saia
+    # plausivel, com fatias somando mais de 100%, e acusava o primeiro estagio
+    # acima de 50% na ordem do pipeline: a transcricao, no lugar do render.
+    inflados = int(_numero(agregado.get("jobs_com_medida_inflada")))
+    if inflados:
+        saida.append(
+            f"{inflados} job(s) desta amostra foram medidos antes de "
+            "16-set-2026, quando o laco de cortes somava o tempo de cada "
+            "worker no mesmo estagio: neles o render aparece multiplicado por "
+            "ate `CLIP_WORKERS` e a soma dos estagios passa da parede. Os "
+            "estagios sequenciais valem; a ordem de culpa, nao. Rode um job "
+            "novo para ter o numero certo.")
 
     parede = _numero(agregado.get("wall_seconds"))
     fora = _numero(agregado.get("fora_de_estagio_seconds"))
@@ -187,6 +264,24 @@ def observacoes(agregado: dict) -> list:
                 "O download domina. Confira a rota de proxy no log "
                 "(`PROXY_ROUTE=`): uma queda para o proxy por GB e lenta alem "
                 "de cara.")
+
+    # Dentro do render, QUAL passe. E o que o bloco 5.3 nao respondia: a
+    # cadeia de um corte e corte -> reenquadra -> [marca] -> [gancho] ->
+    # legenda, e cada seta e um encode inteiro do clipe.
+    dominante_sub = None
+    for e in agregado.get("substages") or []:
+        if e.get("fatia") and (dominante_sub is None
+                               or e["fatia"] > dominante_sub["fatia"]):
+            dominante_sub = e
+    if dominante_sub and dominante_sub["fatia"] >= 0.15:
+        pct = int(dominante_sub["fatia"] * 100)
+        saida.append(
+            f"Dentro do render, o passe mais caro e {dominante_sub['estagio']} "
+            f"({pct}% da parede do job).")
+        if dominante_sub["estagio"] == "06_hook_grounding":
+            saida.append(
+                "Esse passe nao e encode: e uma chamada de LLM por corte "
+                "(tres quadros a 1024px). `HOOK_GROUNDING=0` desliga.")
 
     tpm = agregado.get("tokens_por_minuto_falado")
     if tpm:

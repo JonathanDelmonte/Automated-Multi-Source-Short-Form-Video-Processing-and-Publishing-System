@@ -278,3 +278,99 @@ class TestEndpoint:
         for _ in range(4):
             _job_no_banco(_timings())
         assert _chama("/api/tempo?limite=2").json()["jobs"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Parede por estagio, substages e o dado antigo (16-set-2026)
+# --------------------------------------------------------------------------- #
+
+def _job(parede=600.0, estagios=None, substages=None, fonte=600.0):
+    t = {"facts": {"source_seconds": fonte, "spoken_seconds": 540.0},
+         "wall_seconds": parede, "totals": {"tokens": 0, "calls": 0},
+         "stages": estagios or {}}
+    if substages is not None:
+        t["substages"] = substages
+    return t
+
+
+class TestParedePorEstagio:
+
+    def test_usa_a_parede_quando_ela_existe(self):
+        """`seconds` no laco de cortes e a soma dos workers; `wall_seconds` e o
+        que a pessoa esperou. Quem manda no relatorio e o segundo."""
+        r = timings_report.agregar([_job(estagios={
+            "05_06_render": {"seconds": 600.0, "wall_seconds": 210.0}})])
+        assert r["estagios"][0]["seconds"] == 210.0
+
+    def test_cai_para_seconds_num_sidecar_antigo(self):
+        """O dado que ja existe em disco nao tem `wall_seconds`. Ele continua
+        valendo: nos quatro estagios sequenciais as duas grandezas coincidem."""
+        r = timings_report.agregar([_job(estagios={
+            "03_transcribe": {"seconds": 300.0}})])
+        assert r["estagios"][0]["seconds"] == 300.0
+
+    def test_denuncia_a_medida_que_nao_fecha(self):
+        """A assinatura do dado anterior ao conserto: a soma dos estagios passa
+        da parede do job. Antes isso era silenciado por um `max(0, ...)` no
+        `fora_de_estagio`, e o relatorio saia plausivel -- com fatias somando
+        mais de 100% e a transcricao acusada no lugar do render."""
+        r = timings_report.agregar([_job(parede=600.0, estagios={
+            "03_transcribe": {"seconds": 300.0},
+            "05_06_render": {"seconds": 600.0}})])
+        assert r["jobs_com_medida_inflada"] == 1
+        assert any("16-set-2026" in o for o in r["observacoes"])
+        # E a denuncia vem ANTES de qualquer acusacao de estagio.
+        i_aviso = next(i for i, o in enumerate(r["observacoes"]) if "16-set-2026" in o)
+        i_culpa = next((i for i, o in enumerate(r["observacoes"])
+                        if "domina" in o), len(r["observacoes"]))
+        assert i_aviso < i_culpa
+
+    def test_medida_que_fecha_nao_e_denunciada(self):
+        r = timings_report.agregar([_job(parede=600.0, estagios={
+            "03_transcribe": {"seconds": 300.0, "wall_seconds": 300.0},
+            "05_06_render": {"seconds": 600.0, "wall_seconds": 210.0}})])
+        assert r["jobs_com_medida_inflada"] == 0
+        assert not any("16-set-2026" in o for o in r["observacoes"])
+
+    def test_fora_de_estagio_volta_a_ter_sentido(self):
+        """Com a parede certa, a sobra e sobra de verdade: fila, subida do
+        subprocesso, pedaco sem instrumentacao."""
+        r = timings_report.agregar([_job(parede=600.0, estagios={
+            "03_transcribe": {"seconds": 300.0, "wall_seconds": 300.0},
+            "05_06_render": {"seconds": 600.0, "wall_seconds": 210.0}})])
+        assert r["fora_de_estagio_seconds"] == 90.0
+
+
+class TestSubestagios:
+
+    def test_lista_na_ordem_da_cadeia_e_nao_do_tamanho(self):
+        r = timings_report.agregar([_job(substages={
+            "06_legenda": {"wall_seconds": 55.0},
+            "05_corte": {"wall_seconds": 35.0},
+            "06_reenquadra": {"wall_seconds": 105.0}})])
+        assert [e["estagio"] for e in r["substages"]] == [
+            "05_corte", "06_reenquadra", "06_legenda"]
+
+    def test_aponta_o_passe_mais_caro_do_render(self):
+        # A parede do job tem de ser coerente com a dos estagios: com 600 s de
+        # job e 210 s em estagios, 65% fica fora de estagio nenhum, e ai o
+        # relatorio para nessa observacao -- corretamente, porque nenhum
+        # estagio explicaria aquele job.
+        r = timings_report.agregar([_job(parede=300.0, estagios={
+            "05_06_render": {"seconds": 600.0, "wall_seconds": 210.0}},
+            substages={"05_corte": {"wall_seconds": 35.0},
+                       "06_reenquadra": {"wall_seconds": 105.0}})])
+        assert any("06_reenquadra" in o for o in r["observacoes"])
+
+    def test_o_hook_grounding_e_chamado_pelo_que_e(self):
+        """Nao e encode: e uma chamada de LLM por corte. Confundir os dois
+        mandaria alguem otimizar ffmpeg para consertar latencia de rede."""
+        r = timings_report.agregar([_job(parede=100.0, estagios={
+            "05_06_render": {"wall_seconds": 90.0}},
+            substages={"06_hook_grounding": {"wall_seconds": 60.0}})])
+        assert any("HOOK_GROUNDING=0" in o for o in r["observacoes"])
+
+    def test_sem_substages_o_relatorio_nao_muda(self):
+        r = timings_report.agregar([_job(estagios={
+            "03_transcribe": {"wall_seconds": 300.0}})])
+        assert r["substages"] == []

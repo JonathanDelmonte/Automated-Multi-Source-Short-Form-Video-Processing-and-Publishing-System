@@ -2196,48 +2196,66 @@ if __name__ == '__main__':
                 clip_final_path = os.path.join(output_dir, clip_filename)
 
                 try:
-                    # ffmpeg cut — re-encoding for precision on strict seconds
+                    # O estagio cobre a CADEIA INTEIRA do corte, e nao so o
+                    # reenquadramento. Ate 16-set-2026 ele fechava logo apos o
+                    # `render_clip`, entao a marca d'agua, o hook grounding (uma
+                    # chamada de LLM por corte), o gancho e a legenda -- cada um
+                    # um encode inteiro do clipe -- caiam fora de estagio
+                    # nenhum. Ficavam no `fora_de_estagio_seconds` do relatorio,
+                    # que ao mesmo tempo estava zerado por um `max(0, ...)`
+                    # engolindo a parede inflada do render paralelo: as duas
+                    # falhas se cancelavam e o numero saia plausivel e errado.
+                    #
+                    # Os `substage` medem cada passe por dentro SEM mexer na
+                    # barra: ela so conhece os cinco nomes de PIPELINE_STAGES.
                     with job_metrics.stage("05_06_render"):
-                        cut_clip(input_video, clip_temp_path, start, end, i + 1)
+                        # ffmpeg cut — re-encoding for precision on strict seconds
+                        with job_metrics.substage("05_corte"):
+                            cut_clip(input_video, clip_temp_path, start, end, i + 1)
 
-                        success = render_clip(clip_temp_path, clip_final_path, output_format)
-                    # Layer order: watermark burns into the canonical (so any
-                    # later hook replacement, which re-derives from it, keeps
-                    # the branding), the hook is a derived hooked_ file, and
-                    # captions go last on top of whichever is current. Each
-                    # worker writes only its own clip dict, so the re-dump
-                    # after the pool is race-free.
-                    if success and os.environ.get("WATERMARK") == "1":
-                        apply_watermark(clip_final_path)
-                    deliver_path = clip_final_path
-                    # Which stretches were stacked (SPLIT): captions go on the
-                    # seam there, and /api/subtitle needs it again later.
-                    import layout_ranges as _layouts
-                    clip['layout_ranges'] = _layouts.read(clip_final_path)
-                    # The hook was written from the transcript alone. When the
-                    # render put this clip's meaning on the screen, rewrite hook
-                    # and title from three of its frames BEFORE burning them.
-                    if success and hook_grounding.wanted(clip['layout_ranges'], end - start):
-                        hook_grounding.reground(clip_final_path, clip, transcript, start, end)
-                    if success and os.environ.get("AUTO_HOOK") == "1":
-                        hooked = auto_hook_clip(clip_final_path, clip)
-                        if hooked:
-                            deliver_path, clip['auto_hook'] = hooked
-                    if success:
-                        captioned = auto_caption_clip(
-                            deliver_path, transcript, start, end,
-                            split_ranges=_layouts.split_ranges(clip['layout_ranges']))
-                        print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
-                        # Hand the API the file to actually serve for this clip.
-                        # Without it the status poller guesses the clean reframe
-                        # name, so a job in flight showed every clip stripped of
-                        # its hook and captions until the WHOLE job finished and
-                        # the result got rebuilt through _canonical_clip_file.
-                        # Printed only after the full chain (reframe, watermark,
-                        # hook, captions) so the file is complete when it is
-                        # announced, never one that ffmpeg is still writing.
-                        print(f"CLIP_READY {i} "
-                              f"{os.path.basename(captioned or deliver_path)}")
+                        with job_metrics.substage("06_reenquadra"):
+                            success = render_clip(clip_temp_path, clip_final_path, output_format)
+                        # Layer order: watermark burns into the canonical (so any
+                        # later hook replacement, which re-derives from it, keeps
+                        # the branding), the hook is a derived hooked_ file, and
+                        # captions go last on top of whichever is current. Each
+                        # worker writes only its own clip dict, so the re-dump
+                        # after the pool is race-free.
+                        if success and os.environ.get("WATERMARK") == "1":
+                            with job_metrics.substage("06_marca_dagua"):
+                                apply_watermark(clip_final_path)
+                        deliver_path = clip_final_path
+                        # Which stretches were stacked (SPLIT): captions go on the
+                        # seam there, and /api/subtitle needs it again later.
+                        import layout_ranges as _layouts
+                        clip['layout_ranges'] = _layouts.read(clip_final_path)
+                        # The hook was written from the transcript alone. When the
+                        # render put this clip's meaning on the screen, rewrite hook
+                        # and title from three of its frames BEFORE burning them.
+                        if success and hook_grounding.wanted(clip['layout_ranges'], end - start):
+                            with job_metrics.substage("06_hook_grounding"):
+                                hook_grounding.reground(clip_final_path, clip, transcript, start, end)
+                        if success and os.environ.get("AUTO_HOOK") == "1":
+                            with job_metrics.substage("06_gancho"):
+                                hooked = auto_hook_clip(clip_final_path, clip)
+                            if hooked:
+                                deliver_path, clip['auto_hook'] = hooked
+                        if success:
+                            with job_metrics.substage("06_legenda"):
+                                captioned = auto_caption_clip(
+                                    deliver_path, transcript, start, end,
+                                    split_ranges=_layouts.split_ranges(clip['layout_ranges']))
+                            print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
+                            # Hand the API the file to actually serve for this clip.
+                            # Without it the status poller guesses the clean reframe
+                            # name, so a job in flight showed every clip stripped of
+                            # its hook and captions until the WHOLE job finished and
+                            # the result got rebuilt through _canonical_clip_file.
+                            # Printed only after the full chain (reframe, watermark,
+                            # hook, captions) so the file is complete when it is
+                            # announced, never one that ffmpeg is still writing.
+                            print(f"CLIP_READY {i} "
+                                  f"{os.path.basename(captioned or deliver_path)}")
                     return success
                 finally:
                     if os.path.exists(clip_temp_path):

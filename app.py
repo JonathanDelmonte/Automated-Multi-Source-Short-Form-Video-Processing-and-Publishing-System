@@ -6,6 +6,7 @@ import llm_cascade
 import sources
 import publishers
 import publish_queue
+import auth
 import template as template_doc
 import db
 import db_models
@@ -2154,6 +2155,10 @@ async def get_config():
     return {
         "youtubeUrlEnabled": not DISABLE_YOUTUBE_URL,
         "billingEnabled": BILLING_ENABLED,
+        # A auth nao tem flag: ela esta ativa quando algum usuario tem senha.
+        # O painel usa isto para decidir entre a tela de login e a de bootstrap
+        # -- e para nao pedir senha numa instalacao que nunca quis auth.
+        "authAtiva": await _auth_ativa(),
         "googleAuthEnabled": bool(BILLING_ENABLED and cloud.settings.google_auth_enabled),
         "jobRetentionSeconds": JOB_RETENTION_SECONDS,
         # Self-host only: tells the dashboard the Gemini key is optional
@@ -4968,6 +4973,391 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Auth (Fase 4, bloco 4.1) -----------------------------------------------
+# A secao 7 adiou a auth para ca de proposito. O schema ja tinha `tenant_id` em
+# toda tabela desde a Fase 0.5, entao o que falta e quem autentique -- o
+# "sabado de trabalho" que o plano previu.
+#
+# **A auth nao tem flag: ela esta ativa quando algum usuario tem senha.** O seed
+# ja cria `self-host@localhost`, dono do tenant fixo e de tudo o que existe
+# hoje. O bootstrap nao cria conta nova -- ele da senha e e-mail de verdade a
+# esse usuario. Nada se move, nada orfana, e quem nunca quis auth continua sem
+# ela. Ver `auth.py`.
+
+class BootstrapIn(BaseModel):
+    email: str
+    senha: str
+
+
+class LoginIn(BaseModel):
+    email: str
+    senha: str
+
+
+class SenhaIn(BaseModel):
+    senha_atual: str
+    senha_nova: str
+
+
+class UsuarioIn(BaseModel):
+    email: str
+    senha: str
+    #: `novo` cria um tenant proprio (nao ve nada do seu); `mesmo` poe a pessoa
+    #: no seu tenant como editor. Sao coisas diferentes e a palavra diz qual.
+    tenant: str = "novo"
+    role: str = "editor"
+
+
+async def _usuarios_com_senha() -> int:
+    """Quantos usuarios tem senha, em qualquer tenant.
+
+    Consulta crua (`db.session`) e nao `db.tenant()`: a pergunta e sobre a
+    INSTALACAO inteira, e o escopo de tenant e justamente o que ela nao pode
+    ter. E um dos poucos lugares onde a sessao crua e a ferramenta certa.
+    """
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+    async with db.session() as s:
+        total = await s.execute(
+            _select(_func.count()).select_from(db_models.User)
+            .where(db_models.User.password_hash.is_not(None)))
+        return int(total.scalar() or 0)
+
+
+#: Marcador em disco de que esta instalacao tem dono. Existe porque a pergunta
+#: "a auth esta ativa?" e feita a cada requisicao e precisa de resposta CERTA
+#: mesmo com o banco fora do ar.
+#:
+#: Sem ele havia um buraco real: se a resposta viesse so do banco, um container
+#: novo subindo com o Postgres em pe de guerra leria o erro e teria de escolher
+#: entre destrancar a API (aberta na hora errada) ou trancar toda instalacao que
+#: nunca quis auth (incluindo os testes, que nao montam banco). Nenhuma das duas
+#: e aceitavel. O marcador e o fato duravel num lugar barato: fica em `DATA_DIR`
+#: (volume, como o banco e o segredo de sessao), nao em `output/`, que a limpeza
+#: por idade varre.
+#:
+#: O banco continua sendo a AUTORIDADE. O arquivo e o piso: uma vez trancado,
+#: nao destranca por falha de leitura.
+ARQUIVO_AUTH_ATIVA = ".auth_ativa"
+
+
+def _caminho_marcador_auth() -> str:
+    base = (os.environ.get("DATA_DIR") or "data").strip() or "data"
+    return os.path.join(base, ARQUIVO_AUTH_ATIVA)
+
+
+def _marcar_auth_ativa() -> None:
+    caminho = _caminho_marcador_auth()
+    try:
+        os.makedirs(os.path.dirname(caminho) or ".", exist_ok=True)
+        with open(caminho, "w", encoding="utf-8") as fh:
+            fh.write(datetime.now(timezone.utc).isoformat())
+    except OSError as e:
+        print(f"⚠️  Nao consegui gravar {caminho} ({e}). A auth continua ativa "
+              "pelo banco, mas um restart com o banco fora deixaria a API "
+              "aberta. Verifique a permissao de DATA_DIR.")
+
+
+def _auth_marcada_em_disco() -> bool:
+    return os.path.exists(_caminho_marcador_auth())
+
+
+async def _auth_ativa() -> bool:
+    """Se a instalacao exige login.
+
+    O banco manda. Quando ele nao responde, vale o marcador em disco -- que so
+    existe se a auth ja foi ligada alguma vez. Entao o erro nunca DESTRANCA uma
+    instalacao trancada, e tambem nunca tranca uma que nunca teve dono (onde
+    nao ha senha para pedir e exigir login so deixaria a ferramenta inutil).
+    """
+    try:
+        ativa = await _usuarios_com_senha() > 0
+    except Exception as e:
+        print(f"⚠️  Nao consegui perguntar ao banco se a auth esta ativa ({e}); "
+              f"valendo o marcador em disco ({_auth_marcada_em_disco()}).")
+        return _auth_marcada_em_disco()
+    if ativa and not _auth_marcada_em_disco():
+        _marcar_auth_ativa()
+    return ativa
+
+
+async def _sessao(request: Request) -> Optional[dict]:
+    """Quem esta chamando, ou None.
+
+    Confere a assinatura do token e **depois** compara `token_version` com a
+    linha do usuario. A segunda metade e o que faz a revogacao funcionar: um
+    token assinado e valido ate expirar, a menos que a versao nao bata mais.
+    """
+    payload = auth.ler_token(auth.token_do_header(
+        request.headers.get("authorization")))
+    if payload is None:
+        return None
+    try:
+        async with db.tenant(payload["t"]) as t:
+            usuario = await t.get(db_models.User, payload["u"])
+    except Exception as e:
+        print(f"⚠️  Sessao: banco indisponivel ({e})")
+        return None
+    if usuario is None or usuario.password_hash is None:
+        return None
+    if int(usuario.token_version) != int(payload.get("v", -1)):
+        return None
+    return {"user_id": usuario.id, "tenant_id": usuario.tenant_id,
+            "email": usuario.email, "role": usuario.role}
+
+
+async def exigir_sessao(request: Request) -> dict:
+    sessao = await _sessao(request)
+    if sessao is None:
+        raise HTTPException(status_code=401, detail="Faca login para continuar.")
+    return sessao
+
+
+async def exigir_dono(request: Request) -> dict:
+    sessao = await exigir_sessao(request)
+    if sessao["role"] != "owner":
+        raise HTTPException(status_code=403,
+                            detail="So o dono da instalacao pode fazer isso.")
+    return sessao
+
+
+#: Caminhos que respondem sem sessao mesmo com a auth ativa. A lista e curta e
+#: explicita de proposito: `/api/config` e como o painel descobre que precisa
+#: pedir login, `/api/auth/*` e como se faz login, e os dois `/health` sao o que
+#: o Traefik e o vigia externo consultam -- exigir sessao neles tiraria o
+#: container de rotacao a cada deploy.
+ROTAS_PUBLICAS = ("/api/config", "/api/auth/", "/health")
+
+
+def _rota_publica(caminho: str) -> bool:
+    return any(caminho == p or caminho.startswith(p) for p in ROTAS_PUBLICAS)
+
+
+@app.middleware("http")
+async def tranca_da_api(request: Request, call_next):
+    """A tranca, num lugar so.
+
+    Exigir sessao endpoint a endpoint significaria lembrar disso em cada uma
+    das ~60 rotas -- e a que for esquecida nao da erro, so fica aberta. Aqui a
+    regra e a mesma para todas e o esquecimento vira o contrario: uma rota nova
+    nasce protegida, e quem quiser o oposto tem de escrever o caminho em
+    `ROTAS_PUBLICAS`.
+
+    **Cobre `/api/*` e nao os bytes de `/videos` e `/thumbnails`.** Um
+    `<video src>` nao consegue mandar cabecalho `Authorization`, entao aqueles
+    dois prefixos precisam do token de capacidade que o `media_auth.py` ja
+    sabe assinar -- e isso e o bloco 4.3. Enquanto nao for, os arquivos
+    continuam servidos como sempre foram, e o `COMO-EXECUTAR.md` diz isso.
+    """
+    caminho = request.url.path
+    if not caminho.startswith("/api/") or _rota_publica(caminho):
+        return await call_next(request)
+    if not await _auth_ativa():
+        return await call_next(request)
+    if await _sessao(request) is None:
+        return JSONResponse(status_code=401,
+                            content={"detail": "Faca login para continuar."})
+    return await call_next(request)
+
+
+@app.post("/api/auth/bootstrap")
+async def auth_bootstrap(req: BootstrapIn):
+    """Da senha e e-mail ao dono que JA existe. So funciona uma vez.
+
+    Nao cria conta: o `self-host@localhost` do seed ja e dono do tenant fixo e
+    de tudo o que ha em disco. Criar um usuario novo aqui deixaria os jobs,
+    templates e publicacoes de ontem pertencendo a uma conta em que ninguem
+    consegue entrar.
+    """
+    try:
+        if await _usuarios_com_senha() > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Esta instalacao ja tem dono. Faca login.")
+        async with db.tenant() as t:
+            donos = await t.all(db_models.User,
+                                db_models.User.role == "owner")
+            if not donos:
+                raise HTTPException(
+                    status_code=503,
+                    detail="O banco nao tem o usuario do seed. Rode "
+                           "`python db_seed.py`.")
+            dono = donos[0]
+            dono.email = req.email.strip()
+            dono.password_hash = auth.hash_de_senha(req.senha)
+            await t.commit()
+            _marcar_auth_ativa()
+            token = auth.gerar_token(dono.id, dono.tenant_id, dono.token_version)
+            print(f"🔐 Auth ativada. Dono: {dono.email}")
+            return {"token": token, "email": dono.email, "role": dono.role}
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginIn, request: Request):
+    """Login. A mensagem de erro e a MESMA para e-mail inexistente e senha
+    errada -- dizer "este e-mail nao existe" entrega a lista de usuarios a quem
+    estiver tentando."""
+    from sqlalchemy import select as _select
+
+    chave = (request.client.host if request.client else "?") + "|" + req.email.strip()
+    if auth.esta_travado(chave):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Tentativas demais. Espere {auth.TRAVA_SEGUNDOS // 60} minutos.")
+    try:
+        async with db.session() as s:
+            achados = await s.execute(
+                _select(db_models.User).where(
+                    db_models.User.email == req.email.strip()))
+            usuarios = list(achados.scalars().all())
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+    for usuario in usuarios:
+        if auth.senha_confere(req.senha, usuario.password_hash):
+            auth.limpar_tentativas(chave)
+            return {"token": auth.gerar_token(usuario.id, usuario.tenant_id,
+                                              usuario.token_version),
+                    "email": usuario.email, "role": usuario.role}
+    # Custa o mesmo tempo de um scrypt, entao um e-mail que nao existe nao
+    # responde visivelmente mais rapido que uma senha errada.
+    auth.senha_confere(req.senha, auth.hash_de_senha("x" * auth.MIN_SENHA))
+    auth.registrar_falha(chave)
+    raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
+
+
+@app.get("/api/me")
+async def auth_me(request: Request):
+    """Quem sou eu. Com a auth desligada responde o dono do tenant fixo, que e
+    exatamente quem o sistema trata como dono hoje."""
+    sessao = await _sessao(request)
+    if sessao is not None:
+        return {**sessao, "authAtiva": True}
+    if await _auth_ativa():
+        raise HTTPException(status_code=401, detail="Faca login para continuar.")
+    return {"user_id": None, "tenant_id": db.SELF_HOST_TENANT_ID,
+            "email": None, "role": "owner", "authAtiva": False}
+
+
+@app.post("/api/auth/senha")
+async def auth_trocar_senha(req: SenhaIn, request: Request):
+    """Troca a senha e **invalida todos os tokens** daquele usuario.
+
+    Trocar a senha porque ela pode ter vazado e deixar as sessoes antigas vivas
+    resolveria metade do problema -- a metade que nao importa.
+    """
+    sessao = await exigir_sessao(request)
+    try:
+        async with db.tenant(sessao["tenant_id"]) as t:
+            usuario = await t.get(db_models.User, sessao["user_id"])
+            if usuario is None or not auth.senha_confere(req.senha_atual,
+                                                         usuario.password_hash):
+                raise HTTPException(status_code=401, detail="Senha atual incorreta.")
+            usuario.password_hash = auth.hash_de_senha(req.senha_nova)
+            usuario.token_version = int(usuario.token_version) + 1
+            await t.commit()
+            return {"token": auth.gerar_token(usuario.id, usuario.tenant_id,
+                                              usuario.token_version)}
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/auth/sair-de-tudo")
+async def auth_sair_de_tudo(request: Request):
+    """Invalida todos os tokens deste usuario, inclusive o desta aba.
+
+    Sair no navegador e so apagar o token local -- o que basta no dia a dia e
+    nao adianta nada se ele vazou. Este e o botao para quando adiantou.
+    """
+    sessao = await exigir_sessao(request)
+    try:
+        async with db.tenant(sessao["tenant_id"]) as t:
+            usuario = await t.get(db_models.User, sessao["user_id"])
+            if usuario is None:
+                raise HTTPException(status_code=404, detail="Usuario nao encontrado")
+            usuario.token_version = int(usuario.token_version) + 1
+            await t.commit()
+            return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/usuarios")
+async def criar_usuario(req: UsuarioIn, request: Request):
+    """Cria uma conta. So o dono pode, e **nao ha cadastro aberto**.
+
+    Isto e ferramenta pessoal, nao SaaS: uma tela de "criar conta" acessivel a
+    quem chegar seria uma porta que ninguem pediu. `tenant: "novo"` e o caminho
+    do criterio desta fase -- a segunda conta nasce num tenant proprio e nao ve
+    nada do primeiro.
+    """
+    dono = await exigir_dono(request)
+    if req.tenant not in ("novo", "mesmo"):
+        raise HTTPException(status_code=400,
+                            detail="tenant deve ser 'novo' ou 'mesmo'")
+    if req.role not in ("owner", "editor", "viewer"):
+        raise HTTPException(status_code=400, detail=f"role invalida: {req.role}")
+    email = (req.email or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="informe o e-mail")
+    try:
+        senha = auth.hash_de_senha(req.senha)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        if req.tenant == "novo":
+            novo_tenant = db_models.new_id()
+            async with db.session() as s:
+                s.add(db_models.Tenant(id=novo_tenant, plan="self_host"))
+                await s.commit()
+            # Um tenant novo nasce com dono: `editor` num tenant sem `owner`
+            # deixaria a conta incapaz de criar qualquer outra coisa.
+            alvo, papel = novo_tenant, "owner"
+        else:
+            alvo, papel = dono["tenant_id"], req.role
+        async with db.tenant(alvo) as t:
+            if await t.all(db_models.User, db_models.User.email == email):
+                raise HTTPException(status_code=409,
+                                    detail=f"ja existe {email} neste tenant")
+            usuario = t.add(db_models.User(email=email, role=papel,
+                                           password_hash=senha))
+            await t.commit()
+            return {"id": usuario.id, "email": usuario.email, "role": usuario.role,
+                    "tenant_id": usuario.tenant_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.get("/api/usuarios")
+async def listar_usuarios(request: Request):
+    """Os usuarios do SEU tenant. Nunca os de outro -- e por isso a consulta
+    passa por `db.tenant()`, que filtra sozinho."""
+    sessao = await exigir_sessao(request)
+    try:
+        async with db.tenant(sessao["tenant_id"]) as t:
+            usuarios = await t.all(db_models.User)
+        return {"usuarios": [
+            {"id": u.id, "email": u.email, "role": u.role,
+             "pode_entrar": u.password_hash is not None} for u in usuarios]}
+    except Exception as e:
+        raise _erro_da_fila(e)
 
 
 # --- Fila de publicacao (Fase 3, bloco 3.5) ---------------------------------

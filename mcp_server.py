@@ -403,9 +403,9 @@ async def _tool_list_clips(client, args):
 
 async def _tool_get_quota(client, args):
     resp = await client.get("/api/me")
-    # 401: anonymous. 404: self-host, where /api/me isn't even mounted (the
-    # cloud router only registers under BILLING_ENABLED). Neither is an error
-    # from the agent's point of view — there is simply no quota to report.
+    # 401: anonymous, ou a auth da Fase 4 ligada sem token. 404: instalacao
+    # antiga, antes de `/api/me` existir no self-host. Nenhum dos dois e erro
+    # do ponto de vista do agente -- so nao ha quota a reportar.
     if resp.status_code in (401, 404):
         return {"self_host_or_anonymous": True,
                 "note": "No authenticated cloud user; if this is a self-hosted "
@@ -413,6 +413,16 @@ async def _tool_get_quota(client, args):
     if resp.status_code >= 400:
         return _api_error(resp), True
     data = resp.json()
+    # A partir da Fase 4 `/api/me` responde 200 no self-host tambem: ele passou
+    # a significar "quem sou eu", e nao "qual e a minha quota". A cobranca por
+    # minuto era do modulo `cloud/`, que saiu no ADR-001 -- entao a AUSENCIA
+    # dos campos de plano e a resposta certa, e nao um payload de nulos.
+    if data.get("plan") is None and data.get("minutes") is None:
+        return {"self_host_or_anonymous": True,
+                "email": data.get("email"),
+                "note": "Self-hosted instance: there is no minute quota. "
+                        "Publishing limits live in the YouTube quota counter "
+                        "(6 uploads/day), not here."}, False
     return {"plan": data.get("plan"), "entitled": data.get("entitled"),
             "minutes": data.get("minutes")}, False
 

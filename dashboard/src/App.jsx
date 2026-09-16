@@ -5,6 +5,7 @@ import MediaInput from './components/MediaInput';
 import ProjectsList from './components/ProjectsList';
 import ProjectsGrid from './components/ProjectsGrid';
 import PublicacoesTab from './components/PublicacoesTab';
+import Tranca from './components/Tranca';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -163,7 +164,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm } = useAuth();
+  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, authAtiva, loading: authLoading } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
   const [showPlanChoice, setShowPlanChoice] = useState(false);
@@ -1082,6 +1083,20 @@ function App() {
       </nav>
     );
   };
+
+  // A tranca da Fase 4, antes de qualquer outra coisa. Com a auth ligada e sem
+  // sessão, o painel inteiro dá lugar à tela de entrada — não adianta desenhar
+  // abas cujas chamadas todas voltariam 401.
+  //
+  // `authLoading` importa: sem ele, a primeira renderização (antes de
+  // `/api/config` responder) mostraria a tela de login por um instante para
+  // quem já está logado, e pior, para quem nem tem auth ligada.
+  if (authLoading) {
+    return <div className="h-screen bg-paper" />;
+  }
+  if (authAtiva && !isSignedIn) {
+    return <Tranca />;
+  }
 
   return (
     /* h-dvh where supported: on mobile Safari/Chrome `100vh` is the tallest the

@@ -15,7 +15,7 @@ const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }) {
-  const [config, setConfig] = useState({ billingEnabled: false, googleAuthEnabled: false });
+  const [config, setConfig] = useState({ billingEnabled: false, googleAuthEnabled: false, authAtiva: false });
   const [me, setMe] = useState(null);           // /api/me payload, or null when signed out
   const [loading, setLoading] = useState(true);
   const [signingIn, setSigningIn] = useState(false);
@@ -106,8 +106,12 @@ export function AuthProvider({ children }) {
       try {
         const cfg = await (await fetch(getApiUrl('/api/config'))).json();
         setConfig(cfg);
-        if (cfg.billingEnabled) {
-          const handled = await handleAuthHash();
+        // `authAtiva` entrou aqui na Fase 4, e não é detalhe: `billingEnabled`
+        // é sempre falso neste fork (ADR-001), então sem esta segunda condição
+        // o `refreshMe` nunca rodava no boot — e quem tinha token válido caía
+        // na tela de login para sempre, porque `me` ficava nulo.
+        if (cfg.billingEnabled || cfg.authAtiva) {
+          const handled = cfg.billingEnabled ? await handleAuthHash() : false;
           if (!handled) await refreshMe();
         }
       } catch (_) { /* config fetch failed — stay in BYOK */ }
@@ -136,6 +140,49 @@ export function AuthProvider({ children }) {
     resetAnalytics();
   }, []);
 
+  // --- Auth própria (Fase 4) -------------------------------------------------
+  // O magic-link e o Google acima morreram com o `cloud/` (ADR-001): os
+  // endpoints que eles chamam não existem mais neste fork. Ficam no arquivo
+  // porque o frontend inteiro vai ser trocado e apagá-los agora seria mexer em
+  // código marcado para sair. O que funciona é isto.
+
+  // Recarrega `authAtiva` do servidor. Chamado depois do bootstrap, quando a
+  // resposta de `/api/config` de antes já está desatualizada por definição.
+  const refreshConfig = useCallback(async () => {
+    try {
+      const cfg = await (await fetch(getApiUrl('/api/config'))).json();
+      setConfig(cfg);
+      return cfg;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const entrar = useCallback(async (email, senha) => {
+    const data = await apiJson('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+    setToken(data.token);
+    await refreshMe();
+    return data;
+  }, [refreshMe]);
+
+  // Só responde enquanto a instalação não tem dono. Não cria conta: dá senha e
+  // e-mail ao usuário que o seed já criou e que já é dono de tudo em disco.
+  const definirDono = useCallback(async (email, senha) => {
+    const data = await apiJson('/api/auth/bootstrap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+    setToken(data.token);
+    await refreshConfig();
+    await refreshMe();
+    return data;
+  }, [refreshMe, refreshConfig]);
+
   const value = {
     billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
@@ -148,10 +195,15 @@ export function AuthProvider({ children }) {
     plan: me?.plan || null,
     entitled: !!me?.entitled,
     minutes: me?.minutes || null,
-    isSignedIn: !!me?.user,
+    // `user_id` é o campo do `/api/me` desta fase; `user` era o do cloud.
+    isSignedIn: !!(me?.user_id || me?.user),
+    authAtiva: !!config.authAtiva,
     // Managed = signed-in AND entitled (active plan or top-up credit).
     isManaged: !!(config.billingEnabled && me?.entitled),
     refreshMe,
+    refreshConfig,
+    entrar,
+    definirDono,
     requestMagicLink,
     loginWithGoogle,
     logout,

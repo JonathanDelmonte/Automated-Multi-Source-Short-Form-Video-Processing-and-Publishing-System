@@ -94,7 +94,8 @@ parecem arbitrarias no codigo estao justificadas la.
     isso depende de `PRAGMA foreign_keys=ON`, ligado por engine em `db.py` --
     nao desfazer: sem ele as FKs compostas sao decoracao (ja aconteceu).
   - `tests/test_db_schema.py` quebra se uma tabela nova nascer sem `tenant_id`.
-  - **Auth e a Fase 4.** Ate la tudo pertence ao tenant fixo
+  - **A auth chegou na Fase 4** (`auth.py`, bloco 4.1). Antes dela, e enquanto
+    nenhum usuario tiver senha, tudo pertence ao tenant fixo
     `00000000-0000-0000-0000-000000000001`.
   - **O pipeline ESCREVE no banco desde o bloco 3.3**: `sources` e `jobs` no
     submit, `clips` no fim do job, `accounts` e `publications` pela fila de
@@ -529,6 +530,44 @@ tem palavra a indexar, e sem isso o corte nao podia ser publicado) e
 > resultado e FALSE**: `end > start` com `end` nulo vale NULL e passa. Os
 > `is not null` no `ck_clips_faixa_de_palavras` nao sao redundantes.
 
+### Auth propria (`auth.py`, Fase 4 bloco 4.1)
+
+O "sabado de trabalho" que a §7 previu: o schema ja tinha `tenant_id` em toda
+tabela desde a Fase 0.5, faltava quem autenticasse.
+
+- **A auth nao tem flag: ela liga quando algum usuario ganha senha.** O seed ja
+  cria `self-host@localhost`, dono do tenant fixo e de tudo o que existe em
+  disco. O bootstrap (`POST /api/auth/bootstrap`) **nao cria conta** -- ele da
+  senha e e-mail de verdade a esse usuario. Criar um usuario novo ali deixaria
+  os jobs e templates de ontem numa conta em que ninguem entra.
+- **Zero dependencia nova**, e e decisao: o magic-link (servico de e-mail) e o
+  Google OAuth do upstream sairam com o `cloud/`. Trazer qualquer um de volta
+  seria um servico pago ou um projeto no Google Cloud para o autor entrar na
+  propria ferramenta -- a mesma desproporcao que o `sources/gdrive.py` recusou.
+  E-mail e senha, `hashlib.scrypt` da stdlib.
+- **O token e assinado, nao e JWT.** Um JWT traria biblioteca para negociar
+  algoritmo, e e ai que moram os furos conhecidos (`alg: none`, HS256 x RS256).
+  Aqui ha um algoritmo, no verificador, sem campo que o chamador mude.
+- **`users.token_version` e a revogacao sem tabela de sessao.** Token assinado e
+  stateless: quem o tem entra ate expirar. Bumpar a versao invalida todos os
+  daquele usuario -- e o que a troca de senha e o "sair de todos os aparelhos"
+  fazem. Trocar a senha e deixar as sessoes antigas vivas resolveria a metade
+  que nao importa.
+- **A tranca e um middleware, nao decoracao por endpoint.** Uma rota nova nasce
+  protegida; quem quiser o contrario escreve o caminho em `ROTAS_PUBLICAS` (hoje
+  `/api/config`, `/api/auth/` e `/health`, e ha um teste que congela a lista).
+  Um teste varre TODAS as rotas `/api/*` e falha se alguma responder sem sessao.
+- **`_auth_ativa()` tem um marcador em disco** (`DATA_DIR/.auth_ativa`) alem do
+  banco. Sem ele havia um buraco: com o banco fora do ar, um container novo teria
+  de escolher entre destrancar a API ou trancar toda instalacao que nunca quis
+  auth (inclusive os testes, que nao montam banco). O banco e a autoridade; o
+  arquivo e o piso -- uma vez trancado, nao destranca por falha de leitura.
+- **Login nao diz se o e-mail existe**, e gasta um scrypt mesmo quando nao
+  existe, para que a resposta nao seja visivelmente mais rapida.
+- **`/videos` e `/thumbnails` ainda NAO estao atras da tranca**: um `<video src>`
+  nao manda cabecalho `Authorization`. O `media_auth.py` ja sabe assinar o token
+  de capacidade para isso, e ligar e o bloco 4.3.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote
@@ -773,6 +812,10 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/edit` | Apply AI video effects |
 | POST | `/api/subtitle` | Generate and apply subtitles (auto-transcribes dubbed videos) |
 | POST | `/api/hook` | Add text hook overlays |
+| POST | `/api/auth/bootstrap` | Da senha ao dono que ja existe (uma vez so) |
+| POST | `/api/auth/login` | Entra e devolve o token |
+| GET | `/api/me` | Quem sou eu |
+| GET/POST | `/api/usuarios` | Contas da instalacao (criar: so o dono) |
 | GET/POST/DELETE | `/api/contas` | Contas de plataforma (Fase 3) |
 | POST | `/api/publicar` | Publica cortes de um projeto numa conta |
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |

@@ -90,8 +90,13 @@ class TestToolsThroughRealEndpoints:
 
 class TestSelfHostQuota:
     def test_get_quota_reports_no_quota_instead_of_erroring(self):
-        # /api/me only exists in cloud mode; self-host must get the friendly
-        # "no quota here" answer, not a 404 tool error.
+        # Self-host must get the friendly "no quota here" answer, not a tool
+        # error and not a payload of nulls.
+        #
+        # Isto valia por 404 ate a Fase 4, quando `/api/me` passou a existir no
+        # self-host — ele agora significa "quem sou eu", nao "qual e a minha
+        # quota". A cobranca por minuto saiu com o `cloud/` (ADR-001), entao a
+        # ausencia dos campos de plano E a resposta.
         resp = _call("get_quota", {})
         result = resp.json()["result"]
         assert result["isError"] is False

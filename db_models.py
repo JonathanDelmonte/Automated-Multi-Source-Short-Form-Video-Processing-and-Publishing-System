@@ -117,12 +117,25 @@ class User(Base, TenantScoped):
     id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="owner")
+    # `scrypt$n$r$p$sal$hash` (ver `auth.hash_de_senha`), nunca a senha. NULO
+    # significa "este usuario ainda nao pode entrar" -- e o estado do
+    # `self-host@localhost` que o seed cria, que e dono de tudo e nao autentica
+    # ninguem. **Enquanto NENHUM usuario tiver senha, a instalacao esta aberta**,
+    # que e o comportamento anterior a Fase 4 e o motivo do aviso de LAN.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Sobe de um a cada troca de senha ou "sair de todos os aparelhos", e o token
+    # carrega o numero. E a revogacao possivel sem tabela de sessao: token
+    # assinado e stateless, entao quem o tem entra ate expirar -- a menos que a
+    # versao nao bata mais.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1,
+                                               server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
 
     __table_args__ = (
         ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
                              name="fk_users_tenant"),
+        CheckConstraint("token_version >= 1", name="ck_users_token_version"),
         # O mesmo e-mail pode existir em tenants diferentes; dentro de um, nao.
         UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),
         CheckConstraint("role in ('owner','editor','viewer')", name="ck_users_role"),

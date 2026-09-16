@@ -341,6 +341,70 @@ async def cancelar(pub_id: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Metricas (Fase 5)
+# --------------------------------------------------------------------------- #
+
+async def publicadas_com_remote_id() -> list:
+    """As publicacoes que existem na plataforma e podem ser medidas.
+
+    **Atravessa os tenants** (`db.session`), como `devidas()`: o coletor e do
+    servidor e nao tem sessao de onde tirar escopo. O `tenant_id` volta junto
+    para quem chamar devolver cada linha ao tenant dela antes de gravar.
+
+    So `published` e so com `remote_id`: uma linha na fila manual nao tem video
+    do outro lado para medir, e medir o que nao foi publicado registraria zero
+    views como se fosse resultado.
+    """
+    from sqlalchemy import select as _select
+    async with db.session() as s:
+        achadas = await s.execute(
+            _select(db_models.Publication)
+            .where(db_models.Publication.status == "published")
+            .where(db_models.Publication.remote_id.is_not(None)))
+        return [{"id": p.id, "tenant_id": p.tenant_id, "driver": p.driver,
+                 "remote_id": p.remote_id, "account_id": p.account_id}
+                for p in achadas.scalars().all()]
+
+
+async def gravar_metrica(publication_id: str, views=None,
+                         retention_pct=None) -> Optional[str]:
+    """Acrescenta uma leitura. **Nunca atualiza a anterior.**
+
+    `metrics` e serie temporal, nao cache: retencao matura em dias, e o valor de
+    24 h depois e uma informacao diferente do de uma semana depois. A secao 7 poe
+    `collected_at` na tabela e NAO poe unicidade por publicacao exatamente por
+    isso -- sobrescrever jogaria fora a unica dimensao que torna a tabela util.
+
+    Uma leitura sem nenhum numero nao vira linha: ela nao diz nada e sujaria a
+    media com uma amostra vazia.
+    """
+    if views is None and retention_pct is None:
+        return None
+    async with db.tenant() as t:
+        linha = t.add(db_models.Metric(publication_id=publication_id,
+                                       views=views, retention_pct=retention_pct))
+        await t.commit()
+        return linha.id
+
+
+async def historico(publication_id: Optional[str] = None) -> list:
+    """As leituras, da mais recente para a mais antiga."""
+    async with db.tenant() as t:
+        if publication_id:
+            linhas = await t.all(
+                db_models.Metric,
+                db_models.Metric.publication_id == publication_id)
+        else:
+            linhas = await t.all(db_models.Metric)
+    saida = [{"id": m.id, "publication_id": m.publication_id, "views": m.views,
+              "retention_pct": m.retention_pct,
+              "collected_at": m.collected_at.isoformat() if m.collected_at else None}
+             for m in linhas]
+    saida.sort(key=lambda m: m.get("collected_at") or "", reverse=True)
+    return saida
+
+
+# --------------------------------------------------------------------------- #
 # Listar
 # --------------------------------------------------------------------------- #
 

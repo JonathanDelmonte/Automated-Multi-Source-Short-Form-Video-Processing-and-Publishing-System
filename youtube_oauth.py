@@ -16,6 +16,12 @@ token o poder de apagar videos do canal; para subir corte, upload basta. Se o
 token vazar, a diferenca entre os dois escopos e a diferenca entre um video
 indesejado e um canal vazio.
 
+**`--leitura` emite uma SEGUNDA credencial**, com os escopos de leitura
+(`youtube.readonly` e `yt-analytics.readonly`), guardada noutro endereco de
+cofre. E o que a Fase 5 usa para coletar views e retencao. Duas credenciais
+pequenas em vez de uma grande: a que publica nao le, a que le nao publica, e
+nenhuma das duas apaga.
+
 O que voce precisa antes (uma vez, no console do Google Cloud):
 
 1. criar um projeto e habilitar a **YouTube Data API v3**;
@@ -42,6 +48,17 @@ import vault
 AUTORIZACAO = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 ESCOPO = "https://www.googleapis.com/auth/youtube.upload"
+
+#: Os escopos de LEITURA (`--leitura`, Fase 5). Emitidos num consentimento
+#: SEPARADO e guardados noutro endereco de cofre, e nao somados ao de cima.
+#:
+#: Duas credenciais pequenas em vez de uma grande: a que publica nao le, a que
+#: le nao publica, e nenhuma das duas apaga. Somar tudo num token so seria mais
+#: comodo e desfaria o motivo de o escopo de upload ser minimo.
+ESCOPOS_DE_LEITURA = (
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+)
 
 
 class _Receptor(http.server.BaseHTTPRequestHandler):
@@ -105,6 +122,9 @@ def main(argv=None) -> int:
         description="Autoriza este projeto a subir video no seu canal.")
     parser.add_argument("--handle", default="canal",
                         help="apelido da conta no cofre (padrao: canal)")
+    parser.add_argument("--leitura", action="store_true",
+                        help="emite a credencial de LEITURA (views e retencao) "
+                             "em vez da de publicacao. Guardada separada.")
     parser.add_argument("--client-id", default=os.environ.get("YOUTUBE_CLIENT_ID"))
     parser.add_argument("--client-secret",
                         default=os.environ.get("YOUTUBE_CLIENT_SECRET"))
@@ -117,13 +137,14 @@ def main(argv=None) -> int:
               "arquivo para como emiti-los.", file=sys.stderr)
         return 2
 
+    escopo = " ".join(ESCOPOS_DE_LEITURA) if args.leitura else ESCOPO
     porta = _porta_livre()
     redirect_uri = f"http://localhost:{porta}"
     url = AUTORIZACAO + "?" + urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": ESCOPO,
+        "scope": escopo,
         # `offline` e o que faz o Google devolver refresh_token; `consent`
         # forca a tela mesmo se voce ja autorizou antes -- sem ele, a segunda
         # execucao volta SEM refresh_token e o erro nao diz por que.
@@ -155,19 +176,28 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 1
 
-    ref = f"vault://local/youtube/{args.handle}"
+    plataforma = "youtube-metrics" if args.leitura else "youtube"
+    ref = f"vault://local/{plataforma}/{args.handle}"
     caminho = vault.gravar(ref, {
         "client_id": client_id,
         "client_secret": client_secret,
         "refresh_token": refresh,
     })
     print(f"\n✅ Guardado em {caminho} (permissao 0600).")
+    if args.leitura:
+        print("   Esta e a credencial de LEITURA: ve views e retencao, e nao "
+              "publica nem apaga nada.")
+        print("   O coletor de metricas a encontra sozinho; nao ha nada a "
+              "apontar.")
+        return 0
     print(f"   Aponte a conta para: {ref}")
     print("\nSe preferir variaveis de ambiente em vez de arquivo, use estas "
           "tres no .env e apague o arquivo acima:\n")
     print(f"   YOUTUBE_CLIENT_ID={client_id}")
     print(f"   YOUTUBE_CLIENT_SECRET={client_secret}")
     print(f"   YOUTUBE_REFRESH_TOKEN={refresh}")
+    print("\nPara coletar metricas depois (views e retencao), rode uma vez:")
+    print("   python youtube_oauth.py --leitura")
     return 0
 
 

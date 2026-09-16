@@ -8,6 +8,7 @@ import publishers
 import publish_queue
 import auth
 import scheduler
+import metrics_collector
 import template as template_doc
 import db
 import db_models
@@ -1846,6 +1847,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_handover_watch())
     asyncio.create_task(_resume_scan())
     asyncio.create_task(_laco_do_agendador())
+    asyncio.create_task(_laco_de_metricas())
     # O banco nasce no boot (Fase 2, bloco 2.3). O seed e idempotente e cria o
     # schema, o tenant fixo do self-host e o template padrao -- sem isto, a
     # primeira visita a aba de templates falharia com "no such table" numa
@@ -5053,6 +5055,112 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Coletor de metricas (Fase 5) -------------------------------------------
+# A secao 7 chama `metrics` de "a tabela mais valiosa do projeto": e ela que
+# permite trocar a rubrica do LLM por retencao medida. Estava vazia porque nada
+# a escrevia. As regras de COMO medir estao em `metrics_collector.py`, que e
+# testavel sem rede; aqui esta o laco.
+
+#: De quanto em quanto tempo medir. Seis horas: retencao matura em dias, entao
+#: medir de hora em hora so gastaria quota para gravar o mesmo numero.
+INTERVALO_DE_METRICAS = int(os.environ.get("METRICS_TICK_SECONDS", str(6 * 3600)))
+
+#: Atraso do primeiro tique depois do boot. Sem ele, um container que reinicia
+#: varias vezes num deploy mediria tudo a cada reinicio.
+ATRASO_INICIAL_DE_METRICAS = int(os.environ.get("METRICS_FIRST_TICK_SECONDS", "300"))
+
+#: Aviso de credencial ausente uma vez por processo, e nao a cada seis horas.
+_avisou_sem_credencial = False
+
+
+async def _handle_da_conta(account_id: str) -> Optional[str]:
+    async with db.tenant() as t:
+        conta = await t.get(db_models.Account, account_id)
+    return conta.handle if conta else None
+
+
+async def coletar_metricas() -> dict:
+    """Uma rodada de coleta. Devolve o que deu para medir.
+
+    **Falha aberto e por publicacao.** Um video apagado na plataforma, um token
+    vencido ou a API fora do ar nao podem impedir a medicao dos outros -- e
+    muito menos derrubar o laco, que e a unica coisa alimentando a Fase 5.
+    """
+    global _avisou_sem_credencial
+    try:
+        pendentes = await publish_queue.publicadas_com_remote_id()
+    except Exception as e:
+        print(f"⚠️  Metricas: nao consegui ler as publicacoes ({e})")
+        return {"medidas": 0, "erros": 0}
+
+    medidas = erros = 0
+    loop = asyncio.get_event_loop()
+    for pub in pendentes:
+        # Hoje so o YouTube tem de onde medir: os outros drivers nao devolvem
+        # `remote_id` porque nao publicam por API.
+        if pub["driver"] != "youtube-api":
+            continue
+        db.usar_tenant(pub["tenant_id"])
+        try:
+            handle = await _handle_da_conta(pub["account_id"])
+            if not handle:
+                continue
+            # A rede e sincrona (httpx.get) e o loop e o do servidor: sem o
+            # executor, medir dez videos travaria o polling de todo mundo.
+            numeros = await loop.run_in_executor(
+                None, metrics_collector.medir, pub["remote_id"], handle)
+            if await publish_queue.gravar_metrica(pub["id"], **numeros):
+                medidas += 1
+        except publishers.PublisherError as e:
+            if "credencial de LEITURA" in str(e):
+                if not _avisou_sem_credencial:
+                    print(f"📊 {e}")
+                    _avisou_sem_credencial = True
+                return {"medidas": medidas, "erros": erros,
+                        "sem_credencial": True}
+            erros += 1
+            print(f"⚠️  Metricas de {pub['id']}: {e}")
+        except Exception as e:
+            erros += 1
+            print(f"⚠️  Metricas de {pub['id']}: {type(e).__name__}: {e}")
+    if medidas:
+        print(f"📊 {medidas} publicacao(oes) medida(s)"
+              + (f", {erros} com erro" if erros else ""))
+    return {"medidas": medidas, "erros": erros}
+
+
+async def _laco_de_metricas():
+    await asyncio.sleep(ATRASO_INICIAL_DE_METRICAS)
+    while True:
+        if not _draining:
+            try:
+                await coletar_metricas()
+            except Exception as e:
+                print(f"⚠️  Laco de metricas: {e}")
+        await asyncio.sleep(INTERVALO_DE_METRICAS)
+
+
+@app.get("/api/metricas")
+async def listar_metricas(publication_id: Optional[str] = None):
+    """As leituras ja coletadas, da mais recente para a mais antiga."""
+    try:
+        return {"metricas": await publish_queue.historico(publication_id),
+                "tem_credencial_de_leitura": bool(
+                    metrics_collector.credencial_de_leitura("canal"))}
+    except Exception as e:
+        raise _erro_da_fila(e)
+
+
+@app.post("/api/metricas/coletar")
+async def coletar_metricas_agora():
+    """Força uma rodada agora, sem esperar o laço.
+
+    Existe porque o intervalo é de seis horas: descobrir se a credencial de
+    leitura está certa não pode custar uma tarde de espera.
+    """
+    return await coletar_metricas()
 
 
 # --- Agendador (Fase 4, bloco 4.4, ADR-007) ---------------------------------

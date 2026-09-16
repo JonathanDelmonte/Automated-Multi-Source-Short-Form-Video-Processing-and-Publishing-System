@@ -655,6 +655,32 @@ projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
 - O painel mostra a agenda **antes** de agendar: descobrir a que horas o sistema
   publicou depois do post e tarde para discordar.
 
+### Calibracao: rubrica x resultado (`calibracao.py`, Fase 5 bloco 5.2)
+
+`GET /api/calibracao` cruza `clips.score` (o que o modelo previu, desde o bloco
+3.3) com `metrics` (o que deu, desde o 5.1). E o proposito declarado da fase.
+
+- **Abaixo de `MINIMO_PARA_CORRELACAO` (10) o relatorio NAO publica
+  coeficiente.** Com poucos cortes, um rho alto acontece por acaso com
+  frequencia -- e uma vez escrito, vira a razao de alguem mexer nos pesos. E o
+  mesmo movimento que o ADR-006, o pre-filtro e o `layout_picker` recusaram. Os
+  dados crus saem de qualquer jeito: olhar e honesto, afirmar nao.
+- **Spearman, e nao Pearson.** A pergunta e sobre ORDEM ("o corte que o modelo
+  achou melhor rendeu mais?"). Um modelo que acerta o ranking inteiro mas
+  comprime os scores entre 70 e 85 teria Pearson baixo e e exatamente o que
+  queremos.
+- **Empate recebe posto medio.** Sem isso, tres cortes com score 80 receberiam
+  postos 1, 2 e 3 numa ordem arbitraria, e o coeficiente passaria a medir a
+  ordem de insercao no banco.
+- **Sem variacao devolve None, nunca zero.** Zero seria a afirmacao "medimos e
+  nao ha relacao"; None e "nao da para afirmar".
+- **Vale a leitura MAIS RECENTE de cada publicacao**, porque `metrics` e serie
+  temporal: somar todas contaria o mesmo video uma vez por coleta e daria peso
+  maior ao que foi publicado ha mais tempo.
+- O contraste entre faixas de score e o que o **ADR-006** espera para fechar o
+  piso -- e o relatorio diz que ele so vale quando a amostra por faixa deixar
+  de ser um punhado.
+
 ### Onde vai o tempo (`timings_report.py`, Fase 5 bloco 5.3)
 
 `GET /api/tempo` agrega os `timings_json` dos jobs. O `job_metrics` media por
@@ -957,6 +983,7 @@ portrait clip cannot reproduce the shrink either.
 | GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto |
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | Views e retenção coletadas |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
+| GET | `/api/calibracao` | O que a rubrica do modelo acertou |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |

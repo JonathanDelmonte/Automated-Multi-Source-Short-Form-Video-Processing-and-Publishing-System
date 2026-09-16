@@ -10,6 +10,7 @@ import auth
 import scheduler
 import metrics_collector
 import timings_report
+import calibracao
 import template as template_doc
 import db
 import db_models
@@ -5056,6 +5057,28 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Calibracao: rubrica x resultado (Fase 5) -------------------------------
+# O proposito declarado da fase (secao 9): "cruzar a rubrica que o LLM deu"
+# com a retencao medida. As duas pontas ja existiam -- `clips.score` desde o
+# bloco 3.3, `metrics` desde o 5.1. Isto e a subtracao.
+
+
+@app.get("/api/calibracao")
+async def ver_calibracao():
+    """O que a rubrica do modelo acertou, ate onde a amostra permite dizer.
+
+    **Abaixo do minimo o relatorio nao publica coeficiente.** Com poucos
+    cortes, um rho alto acontece por acaso com frequencia -- e uma vez escrito
+    num relatorio, vira a razao de alguem mexer nos pesos. Os dados crus saem
+    de qualquer jeito: da para olhar, e olhar e honesto.
+    """
+    try:
+        itens = await publish_queue.cruzamento()
+    except Exception as e:
+        raise _erro_da_fila(e)
+    return {**calibracao.relatorio(itens), "clipes": itens}
 
 
 # --- Onde vai o tempo (Fase 5) ----------------------------------------------

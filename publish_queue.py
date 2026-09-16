@@ -387,6 +387,53 @@ async def gravar_metrica(publication_id: str, views=None,
         return linha.id
 
 
+async def cruzamento() -> list:
+    """Um item por corte PUBLICADO e medido: o que o modelo previu e o que deu.
+
+    Junta `clips` (score e rubrica), `publications` (o elo) e `metrics` (o
+    resultado). Tres tabelas, uma volta ao banco cada -- e nao uma consulta por
+    corte, que com algumas centenas de cortes seria o relatorio inteiro travando
+    o loop.
+
+    **Vale a leitura MAIS RECENTE de cada publicacao**, porque `metrics` e serie
+    temporal: somar todas as leituras contaria o mesmo video uma vez por coleta
+    e daria peso maior ao que foi publicado ha mais tempo.
+    """
+    async with db.tenant() as t:
+        publicacoes = await t.all(db_models.Publication)
+        cortes = {c.id: c for c in await t.all(db_models.Clip)}
+        leituras = await t.all(db_models.Metric)
+
+    recente: dict = {}
+    for m in leituras:
+        atual = recente.get(m.publication_id)
+        if atual is None or (m.collected_at and atual.collected_at
+                             and m.collected_at > atual.collected_at):
+            recente[m.publication_id] = m
+
+    saida = []
+    for pub in publicacoes:
+        corte = cortes.get(pub.clip_id)
+        if corte is None:
+            continue
+        medida = recente.get(pub.id)
+        rubrica = corte.rubric_json or {}
+        saida.append({
+            "publication_id": pub.id,
+            "clip_id": corte.id,
+            "job_id": corte.job_id,
+            "titulo": rubrica.get("video_title_for_youtube_short"),
+            "score": corte.score,
+            "visual": rubrica.get("visual"),
+            "status": pub.status,
+            "views": medida.views if medida else None,
+            "retention_pct": medida.retention_pct if medida else None,
+            "medido_em": (medida.collected_at.isoformat()
+                          if medida and medida.collected_at else None),
+        })
+    return saida
+
+
 async def historico(publication_id: Optional[str] = None) -> list:
     """As leituras, da mais recente para a mais antiga."""
     async with db.tenant() as t:

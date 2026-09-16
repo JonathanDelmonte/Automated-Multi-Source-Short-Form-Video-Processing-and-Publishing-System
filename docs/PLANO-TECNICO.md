@@ -360,7 +360,7 @@ Coletar retenção e views de cada publicação, cruzar com a rubrica que o LLM 
 ## 10. Decisões em aberto
 
 - Quantos cortes por vídeo o sistema deve propor.
-- Quantos posts por dia e em quais horários (fase 4).
+- ~~Quantos posts por dia e em quais horários (fase 4).~~ **Fechada** em 16-set-2026: 3/dia (teto duro de 6, da quota), janelas 11h/15h/19h, espaçamento mínimo de 3h, jitter de ±25 min com piso de 5. Os três primeiros são configuráveis e calibráveis na Fase 5 com `metrics`; o piso do jitter não é. Ver ADR-007.
 - Se o pré-filtro heurístico entra já na fase 0 ou só quando o rate limit apertar.
 - Se o tracking de rosto usa MediaPipe puro desde o início, evitando a AGPL do YOLOv8.
 

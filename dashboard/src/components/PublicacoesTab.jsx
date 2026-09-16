@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Download, Trash2, Loader2, Plus, CheckCircle2, Youtube,
-         Instagram, AlertTriangle, Send } from 'lucide-react';
+         Instagram, AlertTriangle, Send, Clock } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 
 // A tela de publicação (Fase 3, bloco 3.5).
@@ -30,6 +30,9 @@ const DRIVERS = {
 };
 
 const ESTADO = {
+  // `scheduled` cobre duas esperas: a fila manual (sem data, esperando uma
+  // pessoa) e a agendada (com data, esperando a hora). A data distingue as
+  // duas na linha, e é por isso que ela aparece ao lado do estado.
   scheduled: { texto: 'na fila', cor: 'text-brass' },
   publishing: { texto: 'subindo', cor: 'text-brass' },
   published: { texto: 'publicado', cor: 'text-ok' },
@@ -49,6 +52,7 @@ export default function PublicacoesTab() {
   const [envio, setEnvio] = useState({ job_id: '', account_id: '' });
   const [ultimoEnvio, setUltimoEnvio] = useState(null);
   const [confirmando, setConfirmando] = useState(null);
+  const [agenda, setAgenda] = useState(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -58,6 +62,10 @@ export default function PublicacoesTab() {
         apiFetch('/api/publicacoes'),
         apiFetch('/api/jobs'),
       ]);
+      try {
+        const rAgenda = await apiFetch('/api/agenda');
+        setAgenda(rAgenda.ok ? await rAgenda.json() : null);
+      } catch { setAgenda(null); }
       const prontos = rJobs.ok
         ? ((await rJobs.json()).jobs || []).filter((j) => j.clip_count > 0)
         : [];
@@ -115,6 +123,22 @@ export default function PublicacoesTab() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setErro(data.detail || 'Não deu para publicar.');
+      setUltimoEnvio(null);
+      return;
+    }
+    setErro(null);
+    setUltimoEnvio(data.resultados || []);
+  });
+
+  const agendar = () => acao(async () => {
+    const res = await apiFetch('/api/agendar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: envio.job_id, account_id: envio.account_id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setErro(data.detail || 'Não deu para agendar.');
       setUltimoEnvio(null);
       return;
     }
@@ -309,7 +333,12 @@ export default function PublicacoesTab() {
                         disabled={!podePublicar} onClick={publicar}>
                   {ocupado ? <Loader2 size={14} className="animate-spin" />
                            : <Send size={14} />}
-                  publicar todos
+                  publicar agora
+                </button>
+                <button className="btn-quiet text-sm inline-flex items-center gap-1.5"
+                        disabled={!podePublicar} onClick={agendar}>
+                  <Clock size={14} />
+                  agendar
                 </button>
               </div>
               <p className="text-muted text-[12px] leading-snug">
@@ -317,6 +346,17 @@ export default function PublicacoesTab() {
                 quota, o corte sobe sozinho; sem, ele entra na fila manual com a
                 legenda pronta.
               </p>
+              {agenda && (
+                // O horário aparece ANTES de agendar. Descobrir a que horas o
+                // sistema publicou depois do post é tarde para discordar.
+                <p className="text-muted text-[12px] leading-snug">
+                  <strong className="text-ink2">agendar</strong> espalha os
+                  cortes em {agenda.janelas.map((h) => `${h}h`).join(', ')}, no
+                  máximo {agenda.por_dia} por dia, com ±{agenda.jitter_min} min
+                  de variação — horário exato todo dia é um dos sinais que a
+                  detecção de automação cruza.
+                </p>
+              )}
             </>
           )}
           {ultimoEnvio && (
@@ -349,7 +389,14 @@ export default function PublicacoesTab() {
                     <span className="text-muted text-xs hidden sm:inline">
                       {p.account.handle}
                     </span>
-                    <span className={`text-xs ${estado.cor}`}>{estado.texto}</span>
+                    <span className={`text-xs ${estado.cor}`}>
+                      {estado.texto}
+                      {p.scheduled_at && p.status === 'scheduled' && (
+                        <> · {new Date(p.scheduled_at).toLocaleString(undefined,
+                          { day: '2-digit', month: 'short', hour: '2-digit',
+                            minute: '2-digit' })}</>
+                      )}
+                    </span>
                     {p.status === 'scheduled' && (
                       <button
                         className="text-muted hover:text-ok shrink-0"

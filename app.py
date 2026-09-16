@@ -7,6 +7,7 @@ import sources
 import publishers
 import publish_queue
 import auth
+import scheduler
 import template as template_doc
 import db
 import db_models
@@ -1844,6 +1845,7 @@ async def lifespan(app: FastAPI):
     _install_drain_signal_handler()
     asyncio.create_task(_handover_watch())
     asyncio.create_task(_resume_scan())
+    asyncio.create_task(_laco_do_agendador())
     # O banco nasce no boot (Fase 2, bloco 2.3). O seed e idempotente e cria o
     # schema, o tenant fixo do self-host e o template padrao -- sem isto, a
     # primeira visita a aba de templates falharia com "no such table" numa
@@ -5051,6 +5053,152 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Agendador (Fase 4, bloco 4.4, ADR-007) ---------------------------------
+# Publica o que chegou a hora. As regras de QUANDO estao no `scheduler.py`, que
+# e stdlib pura e testavel sem relogio; aqui esta o laco, que e a parte que
+# precisa do banco e do disco.
+
+#: De quanto em quanto tempo o laco olha o relogio. Um minuto: o jitter do
+#: ADR-007 e de dezenas de minutos, entao precisao maior que isso nao compra
+#: nada e so multiplica consultas.
+INTERVALO_DO_AGENDADOR = int(os.environ.get("SCHEDULE_TICK_SECONDS", "60"))
+
+
+async def _publicar_uma_agendada(pendente: dict) -> None:
+    """Uma publicacao vencida, do comeco ao fim.
+
+    **Repoe o tenant antes de tudo.** O laco e do servidor e atravessa os
+    tenants; sem isto, ler o corte e a conta usaria o tenant errado -- e o
+    `db.tenant()` nao reclamaria, so devolveria None e a publicacao morreria
+    dizendo "corte nao encontrado".
+    """
+    db.usar_tenant(pendente["tenant_id"])
+    async with db.tenant() as t:
+        corte = await t.get(db_models.Clip, pendente["clip_id"])
+        conta = await t.get(db_models.Account, pendente["account_id"])
+    if corte is None or conta is None:
+        await publish_queue._fechar(pendente["id"], status="failed")
+        print(f"⏰ Agendada {pendente['id']}: corte ou conta sumiu.")
+        return
+
+    itens = _itens_do_job(corte.job_id)
+    indice = int((corte.rubric_json or {}).get("clip_index") or 0)
+    item = next((i for i in itens if i.clip.index == indice), None)
+    if item is None or not os.path.exists(item.clip.path):
+        await publish_queue._fechar(pendente["id"], status="failed")
+        print(f"⏰ Agendada {pendente['id']}: o arquivo do corte nao existe "
+              "mais (limpeza por idade?).")
+        return
+
+    try:
+        resultado = await publish_queue.publicar_reservada(
+            pendente["id"], corte, conta, item.clip.path, item.meta)
+        print(f"⏰ Publicada agendada {pendente['id']} por {resultado['driver']}: "
+              f"{resultado['detail']}")
+    except publish_queue.FilaError as e:
+        print(f"⏰ Agendada {pendente['id']} falhou: {e}")
+
+
+async def _laco_do_agendador():
+    """Acorda, pega o que venceu, publica.
+
+    **Nao roda enquanto a instancia esta drenando.** Durante um deploy ha duas
+    com o mesmo banco; a velha ja nao aceita job novo e tambem nao deve comecar
+    publicacao nova. E mesmo com as duas ativas por alguns segundos, quem
+    publica e quem conseguir `reservar()` -- o UPDATE condicional e a trava de
+    verdade, o drain e so a economia.
+    """
+    while True:
+        await asyncio.sleep(INTERVALO_DO_AGENDADOR)
+        if _draining:
+            continue
+        try:
+            pendentes = await publish_queue.devidas(datetime.now(timezone.utc))
+        except Exception as e:
+            # Falha aberto e silencioso: o banco fora do ar nao pode encher o
+            # log a cada minuto nem derrubar o resto da API.
+            print(f"⚠️  Agendador: nao consegui ler a fila ({e})")
+            continue
+        for pendente in pendentes:
+            try:
+                if not await publish_queue.reservar(pendente["id"]):
+                    continue        # a outra instancia pegou primeiro
+                await _publicar_uma_agendada(pendente)
+            except Exception as e:
+                print(f"⚠️  Agendador: {pendente['id']} explodiu ({e})")
+
+
+class AgendarIn(BaseModel):
+    job_id: str
+    account_id: str
+    clips: Optional[List[int]] = None
+
+
+@app.get("/api/agenda")
+async def ver_agenda():
+    """A agenda em vigor. E o que o painel mostra antes de agendar, para que
+    ninguem descubra o horario depois do post."""
+    return scheduler.descricao()
+
+
+@app.post("/api/agendar")
+async def agendar_cortes(req: AgendarIn, request: Request):
+    """Agenda os cortes de um projeto em vez de publicar agora.
+
+    O teto por dia e o menor entre a agenda configurada e a quota do YouTube:
+    agendar oito uploads para um dia que so comporta seis deixaria dois
+    falhando a cada noite, e a falha apareceria horas depois de quem clicou ter
+    ido dormir.
+    """
+    job = jobs.get(req.job_id) or _job_view_from_disk(req.job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job nao encontrado")
+    await _assert_job_owner(request, job)
+
+    itens = _itens_do_job(req.job_id)
+    escolhidos = ([i for i in itens if i.clip.index in set(req.clips)]
+                  if req.clips else itens)
+    if not escolhidos:
+        raise HTTPException(status_code=404,
+                            detail="Nenhum corte para agendar neste projeto")
+
+    try:
+        async with db.tenant() as t:
+            conta = await t.get(db_models.Account, req.account_id)
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if conta is None:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+
+    teto = min(scheduler.por_dia(), publishers.quota.uploads_por_dia())
+    horarios = scheduler.proximos_horarios(len(escolhidos), teto_por_dia=teto)
+
+    resultados = []
+    for item, quando in zip(escolhidos, horarios):
+        corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
+        if corte is None:
+            resultados.append({"clip_index": item.clip.index, "ok": False,
+                               "detail": "este corte nao esta no banco; "
+                                         "reprocesse o projeto para registra-lo"})
+            continue
+        try:
+            linha = await publish_queue.agendar(
+                corte, conta, scheduler.para_utc(quando))
+        except publish_queue.FilaError as e:
+            resultados.append({"clip_index": item.clip.index, "ok": False,
+                               "detail": str(e)})
+            continue
+        except Exception as e:
+            raise _erro_da_fila(e)
+        resultados.append({"clip_index": item.clip.index, "ok": True, **linha})
+
+    agendados = sum(1 for r in resultados if r.get("ok"))
+    print(f"⏰ {agendados} corte(s) de {req.job_id} agendados para "
+          f"{conta.platform}/{conta.handle}")
+    return {"resultados": resultados, "agendados": agendados,
+            "agenda": scheduler.descricao()}
 
 
 # --- Auth (Fase 4, bloco 4.1) -----------------------------------------------

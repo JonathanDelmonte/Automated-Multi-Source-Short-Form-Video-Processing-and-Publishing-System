@@ -624,6 +624,37 @@ primeira". O 4.2 cuidou dos dados; aqui e o que mais aparece na tela.
   thumbnail nao tem carimbo de tenant, e o upstream as serve publicamente de
   proposito. Fecha-las exige carimba-las primeiro.
 
+### Agendador com jitter (`scheduler.py`, Fase 4 bloco 4.4, ADR-007)
+
+Fecha a decisao em aberto §10.2. `POST /api/agendar` espalha os cortes de um
+projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
+
+- **Os numeros:** 3/dia, janelas 11h/15h/19h, espacamento minimo de 3 h, jitter
+  de ±25 min. O 3/dia e o unico que o plano corrobora duas vezes (a conta do §1
+  e a proposta do ADR-007). O teto duro e 6/dia, da quota, e o agendador nunca o
+  ultrapassa. Os tres primeiros sao **defaults configuraveis** -- calibrar
+  horario exige retencao medida, que e a Fase 5.
+- **`JITTER_MINIMO_MIN` (5) e piso NAO configuravel.** Pedir zero nao desliga o
+  jitter, so o reduz ao piso, com uma linha no log. A alternativa e um
+  agendador que um dia roda com zero -- e a assinatura que o §1 manda evitar
+  volta sem ninguem decidir que volta.
+- **Jitter primeiro, espacamento depois.** Ao contrario, duas janelas a uma
+  hora com jitter de -25 e +25 terminariam a 10 min uma da outra: o jitter
+  destruindo a regra que o espacamento existe para manter.
+- **Nada no passado**: uma janela que ja passou vai para amanha. Agendar para
+  tras publicaria tudo de uma vez no primeiro tique, que e o oposto de espacar.
+- **`scheduled_at` nulo x preenchido distingue as duas esperas** sem status
+  novo: nulo e a fila manual (esperando uma pessoa), com data e a agendada
+  (esperando a hora).
+- **`publish_queue.reservar()` e um UPDATE condicional**, nao um leia-e-escreva:
+  durante um deploy ha duas instancias com o mesmo banco e o mesmo laco, e a
+  unicidade `(corte, conta)` nao pega esse caso porque a linha e a mesma.
+- **O laco repoe o tenant antes de ler qualquer coisa.** Ele e do servidor e
+  atravessa tenants; sem repor, `db.tenant()` nao reclama -- devolve None, e a
+  publicacao morre dizendo "corte nao encontrado".
+- O painel mostra a agenda **antes** de agendar: descobrir a que horas o sistema
+  publicou depois do post e tarde para discordar.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote
@@ -876,6 +907,7 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/publicar` | Publica cortes de um projeto numa conta |
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
+| GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |

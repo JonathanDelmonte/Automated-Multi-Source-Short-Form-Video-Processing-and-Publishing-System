@@ -299,7 +299,7 @@ ruins para preencher cota.
 
 ## ADR-007 — Cadência de publicação fica para a Fase 4, com jitter como requisito
 
-**Data:** 2026-09-12 · **Status:** parcial
+**Data:** 2026-09-12 · **Status:** fechada em 16-set-2026 (Fase 4, bloco 4.4)
 **Aborda a decisão em aberto §10.2**
 
 O §10 pergunta quantos posts por dia e em quais horários. O próprio plano localiza
@@ -319,6 +319,25 @@ desenho, não configuração opcional. Vale para todos os drivers, inclusive `ma
 Os números — quantos por dia, quais janelas, espaçamento mínimo — permanecem abertos
 para a Fase 4. Padrões de partida para discussão: 3/dia, espaçamento mínimo de 3h,
 jitter de ±25 min.
+
+**Fechado em 16-set-2026, na Fase 4 (bloco 4.4), e os números de partida ficaram.**
+Não por inércia: o **3/dia** é o único que o plano corrobora duas vezes — a conta do
+§1 ("3 vídeos/dia gastam 4.800 e sobra metade para listagem e reprocessamento") e a
+proposta deste ADR chegaram nele por caminhos diferentes. O teto duro é outro e não é
+escolha nossa: **6/dia**, do contador de quota do `youtube-api`, e o agendador nunca o
+ultrapassa (`min(scheduler.por_dia(), quota.uploads_por_dia())`).
+
+O que **não** está fechado, e está dito como tal: se 11h/15h/19h são os horários certos.
+Isso não se decide com argumento — decide-se com retenção medida, que é a tabela
+`metrics` e a Fase 5. Por isso os três números vivem em variável de ambiente
+(`SCHEDULE_PER_DAY`, `SCHEDULE_WINDOWS`, `SCHEDULE_MIN_GAP_MINUTES`): calibrar não pode
+exigir deploy.
+
+O jitter virou código com uma trava que o ADR pedia implicitamente. `JITTER_MINIMO_MIN`
+(5 min) é um **piso não configurável**: pedir zero não desliga o jitter, só o reduz ao
+piso, com uma linha no log dizendo por quê. A alternativa — aceitar zero — é um
+agendador que um dia roda com zero, e aí a assinatura que este ADR existe para evitar
+volta sem ninguém decidir que volta.
 
 ---
 

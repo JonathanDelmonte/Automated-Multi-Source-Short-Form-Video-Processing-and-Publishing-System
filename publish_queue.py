@@ -192,6 +192,111 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
     }
 
 
+# --------------------------------------------------------------------------- #
+# Agendar (Fase 4, bloco 4.4)
+# --------------------------------------------------------------------------- #
+
+async def agendar(clip_row, account_row, quando) -> dict:
+    """Enfileira um corte para publicar mais tarde, em vez de agora.
+
+    A linha nasce `scheduled` com `scheduled_at` preenchido -- que e a coluna
+    que a secao 7 poe ali exatamente para isto. **`scheduled_at` nulo continua
+    significando "fila manual"**: o driver `manual` termina em `scheduled` sem
+    data porque espera uma pessoa, e nao um horario. Duas esperas diferentes no
+    mesmo status, distinguidas pela data, sem inventar um status novo.
+    """
+    async with db.tenant() as t:
+        repetida = await t.all(
+            db_models.Publication,
+            db_models.Publication.clip_id == clip_row.id,
+            db_models.Publication.account_id == account_row.id)
+        if repetida:
+            raise FilaError(
+                f"este corte ja esta na fila para {account_row.platform}/"
+                f"{account_row.handle} (status: {repetida[0].status})")
+        conta = conta_para_driver(account_row)
+        driver = publishers.resolve(account_row.platform, conta)
+        linha = t.add(db_models.Publication(
+            clip_id=clip_row.id, account_id=account_row.id,
+            driver=driver.id, status="scheduled", scheduled_at=quando))
+        await t.commit()
+        return {"id": linha.id, "driver": driver.id,
+                "scheduled_at": quando.isoformat()}
+
+
+async def devidas(agora) -> list:
+    """As publicacoes agendadas cuja hora chegou, da mais antiga para a mais
+    nova.
+
+    **Atravessa os tenants de proposito** (`db.session`, nao `db.tenant()`): o
+    laco e do servidor, nao de uma requisicao, e nao ha sessao de onde tirar um
+    escopo. Quem devolve cada linha ao tenant dela e o chamador, antes de
+    publicar -- e e por isso que o `tenant_id` volta junto.
+    """
+    from sqlalchemy import select as _select
+    async with db.session() as s:
+        achadas = await s.execute(
+            _select(db_models.Publication)
+            .where(db_models.Publication.status == "scheduled")
+            .where(db_models.Publication.scheduled_at.is_not(None))
+            .where(db_models.Publication.scheduled_at <= agora)
+            .order_by(db_models.Publication.scheduled_at))
+        return [{"id": p.id, "tenant_id": p.tenant_id, "clip_id": p.clip_id,
+                 "account_id": p.account_id, "driver": p.driver}
+                for p in achadas.scalars().all()]
+
+
+async def reservar(pub_id: str) -> bool:
+    """Marca a publicacao como `publishing` **so se ainda estava `scheduled`**.
+
+    E um UPDATE condicional, e nao um leia-e-escreva, porque durante um deploy
+    ha DUAS instancias com o mesmo banco e o mesmo laco. Quem conseguir mudar a
+    linha publica; a outra recebe zero linhas afetadas e segue. Sem isto o mesmo
+    corte subiria duas vezes -- e a unicidade `(corte, conta)` nao pega esse
+    caso, porque a linha e a mesma.
+    """
+    from sqlalchemy import update as _update
+    async with db.session() as s:
+        r = await s.execute(
+            _update(db_models.Publication)
+            .where(db_models.Publication.id == pub_id)
+            .where(db_models.Publication.status == "scheduled")
+            .values(status="publishing"))
+        await s.commit()
+        return (r.rowcount or 0) > 0
+
+
+async def publicar_reservada(pub_id: str, clip_row, account_row,
+                             caminho_do_arquivo: str,
+                             meta: publishers.PostMeta,
+                             opts: Optional[publishers.PublishOptions] = None) -> dict:
+    """Executa uma publicacao que `reservar()` ja marcou como `publishing`.
+
+    Nao cria linha nem confere repeticao: as duas coisas aconteceram no
+    `agendar()`, dias antes. O que resta e chamar o driver e fechar a linha.
+    """
+    opts = opts or publishers.PublishOptions()
+    conta = conta_para_driver(account_row)
+    driver = publishers.resolve(account_row.platform, conta)
+    clip = publishers.RenderedClip(
+        path=caminho_do_arquivo, job_id=clip_row.job_id,
+        index=int((clip_row.rubric_json or {}).get("clip_index") or 0),
+        title=meta.title, clip_id=clip_row.id)
+    try:
+        resultado = await asyncio.get_event_loop().run_in_executor(
+            None, driver.publish, clip, meta, opts, conta)
+    except publishers.PublisherError as e:
+        await _fechar(pub_id, status="failed")
+        raise FilaError(str(e))
+    except Exception as e:
+        await _fechar(pub_id, status="failed")
+        raise FilaError(f"{type(e).__name__}: {e}")
+    await _fechar(pub_id, status=resultado.status,
+                  remote_id=resultado.remote_id)
+    return {"id": pub_id, "driver": driver.id, "status": resultado.status,
+            "ok": resultado.ok, "url": resultado.url, "detail": resultado.detail}
+
+
 async def _fechar(pub_id: str, status: str,
                   remote_id: Optional[str] = None) -> None:
     async with db.tenant() as t:
@@ -264,6 +369,10 @@ async def listar(status: Optional[str] = None) -> list:
             "driver": linha.driver,
             "remote_id": linha.remote_id,
             "created_at": linha.created_at.isoformat() if linha.created_at else None,
+            # Nulo aqui significa "fila manual, esperando uma pessoa"; com data,
+            # "agendada, esperando a hora". Ver `agendar()`.
+            "scheduled_at": (linha.scheduled_at.isoformat()
+                             if linha.scheduled_at else None),
             "clip": {
                 "id": linha.clip_id,
                 "job_id": corte.job_id if corte else None,

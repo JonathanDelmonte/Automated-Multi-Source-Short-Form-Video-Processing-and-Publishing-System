@@ -372,14 +372,27 @@ async def _owner_id(request):
 
 
 async def _assert_job_owner(request, record):
-    """Cloud multi-tenant guard: reject unless the caller owns this in-memory
-    job/session record.
+    """Rejeita quem nao e dono deste job. Um lugar so, ja chamado por todos.
 
-    No-op for self-host (BILLING off) and for records with no owner stamped
-    (BYOK / self-host jobs never set ``user_id``). Returns 404 rather than 403 so
-    a non-owner can't even confirm the id exists. UUID ids already make these
-    stores hard to enumerate; this closes the gap for a shared/leaked id.
+    Duas guardas moram aqui, e a segunda e a da Fase 4:
+
+    **Tenant** (bloco 4.3). Com a auth ligada, um job so responde para o tenant
+    que o submeteu. E aqui, e nao em cada endpoint, porque esta funcao ja e
+    chamada por `/api/status`, cancelar, apagar, baixar tudo e por todos os
+    endpoints de edicao -- somar a checagem em um lugar protege os nove de uma
+    vez, e o endpoint novo nasce protegido.
+
+    **Usuario** (herdado do cloud). No-op fora do modo pago.
+
+    Devolve **404 e nao 403** nos dois casos: 403 confirma que o id existe, e
+    quem esta sondando ids alheios ja ganhou metade da resposta com isso.
     """
+    if await _auth_ativa():
+        dono = record.get("tenant_id") if isinstance(record, dict) else None
+        # Job anterior a Fase 4 nao tem carimbo: pertence ao self-host, que era
+        # o unico tenant quando ele foi criado.
+        if (dono or db.SELF_HOST_TENANT_ID) != db.tenant_atual():
+            raise HTTPException(status_code=404, detail="Not found")
     if not BILLING_ENABLED:
         return
     owner = record.get("user_id") if isinstance(record, dict) else None
@@ -2852,6 +2865,10 @@ def _job_view_from_disk(job_id):
         'status': 'processing' if alive else 'queued',
         'logs': ["♻️ The server was updated; your video continues on the new instance."],
         'user_id': (int(owner) if isinstance(owner, str) and owner.isdigit() else owner),
+        # Sem isto, um job em voo visto pela OUTRA instancia durante um deploy
+        # apareceria sem dono -- e `_assert_job_owner` deixaria qualquer tenant
+        # cancelar ou apagar o video de outro no meio do processamento.
+        'tenant_id': m.get("tenant_id") or _tenant_do_disco(job_path),
         'result': None,
     }
 
@@ -2991,11 +3008,13 @@ async def list_jobs(request: Request):
     _recover_jobs_from_disk()
     vistos = []
     for job_id, job in list(jobs.items()):
-        if BILLING_ENABLED:
-            try:
-                await _assert_job_owner(request, job)
-            except HTTPException:
-                continue
+        # Era `if BILLING_ENABLED` -- o filtro so valia no modo pago, que nao
+        # existe neste fork. Agora vale sempre, porque `_assert_job_owner` ganhou
+        # a guarda de tenant e ela e no-op quando nao ha auth.
+        try:
+            await _assert_job_owner(request, job)
+        except HTTPException:
+            continue
         vistos.append(_resumo_do_job(job_id, job))
     vistos.sort(key=lambda j: j.get('created_at') or 0, reverse=True)
     return {"jobs": vistos}
@@ -3322,14 +3341,13 @@ async def _cortes_por_dia(request) -> dict:
     for job_id in entradas:
         if not _JOB_ID_RE.match(job_id):
             continue
-        if BILLING_ENABLED:
-            registro = jobs.get(job_id) or _job_view_from_disk(job_id)
-            if registro is None:
-                continue
-            try:
-                await _assert_job_owner(request, registro)
-            except HTTPException:
-                continue
+        registro = jobs.get(job_id) or _job_view_from_disk(job_id)
+        if registro is None:
+            continue
+        try:
+            await _assert_job_owner(request, registro)
+        except HTTPException:
+            continue
         for item in _itens_do_job(job_id):
             try:
                 dia = publishers.pacote.dia_de(os.path.getmtime(item.clip.path))
@@ -5195,6 +5213,60 @@ def _rota_publica(caminho: str) -> bool:
     return any(caminho == p or caminho.startswith(p) for p in ROTAS_PUBLICAS)
 
 
+async def _pode_ver_midia(request: Request, caminho: str) -> bool:
+    """Se quem pede pode ver os bytes de `/videos/<job_id>/...`.
+
+    **Um `<video src>` nao manda cabecalho `Authorization`**, entao a sessao
+    sozinha nao resolve: o player do navegador nunca a carregaria. Dai as duas
+    portas, e as duas provam a mesma coisa (de qual tenant e quem pede):
+
+    * o cabecalho, que serve a `fetch()`, ao `curl` e ao MCP;
+    * `?mt=<token>`, um portador curto que o painel pendura na URL. O token
+      carrega o TENANT e nao o usuario -- o dono do arquivo e o tenant, e usar
+      o id do usuario obrigaria a remintar a cada troca de conta dentro da
+      mesma instalacao.
+
+    E nao a sessao de 30 dias na query: ela vazaria para o log de acesso, para
+    o `Referer` e para o historico do navegador, que e exatamente o que o
+    `media_auth` foi escrito para evitar.
+    """
+    partes = [p for p in caminho.split("/") if p]
+    if len(partes) < 2:
+        return False
+    job_id = partes[1]
+    if not _JOB_ID_RE.match(job_id):
+        # Nao e pasta de job (thumbnails, sobras). O `guard` do
+        # RestoringStaticFiles ja recusa o que nao e entregavel.
+        return True
+    dono = _tenant_do_disco(os.path.join(OUTPUT_DIR, job_id))
+
+    sessao = await _sessao(request)
+    if sessao is not None and sessao["tenant_id"] == dono:
+        return True
+
+    token = request.query_params.get("mt")
+    if token:
+        segredo = auth.segredo_texto()
+        if media_auth.verify_user_token(token, segredo) == dono:
+            return True
+    return False
+
+
+@app.get("/api/media-token")
+async def media_token(request: Request):
+    """Um portador curto para as URLs de midia desta aba.
+
+    O painel o pendura em toda URL de `/videos/`, porque um `<video src>` nao
+    tem como mandar cabecalho. Curto de proposito: se vazar pelo log de acesso
+    ou pelo `Referer`, expira sozinho -- ao contrario da sessao de 30 dias.
+    """
+    sessao = await _sessao(request)
+    tenant = sessao["tenant_id"] if sessao else db.tenant_atual()
+    segredo = auth.segredo_texto()
+    return {"token": media_auth.mint_user_token(tenant, segredo),
+            "ttl": media_auth.MEDIA_TOKEN_TTL_SECONDS}
+
+
 @app.middleware("http")
 async def tranca_da_api(request: Request, call_next):
     """A tranca, num lugar so.
@@ -5212,6 +5284,16 @@ async def tranca_da_api(request: Request, call_next):
     continuam servidos como sempre foram, e o `COMO-EXECUTAR.md` diz isso.
     """
     caminho = request.url.path
+    # Os BYTES dos clipes (bloco 4.3). Ficam fora do ramo de `/api/` porque a
+    # prova e outra: o player nao manda cabecalho, entao vale tambem o token
+    # curto da query. Com a auth desligada nada muda -- e o comportamento que
+    # esta instalacao sempre teve.
+    if caminho.startswith("/videos/"):
+        if not await _auth_ativa() or await _pode_ver_midia(request, caminho):
+            return await call_next(request)
+        # 404 e nao 403: confirmar que o job existe ja entrega metade da
+        # resposta a quem estiver sondando ids.
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
     if not caminho.startswith("/api/") or _rota_publica(caminho):
         return await call_next(request)
     if not await _auth_ativa():

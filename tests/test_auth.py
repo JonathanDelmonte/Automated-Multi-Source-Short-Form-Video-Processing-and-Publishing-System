@@ -165,6 +165,17 @@ class TestToken:
         caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)
         assert oct(os.stat(caminho).st_mode & 0o777) == "0o600"
 
+    def test_o_segredo_em_texto_preserva_os_32_bytes(self):
+        """`decode("utf-8", "ignore")` sobre bytes aleatorios DESCARTA os que
+        nao formam UTF-8 valido -- medido, sobram de 13 a 21 caracteres dos 32
+        bytes, e sempre os mesmos tipos. A chave encolhe e envieza sem aviso.
+        Foi assim que o token de midia do bloco 4.3 quase nasceu mais fraco."""
+        import base64
+        texto = auth.segredo_texto()
+        assert texto.isascii()
+        assert len(base64.urlsafe_b64decode(texto + "==")) == 32
+        assert base64.urlsafe_b64decode(texto + "==") == auth.segredo_de_sessao()
+
     def test_bearer_do_header(self):
         assert auth.token_do_header("Bearer abc") == "abc"
         assert auth.token_do_header("bearer abc") == "abc"

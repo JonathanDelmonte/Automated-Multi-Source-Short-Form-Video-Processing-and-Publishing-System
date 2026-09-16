@@ -5,7 +5,7 @@
 // When billingEnabled is false the provider is inert and the app behaves as the
 // classic BYOK dashboard.
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { getApiUrl } from '../config';
+import { getApiUrl, setMediaToken } from '../config';
 import { apiFetch, apiJson, getToken, setToken, clearToken } from '../lib/api';
 import { track, identify, reset as resetAnalytics } from '../lib/analytics';
 import { report as reportAttribution } from '../lib/attribution';
@@ -113,11 +113,12 @@ export function AuthProvider({ children }) {
         if (cfg.billingEnabled || cfg.authAtiva) {
           const handled = cfg.billingEnabled ? await handleAuthHash() : false;
           if (!handled) await refreshMe();
+          if (cfg.authAtiva) await pegarMediaToken();
         }
       } catch (_) { /* config fetch failed — stay in BYOK */ }
       setLoading(false);
     })();
-  }, [handleAuthHash, refreshMe]);
+  }, [handleAuthHash, refreshMe, pegarMediaToken]);
 
   const requestMagicLink = useCallback(async (email) => {
     const res = await apiFetch('/api/auth/magic-link', {
@@ -136,6 +137,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     clearToken();
+    setMediaToken('');
     setMe(null);
     resetAnalytics();
   }, []);
@@ -158,6 +160,17 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // O token curto das URLs de mídia. Sem ele, com a auth ligada, todo `<video>`
+  // do painel volta 404 — o player não tem como mandar cabeçalho.
+  const pegarMediaToken = useCallback(async () => {
+    try {
+      const data = await apiJson('/api/media-token');
+      setMediaToken(data.token);
+    } catch {
+      setMediaToken('');
+    }
+  }, []);
+
   const entrar = useCallback(async (email, senha) => {
     const data = await apiJson('/api/auth/login', {
       method: 'POST',
@@ -166,8 +179,9 @@ export function AuthProvider({ children }) {
     });
     setToken(data.token);
     await refreshMe();
+    await pegarMediaToken();
     return data;
-  }, [refreshMe]);
+  }, [refreshMe, pegarMediaToken]);
 
   // Só responde enquanto a instalação não tem dono. Não cria conta: dá senha e
   // e-mail ao usuário que o seed já criou e que já é dono de tudo em disco.
@@ -180,8 +194,9 @@ export function AuthProvider({ children }) {
     setToken(data.token);
     await refreshConfig();
     await refreshMe();
+    await pegarMediaToken();
     return data;
-  }, [refreshMe, refreshConfig]);
+  }, [refreshMe, refreshConfig, pegarMediaToken]);
 
   const value = {
     billingEnabled: config.billingEnabled,

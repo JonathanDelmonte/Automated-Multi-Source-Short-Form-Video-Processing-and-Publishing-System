@@ -175,6 +175,18 @@ def segredo_de_sessao() -> bytes:
     return novo
 
 
+def segredo_texto() -> str:
+    """O mesmo segredo em ASCII, para quem exige `str`.
+
+    **Nao usar `segredo_de_sessao().decode("utf-8", "ignore")`.** Os 32 bytes
+    sao aleatorios, e decodificar com `ignore` DESCARTA os que nao formam UTF-8
+    valido: medido, sobram de 13 a 21 caracteres, e sempre os mesmos tipos de
+    byte. A chave encolhe e enviesa sem aviso -- nao quebra nada, so protege
+    menos do que parece. Base64 preserva os 32 bytes inteiros.
+    """
+    return _b64e(segredo_de_sessao())
+
+
 def esquecer_segredo() -> None:
     """So para teste: descarta o segredo em memoria."""
     global _segredo_em_memoria

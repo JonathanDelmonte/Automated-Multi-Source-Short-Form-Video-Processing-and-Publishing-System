@@ -596,6 +596,34 @@ o que o docstring de `db.tenant()` previa desde a Fase 0.5.
 - Um job ou manifesto anterior a este bloco cai no self-host: era o unico
   tenant que existia quando foi escrito, e chutar outro seria inventar dono.
 
+### Fila e arquivos isolados por tenant (Fase 4 bloco 4.3)
+
+O criterio de pronto da fase: "uma segunda conta usa o sistema sem ver nada da
+primeira". O 4.2 cuidou dos dados; aqui e o que mais aparece na tela.
+
+- **A guarda mora em `_assert_job_owner`**, que `/api/status`, cancelar, apagar,
+  baixar tudo e os endpoints de edicao **ja chamavam**. Somar a checagem de
+  tenant la protege os nove de uma vez, e o endpoint novo nasce protegido.
+  `test_todo_endpoint_de_job_recusa_o_vizinho` cobra isso de todos.
+- **404, nunca 403.** 403 confirma que o id existe, e quem sonda ids alheios ja
+  ganhou metade da resposta com isso.
+- **Os bytes de `/videos/` tem porta propria**, porque um `<video src>` nao
+  manda cabecalho `Authorization`: vale a sessao **ou** `?mt=<token>`, um
+  portador curto que o painel pendura na URL (o `RestoringStaticFiles` ja
+  descrevia essa pendencia no docstring dele). O token carrega o **tenant** e
+  nao o usuario -- o dono do arquivo e o tenant. E nao e a sessao de 30 dias na
+  query, que vazaria para log de acesso, `Referer` e historico.
+- **O frontend monta a URL num lugar so** (`config.js:getApiUrl`). Se cada
+  componente montasse a sua, o que esquecesse o token nao tocaria o video -- e o
+  bug pareceria "o clipe sumiu", nao "faltou autorizacao".
+- **`auth.segredo_texto()`, nunca `segredo_de_sessao().decode("utf-8",
+  "ignore")`.** Os 32 bytes sao aleatorios e o `ignore` DESCARTA os que nao
+  formam UTF-8: medido, sobram 13 a 21 caracteres. A chave encolhe e envieza
+  sem quebrar nada -- so protege menos do que parece.
+- **`/thumbnails/` continua aberto**, e e limitacao conhecida: as sessoes de
+  thumbnail nao tem carimbo de tenant, e o upstream as serve publicamente de
+  proposito. Fecha-las exige carimba-las primeiro.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote

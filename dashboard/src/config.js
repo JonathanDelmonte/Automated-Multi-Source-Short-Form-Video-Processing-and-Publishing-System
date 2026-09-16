@@ -4,9 +4,30 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+// Token curto para as URLs de mídia (Fase 4, bloco 4.3).
+//
+// Um `<video src>` ou `<img src>` não manda cabeçalho `Authorization`, então o
+// player nunca carregaria a sessão — e com a auth ligada os bytes do clipe
+// respondem 404. O token vai na query, e é curto de propósito: se vazar pelo
+// log de acesso ou pelo `Referer`, expira sozinho, ao contrário da sessão de
+// 30 dias. Quem o busca é o `AuthContext`, uma vez por sessão.
+//
+// **Um lugar só.** Se cada componente montasse a própria URL de mídia, o que
+// esquecesse o token simplesmente não tocaria o vídeo — e o bug pareceria "o
+// clipe sumiu", não "faltou autorização".
+let mediaToken = '';
+
+export const setMediaToken = (t) => { mediaToken = t || ''; };
+
+const PREFIXOS_DE_MIDIA = ['/videos/'];
+
 export const getApiUrl = (path) => {
     if (path.startsWith('http')) return path;
     // Ensure path starts with / if not present
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    return `${API_BASE_URL}${normalizedPath}`;
+    const url = `${API_BASE_URL}${normalizedPath}`;
+    if (mediaToken && PREFIXOS_DE_MIDIA.some((p) => normalizedPath.startsWith(p))) {
+        return url + (url.includes('?') ? '&' : '?') + `mt=${encodeURIComponent(mediaToken)}`;
+    }
+    return url;
 };

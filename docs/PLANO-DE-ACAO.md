@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fases 1 e 2 completas em código; **Fase 3 completa em código** — interface, resolvedor, `manual` com pacote do dia, `youtube-api` com contador de quota, e a fila de publicação. O bloco 3.3 fechou de passagem a pendência da Fase 1: o pipeline escreve `sources`, `jobs` e `clips` |
+| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fases 1, 2, 3 e **4 completas em código**. O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Nada disso passou por uma execução real ainda** — a última foi antes do bloco 1.1 |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -723,6 +723,51 @@ Aqui também sai o aviso de LAN confiável que o `clippyme` documenta e que vale
 fork: antes desta fase, não expor à internet pública.
 
 **Pronto quando:** uma segunda conta usa o sistema sem ver nada da primeira.
+
+**Resultado — completa em código (16-set-2026), em quatro blocos.**
+
+| Bloco | O que entrou |
+|---|---|
+| 4.1 | `auth.py`: senha com scrypt, token assinado, tranca em middleware, bootstrap |
+| 4.2 | O tenant vem da sessão (`db._tenant_atual`), e o worker o carrega no job |
+| 4.3 | Fila, projetos e bytes dos clipes isolados por tenant |
+| 4.4 | `scheduler.py`: agendador com jitter, e a decisão §10.2 fechada |
+
+**O critério está satisfeito, e é testado nos três níveis em que poderia falhar:**
+dados (templates, contas, publicações), projetos (`/api/jobs`, status, cancelar,
+apagar, baixar) e bytes (`/videos/`). Uma segunda conta não vê nada da primeira em
+nenhum deles.
+
+**A auth não tem flag**, e essa foi a decisão que evitou uma migração de dados: ela
+liga quando algum usuário ganha senha, e o bootstrap **não cria conta** — dá senha e
+e-mail de verdade ao `self-host@localhost` que o seed já criou e que já é dono de tudo
+o que existe em disco. Criar um usuário novo ali deixaria os projetos de ontem
+pertencendo a alguém em quem ninguém consegue entrar.
+
+**Zero dependência nova**, pelo mesmo raciocínio do ADR sobre o Drive: o magic-link
+(serviço de e-mail) e o Google OAuth do upstream saíram com o `cloud/`, e trazer
+qualquer um de volta seria um serviço pago ou um projeto no Google Cloud para o autor
+entrar na própria ferramenta, na própria máquina. `hashlib.scrypt` da stdlib.
+
+### O aviso de LAN, que esta fase existia para poder retirar
+
+Até a Fase 4 valia sem ressalva: **não expor à internet pública.** Não havia
+autenticação nenhuma — quem alcançasse a porta 8000 processava, apagava e baixava.
+
+Agora o aviso tem condição, e a condição é uma só: **defina o dono antes de expor.**
+Enquanto ninguém tem senha a instalação continua aberta, que é o comportamento de
+sempre e o certo para quem nunca quis auth — mas é também exatamente o estado em que
+ela não pode estar acessível de fora. O painel diz isso na tela de entrada, e o
+`.env.example` repete.
+
+O que continua valendo mesmo com dono definido, e que não é pequeno:
+
+- **`/thumbnails/` ainda é público.** As sessões de thumbnail não têm carimbo de
+  tenant, e o upstream as serve assim de propósito. Fechá-las exige carimbá-las.
+- **Não há HTTPS aqui.** A senha e o token viajam como a conexão os carregar; expor
+  significa pôr um proxy com TLS na frente, não abrir a porta.
+- **Não há 2FA nem recuperação de senha.** Perder a senha do dono significa mexer no
+  banco à mão. É ferramenta pessoal, e o preço é esse.
 
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 

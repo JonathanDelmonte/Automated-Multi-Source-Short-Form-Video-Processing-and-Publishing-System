@@ -747,6 +747,68 @@ verificação do Google, e não um erro do projeto.
 
 ---
 
+## Passo 9 — Definir o dono (e só então pensar em expor)
+
+Abra o painel. Se ninguém tem senha ainda, a primeira tela pede **um e-mail e uma
+senha** — é o dono da instalação.
+
+**Isso não cria uma conta nova.** Dá senha e e-mail de verdade ao usuário que o banco
+já tinha e que já é dono de tudo: os projetos, os templates, as contas de publicação.
+Nada muda de lugar; você só passa a conseguir entrar.
+
+A partir daí o painel pede login, e cada conta só enxerga o que é dela — projetos,
+arquivos, clipes e fila.
+
+### Antes de abrir para a internet
+
+Até esta fase o aviso era simples: **não exponha**. Não havia autenticação nenhuma.
+Agora tem condição, e ela é uma só: **defina o dono antes.** Enquanto ninguém tem
+senha, qualquer um que alcance a porta 8000 processa, apaga e baixa os seus vídeos.
+
+Três coisas continuam valendo mesmo com o dono definido, e nenhuma é pequena:
+
+- **Não há HTTPS aqui.** A senha e o token viajam como a conexão os carregar. Expor
+  significa pôr um proxy com TLS na frente (Caddy, nginx, Cloudflare Tunnel), não
+  abrir a porta no roteador.
+- **`/thumbnails/` ainda é público.** As sessões de thumbnail não têm carimbo de dono.
+- **Não há recuperação de senha nem 2FA.** Perder a senha do dono significa mexer no
+  banco à mão. É ferramenta pessoal; o preço é esse.
+
+### Uma segunda conta
+
+Pela API, logado como dono:
+
+```bat
+curl -X POST http://localhost:8000/api/usuarios ^
+  -H "Authorization: Bearer SEU_TOKEN" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"email\":\"outra@exemplo.com\",\"senha\":\"uma-senha-boa\"}"
+```
+
+Ela nasce num espaço próprio e não vê nada do seu. Para alguém que deva ver os **seus**
+projetos, mande `"tenant": "mesmo"`.
+
+---
+
+## Passo 10 — Deixar publicar sozinho
+
+Na aba **Publicação**, o botão **agendar** espalha os cortes do projeto pelas próximas
+janelas em vez de publicar na hora. O padrão: **3 por dia**, às 11h, 15h e 19h, com
+pelo menos 3 h entre um e outro e **±25 minutos de variação**.
+
+A variação não é enfeite nem configuração opcional: publicar 12:00:00 todo dia é um
+dos sinais que a detecção de automação cruza. Pedir zero não desliga — cai num piso de
+5 minutos (ADR-007).
+
+Os números estão no `.env` (`SCHEDULE_PER_DAY`, `SCHEDULE_WINDOWS`,
+`SCHEDULE_MIN_GAP_MINUTES`) porque **são chutes informados, não verdade**: descobrir o
+horário certo exige retenção medida, e isso é a Fase 5.
+
+O teto duro é outro e não é escolha nossa: **6 por dia**, da quota do YouTube. O
+agendador nunca o ultrapassa.
+
+---
+
 ## Armadilhas, todas vindas do código (ou do Windows)
 
 | Sintoma | Causa | Solução |

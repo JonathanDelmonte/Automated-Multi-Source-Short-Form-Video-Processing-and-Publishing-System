@@ -810,6 +810,39 @@ Fica **registrado como item aberto, e não atacado agora** — decisão do autor
   domina o tempo de parede. O relatório do 5.3 responde isso com número em vez de
   palpite.
 
+**Atacada a partir de 16-set-2026, e o primeiro passo foi o instrumento.** Ao ir
+ler o `/api/tempo` para pedir o número ao autor, ele estava medindo errado — e
+errando para o lado pior. O laço de cortes é paralelo (`CLIP_WORKERS`, 3 por
+padrão) e o coletor somava a duração de cada worker no mesmo estágio: um render
+de 200 s de parede gravava 600 s. A soma dos estágios passava da parede do job,
+as fatias somavam mais de 100%, o `fora_de_estágio` ficava negativo e era
+silenciado por um `max(0, ...)`. Como o relatório acusa o primeiro estágio acima
+de 50% **na ordem do pipeline**, a transcrição levava a culpa do render — com o
+parágrafo sobre conferir a GPU e tudo. Junto disso, metade do render (marca
+d'água, hook grounding, gancho, legenda: quatro encodes do mesmo clipe) rodava
+fora de estágio nenhum, e caía justamente no número que o outro defeito zerava.
+As duas falhas se cancelavam, e é por isso que ninguém tinha percebido.
+
+Pedir o número ao autor antes disso seria mandá-lo perseguir o culpado errado —
+o mesmo erro que o `timings_report` foi escrito para não cometer, cometido pelo
+próprio `timings_report`.
+
+Corrigido: cada estágio mede **ocupado** e **parede** (união de intervalos), a
+pilha de atribuição de tokens virou thread-local, e o laço de cortes ganhou seis
+`substage` que medem por dentro sem mexer na barra de progresso. O relatório
+passa a **denunciar** o dado antigo em vez de escondê-lo.
+
+**E `python diagnostico.py`**, que junta a medição com o ambiente. O relatório
+sozinho terminava em "confira se a GPU está mesmo em uso"; agora a conferência é
+feita. Dois padrões que ninguém escolheu e que nenhum grita: `WHISPER_DEVICE`
+nasce `cpu` e `FFMPEG_ENCODER` nasce `x264` — e o segundo pesa mais do que
+parece, porque a cadeia de um corte são 3 a 5 encodes do mesmo clipe, os dois
+primeiros a `-crf 18`. Nenhuma frase sai sem as duas metades: ambiente sem
+medição que o acuse é palpite, e é exatamente o que este projeto recusa.
+
+**O próximo passo é do autor**, e é uma execução: rodar UM job novo (a medição
+antiga não serve para ordenar culpa) e mandar a saída do `diagnostico.py`.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

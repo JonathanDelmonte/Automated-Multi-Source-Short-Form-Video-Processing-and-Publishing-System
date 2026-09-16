@@ -717,6 +717,78 @@ imprimia o proprio resumo no log e o numero morria ali.
   ninguem mediu. Casar por id e nao por contagem: o mesmo job somado duas vezes
   dobra a parede e corta o fator pela metade.
 
+### O instrumento media errado, e errava para o lado pior (16-set-2026)
+
+Primeiro passo de "atacar a lentidao", antes de tocar no pipeline. Dois
+defeitos no `job_metrics`, e o pior deles e que **se cancelavam**, entao o
+`/api/tempo` respondia plausivel e errado.
+
+- **O laco de cortes e paralelo e o coletor somava.** `CLIP_WORKERS` (3 por
+  padrao) workers mediam o MESMO estagio, e cada um somava a propria duracao:
+  um render de 200 s de parede gravava 600 s. A soma dos estagios passava da
+  parede do job, as fatias somavam mais de 100% e o `fora_de_estagio` ficava
+  negativo -- **silenciado por um `max(0, ...)`**. E como o relatorio acusa o
+  primeiro estagio acima de 50% **na ordem do pipeline**, quem levava a culpa
+  era a transcricao, com um paragrafo sobre conferir a GPU, enquanto o render
+  era o bloco maior. Um instrumento que aponta o culpado errado e pior que
+  nenhum.
+- **Metade do render nao era medida.** O `with stage("05_06_render")` fechava
+  logo depois do `render_clip`; marca d'agua, hook grounding (uma chamada de
+  LLM por corte), gancho e legenda -- cada um um encode inteiro do clipe --
+  rodavam fora de estagio nenhum e caiam no `fora_de_estagio` que o item
+  acima ja zerava.
+
+O conserto:
+
+- **`seconds` e OCUPADO, `wall_seconds` e PAREDE.** Os dois sao uteis: o
+  primeiro e trabalho gasto (CPU-segundos), o segundo e o que a pessoa
+  esperou. A parede e a **uniao dos intervalos**, contada na entrada -- `n`
+  conta quantos estao abertos com aquele nome e o trecho so entra quando o
+  ultimo fecha. Nos quatro estagios sequenciais as duas coincidem.
+- **A pilha de atribuicao de tokens e thread-local.** Era global, e num pool
+  isso creditava a chamada de LLM de um worker ao estagio que outro tivesse
+  deixado no topo -- qual deles dependia do escalonador.
+- **`substage()` mede sem anunciar.** O marcador do stdout e a BARRA do
+  painel, e `_stage_view` devolve `stage_index` 0 para qualquer nome fora de
+  `PIPELINE_STAGES`, ou seja, a barra volta ao comeco. Medicao fina nao pode
+  custar isso. O laco de cortes ganhou seis: corte, reenquadra, marca d'agua,
+  hook grounding, gancho, legenda.
+- **O relatorio DENUNCIA o dado antigo** em vez de esconder: quando a soma
+  nao cabe na parede, ele diz que aquele job foi medido antes do conserto e
+  que a ordem de culpa nao vale. Cai para `seconds` quando falta
+  `wall_seconds` -- o sidecar que ja esta em disco nao tem o campo.
+- `tests/test_render_instrumentado.py` le a arvore sintatica e falha se um
+  passe do corte voltar a rodar fora da medicao; com o `main.py` de antes ele
+  nomeia os quatro. O teste da uniao de intervalos usa **relogio falso**, nao
+  `sleep`: trocando `job_metrics.time`, nunca `job_metrics.time.time`, que e o
+  modulo global.
+
+### `python diagnostico.py`: medicao e ambiente na mesma frase
+
+O relatorio do 5.3 sabe dizer QUAL estagio dominou e termina mandando conferir
+a GPU **a mao**. Aqui a conferencia e feita, e a conclusao so existe com as
+**duas metades**: "a transcricao e 70% do tempo" nao e defeito num video muito
+falado, e "o whisper esta em CPU" e apenas verdade numa maquina sem placa --
+juntas, viram um proximo passo.
+
+- **Dois padroes que ninguem escolheu, e nenhum grita.** `WHISPER_DEVICE` nasce
+  `cpu` e `FFMPEG_ENCODER` nasce `x264`. O segundo pesa mais do que parece: a
+  cadeia de um corte e corte -> reenquadra -> [marca] -> [gancho] -> legenda,
+  ou seja **3 a 5 encodes do mesmo clipe**, os dois primeiros a `-crf 18`.
+- **"Nao deu para saber" nunca sai como "sim".** As sondagens devolvem `None`
+  fora do container (o `ctranslate2` nao importa, o ffmpeg pode nao existir), e
+  um `else` que juntasse `None` com `True` afirmaria que a placa esta em uso
+  justamente quando ninguem olhou. Ha teste parametrizado para isso.
+- **A placa e perguntada ao `ctranslate2`**, que e quem o faster-whisper usa;
+  `torch.cuda.is_available()` responde por outra biblioteca. E o nvenc e
+  perguntado a sonda do proprio `ffmpeg_utils`, nao a `ffmpeg -encoders`, que
+  lista o encoder compilado mesmo sem driver para ele.
+- **Le sidecar, nao banco**: o sidecar existe em todo job desde a Fase 0.5 e
+  nao exige levantar o engine async num CLI. O `/api/tempo` junta os dois e
+  continua sendo o caminho do painel, para o historico inteiro.
+- `conclusoes()` e funcao pura sobre dois dicts, entao o CI exercita a conta
+  sem GPU, sem ffmpeg e sem job.
+
 ### Coletor de metricas (`metrics_collector.py`, Fase 5 bloco 5.1)
 
 A tabela que a §7 chama de "mais valiosa do projeto" deixou de ser vazia.

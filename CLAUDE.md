@@ -655,6 +655,53 @@ projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
 - O painel mostra a agenda **antes** de agendar: descobrir a que horas o sistema
   publicou depois do post e tarde para discordar.
 
+### Onde vai o tempo (`timings_report.py`, Fase 5 bloco 5.3)
+
+`GET /api/tempo` agrega os `timings_json` dos jobs. O `job_metrics` media por
+estagio desde a Fase 0.5, mas ninguem lia isso ENTRE jobs -- cada execucao
+imprimia o proprio resumo no log e o numero morria ali.
+
+- **Mede, nao conserta.** Diante de "esta lento" a tentacao e abrir o `main.py`
+  e procurar o culpado. As observacoes apontam para coisas VERIFICAVEIS ja
+  escritas neste repositorio (o `WHISPER_DEVICE` que cai para CPU em silencio,
+  o teto de cortes do ADR-006, a rota de proxy), nunca para uma conclusao que
+  ninguem mediu. Sem estagio dominante, ele **nao inventa culpado**.
+- **`fator_tempo_real` = parede ÷ duracao da fonte.** E a unica grandeza que
+  responde "esta lento" sem depender de quao longo era o video. Sem a duracao
+  da fonte e `None`, nunca 1,0.
+- **Os estagios saem na ordem do PIPELINE, nao do tamanho** -- ler na ordem em
+  que acontece e o que deixa ver onde ele engasga.
+- **`fora_de_estagio_seconds`**: o tempo de parede que nao esta em estagio
+  nenhum (espera na fila, subida do subprocesso, pedaco sem instrumentacao).
+  Sem essa linha ele e invisivel: cada estagio parece pequeno e nada explica
+  por que.
+- **Le banco E sidecar, casando por `job_id`.** O sidecar
+  `<base>.timings.json` existe desde a Fase 0.5; a coluna so desde o bloco 3.3 --
+  so os dois juntos cobrem as primeiras execucoes, que sao justamente as que
+  ninguem mediu. Casar por id e nao por contagem: o mesmo job somado duas vezes
+  dobra a parede e corta o fator pela metade.
+
+### Coletor de metricas (`metrics_collector.py`, Fase 5 bloco 5.1)
+
+A tabela que a §7 chama de "mais valiosa do projeto" deixou de ser vazia.
+
+- **Coletar exige escopo que o upload deliberadamente nao pediu**, e a saida
+  NAO foi ampliar o token de publicacao: e um segundo consentimento, so de
+  leitura, noutro endereco de cofre (`youtube-metrics/<handle>`, emitido por
+  `python youtube_oauth.py --leitura`). Duas credenciais pequenas em vez de uma
+  grande. Ha teste garantindo que `youtube_oauth.ESCOPO` continua sendo so
+  `youtube.upload` -- "a Fase 5 precisou" e o tipo de motivo que desfaz uma
+  decisao boa sem ninguem notar.
+- **`metrics` e serie temporal, nao cache**: cada coleta ACRESCENTA linha. A §7
+  poe `collected_at` e nao poe unicidade por publicacao exatamente por isso.
+- **None nao e zero**, nos tres lugares: parse de views, parse de retencao e a
+  regra de nao gravar linha sem numero nenhum.
+- **A retencao e lida pelo NOME da coluna**, nunca pela posicao: a ordem muda
+  com a lista de metricas pedida, e ler pela posicao gravaria views no campo de
+  retencao sem dar erro.
+- O `videos.list` custa 1 unidade e e debitado do mesmo teto de 10.000/dia, com
+  `upload=False` para nao mentir no contador de uploads.
+
 ### Fluxo de git
 
 Desenvolvimento em `main`. O upstream fica como remote
@@ -908,6 +955,8 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
 | GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto |
+| GET/POST | `/api/metricas`, `/api/metricas/coletar` | Views e retenção coletadas |
+| GET | `/api/tempo` | Onde vai o tempo de processamento |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |

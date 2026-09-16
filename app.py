@@ -9,6 +9,7 @@ import publish_queue
 import auth
 import scheduler
 import metrics_collector
+import timings_report
 import template as template_doc
 import db
 import db_models
@@ -5055,6 +5056,94 @@ async def apagar_template(template_id: str):
         raise
     except Exception as e:
         raise _erro_de_banco(e)
+
+
+# --- Onde vai o tempo (Fase 5) ----------------------------------------------
+# O `job_metrics` mede por estagio desde a Fase 0.5 e o bloco 3.3 grava em
+# `jobs.timings_json`, mas ninguem lia isso ENTRE jobs: cada execucao imprimia o
+# proprio resumo no log e o numero morria ali.
+#
+# **Mede, nao conserta.** Diante de "esta lento", a tentacao e abrir o `main.py`
+# e procurar o culpado; este projeto vem recusando esse movimento em toda
+# decisao. Primeiro o numero.
+
+
+async def _timings_do_banco() -> list:
+    """`(job_id, timings)` deste tenant, do mais recente para o mais antigo.
+
+    O id volta junto porque e ele que permite nao contar o mesmo job duas
+    vezes: `jobs.id` E o id da pasta em disco (bloco 3.3), entao casar banco e
+    sidecar e comparacao exata, nao heuristica.
+    """
+    async with db.tenant() as t:
+        linhas = await t.all(db_models.Job)
+    linhas.sort(key=lambda j: j.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True)
+    return [(j.id, j.timings_json) for j in linhas if j.timings_json]
+
+
+def _timings_do_disco() -> list:
+    """Os sidecars `<base>.timings.json` que o `main.py` deixa na pasta do job.
+
+    **Existem porque o banco nao alcanca tudo.** O sidecar e escrito pelo
+    subprocesso em TODO job, desde a Fase 0.5; a linha em `jobs.timings_json` so
+    passou a existir no bloco 3.3, e so quando o banco esta de pe (tudo ali
+    falha aberto). Ler os dois e o que permite este relatorio responder sobre
+    execucoes anteriores ao bloco 3.3 -- inclusive as primeiras, que sao
+    justamente as que ninguem mediu.
+    """
+    achados = []
+    try:
+        entradas = os.listdir(OUTPUT_DIR)
+    except OSError:
+        return achados
+    for job_id in entradas:
+        if not _JOB_ID_RE.match(job_id):
+            continue
+        pasta = os.path.join(OUTPUT_DIR, job_id)
+        if _tenant_do_disco(pasta) != db.tenant_atual():
+            continue
+        for caminho in glob.glob(os.path.join(pasta, "*.timings.json")):
+            try:
+                with open(caminho, "r", encoding="utf-8") as fh:
+                    dados = json.load(fh)
+                if isinstance(dados, dict):
+                    achados.append((os.path.getmtime(caminho), job_id, dados))
+            except (OSError, ValueError):
+                continue
+    achados.sort(reverse=True)
+    return achados
+
+
+@app.get("/api/tempo")
+async def onde_vai_o_tempo(limite: int = 20):
+    """Onde o tempo de processamento foi parar, somando os jobs deste tenant.
+
+    Junta o banco e os sidecars em disco, sem repetir o mesmo job: o sidecar
+    existe desde a Fase 0.5 e a coluna so desde o bloco 3.3, entao so os dois
+    juntos cobrem o historico inteiro.
+    """
+    try:
+        do_banco = await _timings_do_banco()
+    except Exception as e:
+        print(f"⚠️  Relatorio de tempo: banco indisponivel ({e})")
+        do_banco = []
+
+    # Casar por id, e nao por contagem: o mesmo job somado duas vezes dobraria
+    # o tempo de parede e cortaria o fator pela metade -- uma media que mente
+    # para os dois lados ao mesmo tempo.
+    ja_no_banco = {job_id for job_id, _ in do_banco}
+    timings = [dados for _, dados in do_banco]
+    do_disco = 0
+    for _mtime, job_id, dados in _timings_do_disco():
+        if job_id in ja_no_banco:
+            continue
+        ja_no_banco.add(job_id)
+        timings.append(dados)
+        do_disco += 1
+
+    return {**timings_report.agregar(timings[:max(1, int(limite))]),
+            "fonte": {"banco": len(do_banco), "disco": do_disco}}
 
 
 # --- Coletor de metricas (Fase 5) -------------------------------------------

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Download, Trash2, Loader2, Plus, CheckCircle2, Youtube,
          Instagram, AlertTriangle, Send, Clock } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { CartaoDeTempo } from './OndeVaiOTempo';
 
 // A tela de publicação (Fase 3, bloco 3.5).
 //
@@ -371,7 +372,11 @@ export default function PublicacoesTab() {
           )}
         </section>
 
-        {/* 4. A fila. */}
+        {/* 4. Onde vai o tempo — não é sobre publicação, e está aqui porque é
+            onde o autor já olha. Quando houver uma aba de diagnóstico, muda. */}
+        <CartaoDeTempo />
+
+        {/* 5. A fila. */}
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">fila</h3>
           {fila.length === 0 ? (

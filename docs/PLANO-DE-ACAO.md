@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fase 0 fechada em execução real** (13-set-2026, 6 cortes de um vídeo de 10 min). Fases 1, 2, 3 e **4 completas em código**. O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Nada disso passou por uma execução real ainda** — a última foi antes do bloco 1.1 |
+| Fase | **Fases 0 a 4 completas, e a 4 foi verificada em execução real** (16-set-2026, vídeo de 10 min, na máquina do autor). O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Fase 5 em andamento.** Item aberto com prioridade: a execução é lenta demais — ver abaixo |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -768,6 +768,25 @@ O que continua valendo mesmo com dono definido, e que não é pequeno:
   significa pôr um proxy com TLS na frente, não abrir a porta.
 - **Não há 2FA nem recuperação de senha.** Perder a senha do dono significa mexer no
   banco à mão. É ferramenta pessoal, e o preço é esse.
+
+### A lentidão, registrada antes de ser atacada
+
+**Verificado em execução real (16-set-2026):** as Fases 1 a 4 funcionam de ponta a
+ponta num vídeo de 10 minutos, na máquina do autor. O relato é curto e importa:
+*"está funcionando. O problema é que está demorando muito, muito, muito mesmo."*
+
+Fica **registrado como item aberto, e não atacado agora** — decisão do autor
+("depois a gente melhora o que existe"). Duas coisas valem dizer enquanto ele espera:
+
+- **Não há número ainda, e por isso a primeira coisa não é otimizar.** Chutar o
+  culpado entre transcrição, detecção e render é exatamente o erro que este projeto
+  vem evitando em toda decisão. O `job_metrics` já mede por estágio desde a Fase 0.5 e
+  o bloco 3.3 já grava em `jobs.timings_json` — a execução do autor **já deixou a
+  linha no banco**. Falta ler. É o bloco 5.3.
+- **O suspeito mais provável é conhecido e barato de confirmar:** sem GPU no
+  container, `WHISPER_DEVICE=cuda` cai para CPU **em silêncio**, e a transcrição
+  domina o tempo de parede. O relatório do 5.3 responde isso com número em vez de
+  palpite.
 
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 

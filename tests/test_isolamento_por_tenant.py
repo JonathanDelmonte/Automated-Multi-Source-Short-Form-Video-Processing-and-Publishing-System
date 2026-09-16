@@ -252,6 +252,23 @@ class TestBytesDosClipes:
         meu = _job_de(ambiente, db.SELF_HOST_TENANT_ID)
         assert _chama("GET", self._url(meu)).status_code == 200
 
+    @pytest.mark.parametrize("arquivo", [
+        ".instance", ".llm_budget.json", ".youtube_quota.json",
+    ])
+    def test_o_que_mora_na_raiz_do_output_nao_e_servido(self, dois_donos,
+                                                        ambiente, arquivo):
+        """`/videos` serve o OUTPUT_DIR inteiro, e na raiz dele moram o marcador
+        de instancia, o orcamento de LLM e o contador de quota.
+
+        A tranca por tenant nao os cobre -- o primeiro pedaco do caminho nao e
+        um id de job. Quem os recusa e a lista de extensoes entregaveis do
+        `media_auth`, e este teste e o que garante que ela continua sendo o
+        piso mesmo agora que existe uma segunda porta.
+        """
+        a, _, _ = dois_donos
+        (ambiente / arquivo).write_text("segredo")
+        assert _chama("GET", f"/videos/{arquivo}", token=a).status_code == 404
+
     def test_o_guard_de_arquivo_continua_valendo(self, dois_donos, ambiente):
         """A tranca por tenant nao substituiu a lista de extensoes entregaveis:
         o `.tenant`, o `.owner` e o metadata continuam fora do alcance mesmo

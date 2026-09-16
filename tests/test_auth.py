@@ -350,6 +350,37 @@ class TestTranca:
                 vistas += 1
         assert vistas > 20, "a varredura nao encontrou rotas; o teste nao mede nada"
 
+    def test_as_rotas_de_auth_que_exigem_sessao_a_exigem(self):
+        """A varredura acima PULA `/api/auth/*`, porque o prefixo inteiro e
+        publico -- mas duas rotas de la exigem sessao por conta propria. Sem
+        este teste, elas ficam num ponto cego: publicas pela lista, protegidas
+        so pelo codigo delas, e ninguem notaria se o `exigir_sessao` sumisse.
+        """
+        _bootstrap()
+        for url, corpo in (("/api/auth/senha",
+                            {"senha_atual": SENHA, "senha_nova": "outra-senha-9"}),
+                           ("/api/auth/sair-de-tudo", {})):
+            assert _chama("POST", url, corpo).status_code == 401, url
+
+    def test_as_ferramentas_do_mcp_nao_leem_sem_sessao(self):
+        """O `/mcp` fica FORA de `/api/`, entao a tranca nao o cobre
+        diretamente. Ele e protegido de forma transitiva: cada ferramenta chama
+        de volta a mesma app por `ASGITransport`, e essa chamada passa pelo
+        middleware.
+
+        "Transitivo" e o tipo de garantia que se assume e se descobre errada
+        depois, entao aqui ela e medida.
+        """
+        _bootstrap()
+        for ferramenta, args in (("get_job_status", {"job_id": "x"}),
+                                 ("list_clips", {"job_id": "x"})):
+            r = _chama("POST", "/mcp", {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": ferramenta, "arguments": args}})
+            resultado = r.json().get("result", {})
+            assert resultado.get("isError") is True, ferramenta
+            assert resultado["structuredContent"]["http_status"] == 401
+
     def test_as_publicas_continuam_publicas(self):
         _bootstrap()
         assert _chama("GET", "/api/config").status_code == 200

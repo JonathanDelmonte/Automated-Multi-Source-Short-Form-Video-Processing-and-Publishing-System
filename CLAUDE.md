@@ -564,9 +564,9 @@ tabela desde a Fase 0.5, faltava quem autenticasse.
   arquivo e o piso -- uma vez trancado, nao destranca por falha de leitura.
 - **Login nao diz se o e-mail existe**, e gasta um scrypt mesmo quando nao
   existe, para que a resposta nao seja visivelmente mais rapida.
-- **`/videos` e `/thumbnails` ainda NAO estao atras da tranca**: um `<video src>`
-  nao manda cabecalho `Authorization`. O `media_auth.py` ja sabe assinar o token
-  de capacidade para isso, e ligar e o bloco 4.3.
+- **`/mcp` fica FORA de `/api/` e e protegido de forma TRANSITIVA**: cada
+  ferramenta chama de volta a mesma app por `ASGITransport`, e essa chamada
+  passa pelo middleware. Medido, nao assumido -- ha teste.
 
 ### O tenant vem da sessao (`db._tenant_atual`, Fase 4 bloco 4.2)
 

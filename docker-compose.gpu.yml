@@ -19,12 +19,18 @@
 #
 # Conferir que funcionou, depois de subir:
 #
-#   docker compose exec backend python -c "import torch; print(torch.cuda.is_available())"
+#   docker compose exec backend python diagnostico.py
 #
-# `True` e GPU de verdade. `False` significa que a placa nao chegou ao
-# container, e nesse caso o `WHISPER_DEVICE=cuda` abaixo cai para CPU sozinho
+# A linha `placa p/ o whisper` responde. `nao` significa que a placa nao chegou
+# ao container, e nesse caso o `WHISPER_DEVICE=cuda` abaixo cai para CPU sozinho
 # (`transcribe_backends._whisper_force_cpu`) -- ou seja, funciona, so que lento,
 # que e o pior modo de falhar: sem erro.
+#
+# A pergunta e feita ao `ctranslate2`, e nao ao `torch` como este comentario
+# mandava ate 16-set-2026: quem o faster-whisper usa e o ctranslate2, e sao
+# bibliotecas diferentes com exigencias diferentes de CUDA/cuDNN. Um `True` do
+# torch com a transcricao rodando em CPU e a falha silenciosa disfarcada de
+# conferencia feita.
 
 services:
   backend:
@@ -33,6 +39,19 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
       WHISPER_COMPUTE: ${WHISPER_COMPUTE:-float16}
+      # **Esta linha faltava, e o buraco era grande** (16-set-2026). Este
+      # arquivo existe para dizer "esta maquina tem placa NVIDIA", e ate aqui
+      # ele dizia isso so para a transcricao: todo encode continuava em libx264,
+      # na CPU. E nao e um encode por corte -- a cadeia e corte -> reenquadra ->
+      # [marca] -> [gancho] -> legenda, tres a cinco encodes do MESMO clipe, os
+      # dois primeiros a `-crf 18`. Numa maquina com placa, isso e o segundo
+      # bloco de tempo do job inteiro rodando no lugar errado.
+      #
+      # `auto` e nao `nvenc` de proposito: o `ffmpeg_utils` sonda uma sessao
+      # h264_nvenc de verdade e cai para libx264 sozinho quando ela nao abre
+      # (driver velho, VRAM cheia, sessoes simultaneas esgotadas). Com `nvenc`
+      # o fallback tambem acontece, mas depois de uma linha de aviso por job.
+      FFMPEG_ENCODER: ${FFMPEG_ENCODER:-auto}
     deploy:
       resources:
         reservations:

@@ -807,6 +807,27 @@ juntas, viram um proximo passo.
   continua sendo o caminho do painel, para o historico inteiro.
 - `conclusoes()` e funcao pura sobre dois dicts, entao o CI exercita a conta
   sem GPU, sem ffmpeg e sem job.
+- **`caminho_da_gpu()` diz ONDE a corrente arrebentou, nao apenas que
+  arrebentou** (17-set-2026). Era o unico buraco que restava: o diagnostico
+  respondia `placa p/ o whisper: nao` e as duas causas possiveis tem o mesmo
+  sintoma e correcoes de custo muito diferente -- imagem sem as libs de CUDA
+  pede `reconstruir-gpu.bat` (15 a 40 min), placa nao reservada pede
+  `subir-gpu.bat` (segundos). Escolher entre as duas era cara ou coroa, e a
+  coroa custava 40 minutos.
+  - **A imagem e sondada pelo `LD_LIBRARY_PATH`**, cujo comentario no
+    Dockerfile diz, com estas palavras, que os caminhos "simplesmente nao
+    existem em imagens CPU". A lista vem dele, entao a sonda continua certa se
+    o Dockerfile mudar os caminhos. Pasta vazia conta como ausente: o `pip
+    install` cria a pasta COM arquivos.
+  - **O driver e sondado pelo `nvidia-smi` e pelos nos de dispositivo**,
+    incluindo `/dev/dxg` -- no Docker Desktop com WSL 2 o no e esse, e olhar so
+    `/dev/nvidia0` daria `nao` numa maquina Windows funcionando.
+  - **E a unica conclusao que sai sem medicao**, e por isso e CONDICIONAL: o
+    container nao sabe se a maquina tem placa. A regra das duas metades existe
+    para nao prescrever mudanca no que talvez esteja certo -- "a corrente
+    arrebentou aqui" e fato observado, nao palpite. Antes disto, um container
+    sem placa nenhuma respondia so "rode um video e volte", mandando esperar
+    uma medicao para descobrir o que ja estava na tela.
 
 ### Coletor de metricas (`metrics_collector.py`, Fase 5 bloco 5.1)
 

@@ -27,6 +27,7 @@ import timings_report
 def _ambiente(**troca):
     base = {"whisper_model": "small", "whisper_device": "cpu",
             "whisper_compute": "int8", "cuda_para_o_whisper": None,
+            "libs_de_cuda_na_imagem": None, "driver_no_container": None,
             "ffmpeg_encoder": "x264", "nvenc_usavel": None,
             "clip_workers": 3, "teto_de_cortes": 15}
     base.update(troca)
@@ -192,7 +193,8 @@ class TestSondagens:
     def test_nenhuma_sondagem_levanta(self):
         amb = diagnostico.fatos_do_ambiente()
         assert set(amb) == {"whisper_model", "whisper_device", "whisper_compute",
-                            "cuda_para_o_whisper", "ffmpeg_encoder",
+                            "cuda_para_o_whisper", "libs_de_cuda_na_imagem",
+                            "driver_no_container", "ffmpeg_encoder",
                             "nvenc_usavel", "clip_workers", "teto_de_cortes"}
 
     def test_o_whisper_vem_do_subtitles_e_nao_de_uma_copia(self, monkeypatch):
@@ -210,3 +212,118 @@ class TestSondagens:
     def test_o_texto_sai_inteiro_sem_medicao_nenhuma(self):
         saida = diagnostico.texto(_ambiente(), timings_report.agregar([]))
         assert "AMBIENTE" in saida and "O QUE ISSO QUER DIZER" in saida
+
+
+class TestCaminhoDaGpu:
+    """Onde a corrente da GPU arrebentou -- e nao apenas que ela arrebentou.
+
+    As duas causas dao o MESMO `nao` em `placa p/ o whisper` e a correcao e
+    outra: imagem sem as libs pede uma reconstrucao de 15 a 40 minutos, placa
+    nao reservada pede um `up` de segundos. Sem separar, escolher entre as duas
+    e cara ou coroa -- e a coroa custa 40 minutos da pessoa.
+    """
+
+    def test_imagem_sem_as_libs_manda_reconstruir(self):
+        f = diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
+                      driver_no_container=False))
+        assert _diz(f, "reconstruir-gpu.bat")
+        assert _diz(f, "15 a 40 minutos")
+        assert not _diz(f, "subir-gpu.bat")
+
+    def test_libs_presentes_e_placa_nao_reservada_manda_subir(self):
+        """O segundo dos dois passos que o CLAUDE.md ja avisava faltar: a
+        imagem com CUDA nao faz o container enxergar a placa."""
+        f = diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=True,
+                      driver_no_container=False))
+        assert _diz(f, "subir-gpu.bat")
+        assert _diz(f, "segundos")
+        assert not _diz(f, "reconstruir-gpu.bat")
+
+    def test_reconstruir_vence_quando_faltam_as_libs_mesmo_com_driver(self):
+        """Placa reservada numa imagem CPU: o `up` ja esta certo, o que falta e
+        a imagem. Mandar subir de novo seria mandar repetir o que funcionou."""
+        f = diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
+                      driver_no_container=True))
+        assert _diz(f, "reconstruir-gpu.bat")
+        assert not _diz(f, "subir-gpu.bat")
+
+    def test_as_duas_metades_no_lugar_deixa_de_ser_configuracao(self):
+        f = diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=True,
+                      driver_no_container=True))
+        assert _diz(f, "nao e configuracao")
+        assert not _diz(f, ".bat")
+
+    def test_placa_em_uso_nao_diz_nada(self):
+        assert diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=True, libs_de_cuda_na_imagem=True,
+                      driver_no_container=True)) == []
+
+    def test_fora_do_container_nao_afirma_nada(self):
+        """Sem o `LD_LIBRARY_PATH` do Dockerfile nao ha o que sondar, e "nao
+        deu para saber" continua nao podendo sair como "nao"."""
+        assert diagnostico.caminho_da_gpu(
+            _ambiente(cuda_para_o_whisper=None,
+                      libs_de_cuda_na_imagem=None)) == []
+
+    def test_o_achado_aparece_mesmo_sem_job_medido(self):
+        """A mudanca de comportamento que motivou isto: com zero jobs, a versao
+        anterior respondia SO "rode um video e volte" -- mandando esperar uma
+        medicao para descobrir o que ja estava na tela."""
+        f = diagnostico.conclusoes(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
+                      driver_no_container=False),
+            timings_report.agregar([]))
+        assert _diz(f, "reconstruir-gpu.bat")
+        assert _diz(f, "nenhum job medido")
+
+    def test_os_dois_elos_aparecem_no_texto_so_quando_a_placa_falta(self):
+        sem = diagnostico.texto(
+            _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
+                      driver_no_container=False), timings_report.agregar([]))
+        assert "libs de CUDA na imagem" in sem and "driver no container" in sem
+        com = diagnostico.texto(
+            _ambiente(cuda_para_o_whisper=True, libs_de_cuda_na_imagem=True,
+                      driver_no_container=True), timings_report.agregar([]))
+        assert "libs de CUDA na imagem" not in com
+
+
+class TestSondagensDaGpu:
+
+    def test_sem_ld_library_path_nao_afirma(self, monkeypatch):
+        monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+        assert diagnostico.libs_de_cuda_na_imagem() is None
+
+    def test_pasta_vazia_conta_como_ausente(self, monkeypatch, tmp_path):
+        """O `pip install` das libs cria a pasta COM arquivos. Uma pasta vazia
+        no caminho nao e uma imagem de GPU."""
+        vazia = tmp_path / "nvidia" / "cudnn" / "lib"
+        vazia.mkdir(parents=True)
+        monkeypatch.setenv("LD_LIBRARY_PATH", str(vazia))
+        assert diagnostico.libs_de_cuda_na_imagem() is False
+
+    def test_pasta_com_lib_conta_como_presente(self, monkeypatch, tmp_path):
+        cheia = tmp_path / "nvidia" / "cudnn" / "lib"
+        cheia.mkdir(parents=True)
+        (cheia / "libcudnn.so.9").write_text("")
+        monkeypatch.setenv("LD_LIBRARY_PATH", str(cheia))
+        assert diagnostico.libs_de_cuda_na_imagem() is True
+
+    def test_caminho_alheio_a_cuda_e_ignorado(self, monkeypatch):
+        """O `LD_LIBRARY_PATH` pode ter entradas que nada tem a ver com CUDA.
+
+        Caminho LITERAL, e nao um `tmp_path`: o diretorio que o pytest cria e
+        nomeado a partir do teste, entao a primeira versao disto -- chamada
+        `test_caminho_sem_nvidia_e_ignorado` -- punha a palavra "nvidia" no
+        proprio caminho que deveria ser ignorado, e falhava por isso."""
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/usr/lib/qualquer-outra-coisa")
+        assert diagnostico.libs_de_cuda_na_imagem() is None
+
+    def test_o_driver_e_falso_de_verdade_quando_nada_existe(self):
+        """Ausencia do `nvidia-smi` E dos tres nos de dispositivo e ausencia
+        observada, nao "nao deu para saber" -- sao os caminhos que o runtime da
+        NVIDIA cria quando injeta o driver."""
+        assert diagnostico.driver_no_container() in (True, False)

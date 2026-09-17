@@ -97,6 +97,49 @@ def cuda_para_o_whisper() -> Optional[bool]:
         return None
 
 
+def libs_de_cuda_na_imagem() -> Optional[bool]:
+    """A imagem foi construida com `--build-arg GPU=1`?
+
+    Pergunta ao `LD_LIBRARY_PATH`, que o Dockerfile aponta para as libs de CUDA
+    instaladas por pip -- e o comentario dele diz, com estas palavras, que os
+    caminhos "simplesmente nao existem em imagens CPU". Entao a existencia da
+    pasta E a resposta, e ela continua certa se o Dockerfile mudar os caminhos:
+    a lista vem dele, nao daqui.
+
+    Separar isto de `cuda_para_o_whisper` e o ponto. Os dois dao `nao` pelo
+    mesmo sintoma e a correcao e OUTRA -- imagem sem as libs pede uma
+    reconstrucao de 15 a 40 minutos; placa nao reservada pede um `up` de
+    segundos. Sem separar, a escolha entre as duas e cara ou coroa.
+    """
+    caminhos = [p for p in (os.environ.get("LD_LIBRARY_PATH") or "").split(":")
+                if p and "nvidia" in p]
+    if not caminhos:
+        return None      # nem o `ENV` do Dockerfile chegou: nao da para saber
+    return any(os.path.isdir(p) and os.listdir(p) for p in caminhos)
+
+
+def driver_no_container() -> Optional[bool]:
+    """O runtime da NVIDIA injetou o driver aqui dentro?
+
+    E o segundo passo do `docs/COMO-EXECUTAR.md` -- a reserva do dispositivo
+    pelo `docker-compose.gpu.yml`. Quando ela vale, o runtime injeta o
+    `nvidia-smi` e os nos de dispositivo; quando nao, nada disso existe, mesmo
+    numa imagem cheia de libs de CUDA.
+
+    No Docker Desktop com WSL 2 o no e `/dev/dxg` e nao `/dev/nvidia0`, entao
+    olhar so o segundo daria `nao` numa maquina Windows que esta funcionando.
+    """
+    import shutil
+    if shutil.which("nvidia-smi"):
+        return True
+    for no in ("/dev/nvidia0", "/dev/nvidiactl", "/dev/dxg"):
+        if os.path.exists(no):
+            return True
+    # Ausencia dos tres e ausencia de verdade: sao os caminhos que o runtime
+    # cria. Nao e "nao deu para saber".
+    return False
+
+
 def nvenc_usavel() -> Optional[bool]:
     """O ffmpeg consegue mesmo abrir uma sessao h264_nvenc aqui?
 
@@ -126,6 +169,8 @@ def fatos_do_ambiente() -> dict:
         "whisper_device": cfg.get("device"),
         "whisper_compute": cfg.get("compute_type"),
         "cuda_para_o_whisper": cuda_para_o_whisper(),
+        "libs_de_cuda_na_imagem": libs_de_cuda_na_imagem(),
+        "driver_no_container": driver_no_container(),
         "ffmpeg_encoder": os.environ.get("FFMPEG_ENCODER", "x264").strip().lower(),
         "nvenc_usavel": nvenc_usavel(),
         "clip_workers": _inteiro_do_ambiente("CLIP_WORKERS", 3),
@@ -163,20 +208,73 @@ def _fatia(agregado: dict, estagio: str) -> float:
     return 0.0
 
 
+def caminho_da_gpu(ambiente: dict) -> list:
+    """Por que a placa nao chegou -- e QUAL das duas causas e.
+
+    As duas dao o mesmo `nao` em `placa p/ o whisper` e a correcao e outra:
+
+    - **imagem sem as libs de CUDA** (`--build-arg GPU=1` nunca rodou, ou
+      falhou): `reconstruir-gpu.bat`, 15 a 40 minutos;
+    - **placa nao reservada** (subiu sem o `docker-compose.gpu.yml`):
+      `subir-gpu.bat`, segundos.
+
+    Sem separar, escolher entre as duas e cara ou coroa -- e a coroa custa 40
+    minutos. Era o unico buraco que restava no diagnostico: ele dizia que a
+    placa nao chegou e nao dizia onde ela parou.
+
+    **Isto nao depende de medicao, e nao viola a regra das duas metades.** A
+    regra existe para nao prescrever mudanca no que talvez esteja certo -- e
+    por isso a frase daqui e CONDICIONAL ("se esta maquina tem placa"): o
+    container nao sabe se ha uma. O que ele sabe e onde a corrente arrebentou,
+    e isso e fato, nao palpite.
+    """
+    libs = ambiente.get("libs_de_cuda_na_imagem")
+    driver = ambiente.get("driver_no_container")
+    if ambiente.get("cuda_para_o_whisper") is True:
+        return []                      # a placa chegou: nada a dizer aqui
+
+    if libs is False:
+        return ["A placa nao chega no container porque **a imagem nao tem as "
+                "libs de CUDA** -- ela foi construida sem `--build-arg GPU=1`, "
+                "ou aquela construcao falhou. Os caminhos do `LD_LIBRARY_PATH` "
+                "nao existem aqui dentro. Conserto: `atalhos\\reconstruir-gpu"
+                ".bat`, que constroi e sobe. Leva de 15 a 40 minutos, uma vez."]
+    if libs is True and driver is False:
+        return ["A imagem TEM as libs de CUDA, mas **a placa nao foi reservada "
+                "para o container**: nem o `nvidia-smi` nem os nos de "
+                "dispositivo estao aqui dentro. Foi o segundo dos dois passos "
+                "que ficou faltando. Conserto: `atalhos\\subir-gpu.bat`, que "
+                "sobe com o `docker-compose.gpu.yml`. Leva segundos."]
+    if libs is True and driver is True:
+        return ["As duas metades estao no lugar -- libs de CUDA na imagem e "
+                "driver injetado --, e o `ctranslate2` ainda nao ve a placa. "
+                "Isto nao e configuracao: e versao de lib ou driver. O log do "
+                "backend na primeira transcricao diz o que faltou."]
+    # `libs is None` e o diagnostico rodando FORA do container, onde nem o
+    # `ENV` do Dockerfile existe. Ali nao ha nada a afirmar.
+    return []
+
+
 def conclusoes(ambiente: dict, agregado: dict) -> list:
     """As frases que precisam das DUAS metades para existir.
 
     O relatorio sozinho diz "a transcricao domina" e manda conferir; o ambiente
     sozinho diz "o whisper esta em CPU", que numa maquina sem placa e apenas
-    verdade. Juntar os dois e o que transforma medicao em proximo passo -- e
-    nenhuma frase daqui sai sem os dois lados.
+    verdade. Juntar os dois e o que transforma medicao em proximo passo.
+
+    A excecao esta em `caminho_da_gpu`, e ela se justifica: "a corrente da GPU
+    arrebentou AQUI" e fato observado, nao prescricao sobre o que talvez esteja
+    certo, e sai em frase condicional. Sem ela, um container sem placa nenhuma
+    respondia so "rode um video e volte" -- mandando esperar uma medicao para
+    descobrir o que ja estava na tela.
     """
-    saida = []
+    saida = list(caminho_da_gpu(ambiente))
     if not agregado.get("jobs"):
         saida.append(
-            "Nenhum job medido em `output/`. Rode um video e volte -- sem "
-            "medicao, qualquer conclusao sobre lentidao e chute, que e o que "
-            "este projeto vem recusando em toda decisao.")
+            "Nenhum job medido em `output/`. Para saber ONDE o tempo vai, "
+            "rode um video e volte -- sem medicao, qualquer conclusao sobre "
+            "qual estagio pesa e chute, que e o que este projeto vem recusando "
+            "em toda decisao.")
         return saida
 
     if agregado.get("jobs_com_medida_inflada"):
@@ -301,6 +399,17 @@ def texto(ambiente: dict, agregado: dict) -> str:
                   f"{ambiente.get('whisper_device')} / "
                   f"{ambiente.get('whisper_compute')}")
     linhas.append(f"  placa p/ o whisper {_sim_nao(ambiente.get('cuda_para_o_whisper'))}")
+    # Os dois elos, e so quando a placa NAO chegou: sao eles que dizem se o
+    # conserto custa 40 minutos ou 30 segundos. Com a placa em uso viram ruido.
+    if ambiente.get("cuda_para_o_whisper") is not True:
+        linhas.append(
+            f"    libs de CUDA na imagem  "
+            f"{_sim_nao(ambiente.get('libs_de_cuda_na_imagem')):<20}"
+            f" (--build-arg GPU=1)")
+        linhas.append(
+            f"    driver no container     "
+            f"{_sim_nao(ambiente.get('driver_no_container')):<20}"
+            f" (docker-compose.gpu.yml)")
     linhas.append(f"  ffmpeg             {ambiente.get('ffmpeg_encoder')}"
                   f"   (h264_nvenc utilizavel: "
                   f"{_sim_nao(ambiente.get('nvenc_usavel'))})")

@@ -30,6 +30,23 @@ export default defineConfig([
       }],
       // Contexts and modals export a hook or a constant next to the component.
       'react-refresh/only-export-components': ['error', { allowConstantExport: true }],
+      // **Esta regra existe por um painel que abriu em PRETO** (17-set-2026).
+      // O `AuthContext` usava uma `const` (`pegarMediaToken`) 45 linhas acima
+      // da declaracao dela, no array de dependencias de um `useEffect` -- que o
+      // React avalia durante o RENDER. A `const` ainda estava na zona morta
+      // temporal, entao o `AuthProvider`, que embrulha o app inteiro, morria com
+      // `ReferenceError: Cannot access ... before initialization`. O `#root`
+      // ficava vazio: sem tela, sem mensagem, sem log no servidor.
+      //
+      // O `npm run build` NAO pega -- o import resolve e a sintaxe esta certa --,
+      // entao o CI passou verde com o painel quebrado. Esta regra pega, e e por
+      // isso que ela entra como `error` e nao como aviso.
+      //
+      // `functions: false` porque declaracao de funcao sobe (hoisting) e usa-la
+      // antes e idioma normal de JS; o que estoura e `const`/`let`/`class`.
+      'no-use-before-define': ['error', {
+        functions: false, classes: true, variables: true, allowNamedExports: false,
+      }],
     },
   },
   {

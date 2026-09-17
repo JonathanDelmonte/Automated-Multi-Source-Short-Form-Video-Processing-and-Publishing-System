@@ -44,5 +44,14 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
       - name: Install dependencies
         run: npm ci
+      # O lint entrou em 17-set-2026, e entrou por um defeito que passou daqui.
+      # O `build` resolve imports e checa sintaxe -- e nao ve uma `const` usada
+      # antes da declaracao. Uma dessas, no array de dependencias de um
+      # `useEffect` do `AuthContext` (avaliado durante o RENDER), matou o
+      # provider que embrulha o app inteiro: o painel abriu em PRETO, sem
+      # mensagem, e o CI aqui ficou verde. A regra `no-use-before-define` pega,
+      # mas so se alguem rodar o lint.
+      - name: Lint
+        run: npm run lint
       - name: Build
         run: npm run build

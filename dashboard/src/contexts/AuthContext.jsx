@@ -101,6 +101,29 @@ export function AuthProvider({ children }) {
     return true;
   }, [refreshMe]);
 
+  // O token curto das URLs de mídia. Sem ele, com a auth ligada, todo `<video>`
+  // do painel volta 404 — o player não tem como mandar cabeçalho.
+  //
+  // **Declarado ANTES do efeito que o usa, e isso não é estilo.** Ele estava
+  // 45 linhas abaixo, e o array de dependências do efeito (que o React avalia
+  // durante o render, não depois) referenciava esta `const` enquanto ela ainda
+  // estava na zona morta temporal. O resultado era
+  // `ReferenceError: Cannot access 'pegarMediaToken' before initialization`
+  // dentro do `AuthProvider`, que embrulha o app inteiro: o `#root` ficava
+  // vazio e o painel abria em PRETO, sem mensagem nenhuma (17-set-2026).
+  //
+  // O `npm run build` não pega: o import resolve e a sintaxe está correta. O
+  // ESLint também não, porque a regra que veria isso (`no-use-before-define`)
+  // não está ligada. Quem pega é abrir a página.
+  const pegarMediaToken = useCallback(async () => {
+    try {
+      const data = await apiJson('/api/media-token');
+      setMediaToken(data.token);
+    } catch {
+      setMediaToken('');
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -157,17 +180,6 @@ export function AuthProvider({ children }) {
       return cfg;
     } catch {
       return null;
-    }
-  }, []);
-
-  // O token curto das URLs de mídia. Sem ele, com a auth ligada, todo `<video>`
-  // do painel volta 404 — o player não tem como mandar cabeçalho.
-  const pegarMediaToken = useCallback(async () => {
-    try {
-      const data = await apiJson('/api/media-token');
-      setMediaToken(data.token);
-    } catch {
-      setMediaToken('');
     }
   }, []);
 

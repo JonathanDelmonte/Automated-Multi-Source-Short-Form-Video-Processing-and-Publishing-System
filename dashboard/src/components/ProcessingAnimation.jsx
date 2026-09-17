@@ -3,6 +3,16 @@ import { Scan, Scissors, Activity, Radio, CheckCircle } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { apiFetch } from '../lib/api';
 
+// Funcao pura, sem estado do componente: fica no escopo do modulo. Estava
+// declarada DEPOIS do efeito que a usa -- inofensivo (o efeito roda apos o
+// render), mas e a mesma forma do defeito que apagou o painel em 17-set-2026,
+// e a regra `no-use-before-define` nao distingue as duas.
+const getYouTubeId = (url) => {
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
+};
+
 const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, syncTrigger }) => {
   const [videoSrc, setVideoSrc] = useState(null);
   const [isYouTube, setIsYouTube] = useState(false);
@@ -82,12 +92,6 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
     }
   }, [syncedTime, isSyncedPlaying, isYouTube, videoSrc, syncTrigger]);
 
-
-  const getYouTubeId = (url) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
-  };
 
   const containerClasses = `relative w-full aspect-[2/1] sm:aspect-video rounded-card overflow-hidden bg-black border border-rule2 mb-4 sm:mb-8 group animate-fade transition-all duration-500
     ${isComplete && !isSyncedPlaying ? 'grayscale brightness-50' : ''}

@@ -212,6 +212,17 @@ export default function ClipEditor({ jobId, clipIndex, clipTitle, onClose, onRer
     const sourceOpen = sourceAvailable && showSource;
 
     const total = totalOf(segments);
+    // The track's scale is the RENDERED length (or the current total, whichever
+    // is longer), not the current total: normalising to the total made a
+    // single-segment clip fill 100% of the track no matter how it was trimmed,
+    // so dragging its handle visibly moved nothing (issue #73). Against the
+    // rendered length, shortening the clip shortens the bar.
+    //
+    // Declarado aqui, junto do `total` de que depende, e nao 760 linhas abaixo:
+    // o `startClipScrub` ja o usava antes da declaracao. Funcionava porque um
+    // handler so roda no clique, mas e a mesma forma do defeito que apagou o
+    // painel em 17-set-2026 -- e `no-use-before-define` nao distingue as duas.
+    const clipTrackSeconds = Math.max(total, totalOf(renderedSegments || []), 0.001);
     const dirty = useMemo(() => {
         if (!renderedSegments) return false;
         return JSON.stringify(segments) !== JSON.stringify(renderedSegments)
@@ -971,12 +982,6 @@ export default function ClipEditor({ jobId, clipIndex, clipTitle, onClose, onRer
         );
     }
 
-    // The track's scale is the RENDERED length (or the current total, whichever
-    // is longer), not the current total: normalising to the total made a
-    // single-segment clip fill 100% of the track no matter how it was trimmed,
-    // so dragging its handle visibly moved nothing (issue #73). Against the
-    // rendered length, shortening the clip shortens the bar.
-    const clipTrackSeconds = Math.max(total, totalOf(renderedSegments || []), 0.001);
     let runningOffset = 0;
     const blocks = segments.map((s, i) => {
         const left = (runningOffset / clipTrackSeconds) * 100;

@@ -11,9 +11,18 @@ cd /d "%~dp0.."
 echo.
 echo Perguntando ao container se ele enxerga a GPU...
 echo.
-docker compose exec backend python -c "import torch; print('GPU disponivel:', torch.cuda.is_available())"
+REM Pergunta pelo diagnostico.py, e nao mais por
+REM `torch.cuda.is_available()` (ate 16-set-2026 era esse). Quem o
+REM faster-whisper usa e o ctranslate2, nao o torch: sao bibliotecas diferentes
+REM com exigencias diferentes de CUDA/cuDNN, e um True do torch com a
+REM transcricao rodando em CPU e a falha silenciosa disfarcada de conferencia
+REM feita. De brinde, isto responde tambem pelo encoder de video.
+docker compose exec -T backend python diagnostico.py
 echo.
-echo   True  = GPU de verdade. Pode mandar o video.
-echo   False = a placa nao chegou; ele vai transcrever em CPU, devagar.
+echo   A linha "placa p/ o whisper" e a resposta:
+echo     sim = GPU de verdade. Pode mandar o video.
+echo     nao = a placa nao chegou; ele transcreve em CPU, devagar.
+echo.
+echo   Para salvar isto num txt e poder colar: diagnostico.bat
 echo.
 pause

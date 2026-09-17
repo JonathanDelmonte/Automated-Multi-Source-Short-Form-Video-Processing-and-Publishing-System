@@ -18,6 +18,10 @@ rodando -- nao e preciso abrir nada antes.
   reconstruir-gpu.bat constroi a imagem com as libs de CUDA. Roda-se uma vez.
   conferir-gpu.bat    responde se a placa chegou ao container.
 
+  diagnostico.bat     "por que esta lento": mostra onde o tempo foi e o que o
+                      ambiente esta usando de verdade (placa, encoder), salva
+                      em diagnostico.txt e abre no Bloco de Notas para colar.
+
   _garantir-docker.bat  nao se roda direto. E o pedaco que os outros chamam
                         para abrir o Docker Desktop e esperar o motor subir.
 

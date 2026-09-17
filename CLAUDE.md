@@ -50,6 +50,25 @@ Os 427 commits e os 9 contribuidores deste repositorio sao esperados: 420 vem
 do historico do upstream, incorporado na Fase 0.1 para que as correcoes deles
 cheguem por `git fetch` (ADR-001). O credito a eles esta no `NOTICE`.
 
+### A maquina do autor (para dar comando pronto, nao com `<caminho>`)
+
+Windows 10. O repositorio esta em:
+
+```
+C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
+```
+
+E o padrao do GitHub Desktop. Placa **NVIDIA RTX 3060**, entao os caminhos de
+GPU valem. O `docs/COMO-EXECUTAR.md` usa `C:\cortes` como exemplo generico --
+ao passar comando PARA O AUTOR, usar o caminho acima.
+
+**E preferir os atalhos a comandos crus.** `atalhos/` existe justamente porque
+`docker compose` a mao tem pegadinhas que ja morderam: todos os `.bat` chamam o
+`_garantir-docker.bat`, que ABRE o Docker Desktop e espera o motor subir. Sem
+ele, o erro e `failed to connect to the docker API at npipe:////...`, que nao
+diz "abra o Docker Desktop" -- diz que nao achou um cano, entao parece problema
+do projeto e e do Windows. Ja aconteceu por eu ter mandado o comando cru.
+
 ### Idioma
 
 Documentacao, mensagens de commit e comentarios novos em portugues. Codigo

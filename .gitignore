@@ -49,3 +49,6 @@ skills-lock.json
 # Cloud env example kept local only (avoid leaking infra hints)
 .env.cloud.example
 .worktrees
+
+# Saida do atalhos/diagnostico.bat -- e para colar num chat, nao para versionar.
+/diagnostico.txt

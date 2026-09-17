@@ -828,6 +828,22 @@ juntas, viram um proximo passo.
     arrebentou aqui" e fato observado, nao palpite. Antes disto, um container
     sem placa nenhuma respondia so "rode um video e volte", mandando esperar
     uma medicao para descobrir o que ja estava na tela.
+- **O `motivo_do_nvenc` le o erro que a sonda do pipeline joga fora**
+  (17-set-2026). `ffmpeg_utils._probe_nvenc` manda o stderr para `DEVNULL` de
+  proposito -- ela responde um booleano e roda antes de cada encode, nao pode
+  poluir o log de todo job. Mas `nvenc: nao` sozinho manda adivinhar, e
+  "libnvidia-encode ausente" (comum no Docker Desktop com WSL 2: o CUDA passa e
+  o NVENC nao) e "sem sessao livre na placa" nao tem o mesmo conserto. O
+  diagnostico reexecuta a MESMA sonda capturando o stderr.
+  - **`ffmpeg_utils.comando_da_sonda_nvenc()` e a definicao unica.** Duas
+    copias do comando divergem no dia em que uma delas mudar, e ai o motivo
+    passa a explicar outra coisa. Ha teste lendo a fonte.
+  - **Erro fora da lista conhecida sai CRU**, na ultima linha do ffmpeg.
+    Inventar explicacao para erro que ninguem viu e o oposto do que este modulo
+    faz.
+  - **Cobra so quem PEDIU**: com `FFMPEG_ENCODER=x264` o libx264 e escolha, nao
+    queda. Com `auto`/`nvenc` e expectativa nao cumprida em silencio, e o preco
+    e todo encode da cadeia de um corte na CPU.
 
 ### Coletor de metricas (`metrics_collector.py`, Fase 5 bloco 5.1)
 

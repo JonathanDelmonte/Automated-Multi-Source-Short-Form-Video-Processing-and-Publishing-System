@@ -154,6 +154,62 @@ def nvenc_usavel() -> Optional[bool]:
         return None
 
 
+#: Erros conhecidos da sonda do NVENC, e o que cada um significa em portugues.
+#: Casado por pedaco de texto, em minusculas. So entra aqui o que se sabe
+#: diagnosticar -- o resto sai como a linha crua do ffmpeg, que e mais honesto
+#: que uma explicacao inventada.
+MOTIVOS_DO_NVENC = (
+    ("cannot load libnvidia-encode",
+     "o container nao recebeu as libs de ENCODE da NVIDIA. E comum no Docker "
+     "Desktop com WSL 2: o CUDA passa e o NVENC nao. O render fica em libx264 "
+     "-- mais lento, e nao quebra nada."),
+    ("cannot load libcuda",
+     "o container nao recebeu as libs de CUDA do driver."),
+    ("no capable devices found",
+     "o ffmpeg alcancou o driver e nao achou placa que sirva."),
+    ("out of memory",
+     "a placa esta sem memoria livre para abrir uma sessao de encode agora."),
+    ("no free encoding sessions",
+     "a placa esta com todas as sessoes de encode ocupadas. Placas GeForce tem "
+     "um teto baixo de sessoes simultaneas."),
+    ("unknown encoder",
+     "este ffmpeg foi compilado sem h264_nvenc."),
+)
+
+
+def motivo_do_nvenc() -> Optional[str]:
+    """POR QUE o h264_nvenc nao abriu -- rodando a sonda e LENDO o erro.
+
+    O `ffmpeg_utils._probe_nvenc` responde um booleano e descarta o stderr de
+    proposito: ele roda antes de cada encode e nao pode poluir o log de todo
+    job. Mas "nao" sozinho manda a pessoa adivinhar, e as causas pedem coisas
+    diferentes -- libs de encode ausentes e um limite de sessoes simultaneas
+    nao tem o mesmo conserto.
+
+    Usa `ffmpeg_utils.comando_da_sonda_nvenc()`, e nao uma copia: duas
+    definicoes do mesmo comando divergem no dia em que uma delas mudar.
+    """
+    import subprocess
+    try:
+        import ffmpeg_utils
+        r = subprocess.run(ffmpeg_utils.comando_da_sonda_nvenc(),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                           timeout=30)
+    except Exception as e:
+        return f"nao consegui rodar a sonda ({type(e).__name__})"
+    if r.returncode == 0:
+        return None
+    erro = (r.stderr or b"").decode("utf-8", "replace").strip()
+    baixo = erro.lower()
+    for pedaco, explicacao in MOTIVOS_DO_NVENC:
+        if pedaco in baixo:
+            return explicacao
+    # Sem casar com nada conhecido, a ULTIMA linha do ffmpeg crua. Inventar
+    # explicacao para erro que ninguem viu e o oposto do que este modulo faz.
+    ultima = [l for l in erro.splitlines() if l.strip()]
+    return ultima[-1].strip() if ultima else "a sonda falhou sem dizer por que"
+
+
 def _inteiro_do_ambiente(nome: str, padrao: int) -> int:
     try:
         return int(os.environ.get(nome, str(padrao)))
@@ -173,6 +229,9 @@ def fatos_do_ambiente() -> dict:
         "driver_no_container": driver_no_container(),
         "ffmpeg_encoder": os.environ.get("FFMPEG_ENCODER", "x264").strip().lower(),
         "nvenc_usavel": nvenc_usavel(),
+        # So quando falhou: com o nvenc funcionando nao ha motivo a explicar, e
+        # rodar a sonda de novo seria um encode a toa.
+        "motivo_do_nvenc": None if nvenc_usavel() else motivo_do_nvenc(),
         "clip_workers": _inteiro_do_ambiente("CLIP_WORKERS", 3),
         "teto_de_cortes": _inteiro_do_ambiente("CLIP_TARGET_MAX", 15),
     }
@@ -208,6 +267,28 @@ def _fatia(agregado: dict, estagio: str) -> float:
     return 0.0
 
 
+def _encoder_pedido_e_nao_atendido(ambiente: dict) -> list:
+    """`FFMPEG_ENCODER=auto|nvenc` com o h264_nvenc recusando abrir.
+
+    Nao e falha: o `ffmpeg_utils` cai para libx264 sozinho, e o job roda. Mas e
+    uma expectativa que nao se cumpre em silencio, e o custo dela e todo encode
+    da cadeia de um corte na CPU. Quem pediu merece saber, e saber POR QUE --
+    lib de encode ausente e sessao esgotada nao tem o mesmo conserto.
+    """
+    if (ambiente.get("ffmpeg_encoder") or "") not in ("auto", "nvenc"):
+        return []                      # ninguem pediu nvenc: nada a cobrar
+    if ambiente.get("nvenc_usavel") is not False:
+        return []                      # abriu, ou nao deu para saber
+    frase = ("A placa esta em uso pelo whisper, mas o **h264_nvenc nao abre** "
+             "-- entao todo encode da cadeia de um corte fica em libx264, na "
+             "CPU. Nao quebra nada (a queda e automatica), so e mais lento.")
+    # O motivo sai na linha `porque:` do bloco de ambiente. Repetir aqui daria
+    # o mesmo paragrafo duas vezes na mesma tela.
+    if ambiente.get("motivo_do_nvenc"):
+        frase += " O motivo esta na linha `porque:` acima."
+    return [frase]
+
+
 def caminho_da_gpu(ambiente: dict) -> list:
     """Por que a placa nao chegou -- e QUAL das duas causas e.
 
@@ -231,7 +312,10 @@ def caminho_da_gpu(ambiente: dict) -> list:
     libs = ambiente.get("libs_de_cuda_na_imagem")
     driver = ambiente.get("driver_no_container")
     if ambiente.get("cuda_para_o_whisper") is True:
-        return []                      # a placa chegou: nada a dizer aqui
+        # A placa chegou para o whisper. Falta so o outro consumidor dela: o
+        # encoder. Isto e contradicao observada e nao palpite -- o encoder foi
+        # PEDIDO (`auto`/`nvenc`) e nao abre --, entao sai sem medicao.
+        return _encoder_pedido_e_nao_atendido(ambiente)
 
     if libs is False:
         return ["A placa nao chega no container porque **a imagem nao tem as "
@@ -413,6 +497,8 @@ def texto(ambiente: dict, agregado: dict) -> str:
     linhas.append(f"  ffmpeg             {ambiente.get('ffmpeg_encoder')}"
                   f"   (h264_nvenc utilizavel: "
                   f"{_sim_nao(ambiente.get('nvenc_usavel'))})")
+    if ambiente.get("motivo_do_nvenc"):
+        linhas.append(f"    porque: {ambiente['motivo_do_nvenc']}")
     linhas.append(f"  cortes             ate {ambiente.get('teto_de_cortes')}, "
                   f"{ambiente.get('clip_workers')} em paralelo")
     linhas.append("")

@@ -146,20 +146,33 @@ _nvenc_ok = None  # None = not probed yet
 _announced = False
 
 
+def comando_da_sonda_nvenc():
+    """O comando da sonda, para quem precisa reexecuta-lo e LER o erro.
+
+    Existe para que haja uma definicao so. O `_probe_nvenc` abaixo descarta o
+    stderr de proposito -- ele responde um booleano e nao pode poluir o log de
+    todo job --, mas o `diagnostico.py` precisa do MOTIVO quando a resposta e
+    nao, e "libnvidia-encode ausente" e "sem sessao livre na placa" pedem
+    coisas diferentes. Duas copias do comando divergiriam no dia em que uma
+    delas mudasse.
+    """
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+        "-c:v", "h264_nvenc", "-f", "null", "-",
+    ]
+
+
 def _probe_nvenc():
     """One tiny lavfi encode to prove h264_nvenc works end-to-end.
 
     NVENC rejects frames smaller than ~145px, so the probe uses 256x256.
     Any failure (no ffmpeg binary, no GPU, no driver libs) means False.
     """
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
-        "-c:v", "h264_nvenc", "-f", "null", "-",
-    ]
     try:
         result = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30
+            comando_da_sonda_nvenc(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30
         )
         return result.returncode == 0
     except Exception:

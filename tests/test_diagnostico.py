@@ -29,6 +29,7 @@ def _ambiente(**troca):
             "whisper_compute": "int8", "cuda_para_o_whisper": None,
             "libs_de_cuda_na_imagem": None, "driver_no_container": None,
             "ffmpeg_encoder": "x264", "nvenc_usavel": None,
+            "motivo_do_nvenc": None,
             "clip_workers": 3, "teto_de_cortes": 15}
     base.update(troca)
     return base
@@ -195,7 +196,8 @@ class TestSondagens:
         assert set(amb) == {"whisper_model", "whisper_device", "whisper_compute",
                             "cuda_para_o_whisper", "libs_de_cuda_na_imagem",
                             "driver_no_container", "ffmpeg_encoder",
-                            "nvenc_usavel", "clip_workers", "teto_de_cortes"}
+                            "nvenc_usavel", "motivo_do_nvenc",
+                            "clip_workers", "teto_de_cortes"}
 
     def test_o_whisper_vem_do_subtitles_e_nao_de_uma_copia(self, monkeypatch):
         """Reescrever os defaults aqui criaria uma segunda verdade que o dia da
@@ -327,3 +329,92 @@ class TestSondagensDaGpu:
         observada, nao "nao deu para saber" -- sao os caminhos que o runtime da
         NVIDIA cria quando injeta o driver."""
         assert diagnostico.driver_no_container() in (True, False)
+
+
+class TestNvencPedidoENaoAtendido:
+    """`FFMPEG_ENCODER=auto` com o h264_nvenc recusando abrir.
+
+    Nao e falha -- o `ffmpeg_utils` cai para libx264 sozinho e o job roda --,
+    mas e uma expectativa que nao se cumpre em silencio, e o preco dela e todo
+    encode da cadeia de um corte na CPU.
+    """
+
+    def _amb(self, **t):
+        base = dict(_ambiente(), cuda_para_o_whisper=True,
+                    libs_de_cuda_na_imagem=True, driver_no_container=True,
+                    ffmpeg_encoder="auto", nvenc_usavel=False,
+                    motivo_do_nvenc="cannot load libnvidia-encode")
+        base.update(t)
+        return base
+
+    def test_cobra_o_encoder_que_foi_pedido(self):
+        f = diagnostico.caminho_da_gpu(self._amb())
+        assert _diz(f, "h264_nvenc nao abre")
+        assert _diz(f, "nao quebra nada")
+
+    def test_nao_cobra_quem_nunca_pediu_nvenc(self):
+        """Com `FFMPEG_ENCODER=x264` o libx264 e a escolha, nao a queda."""
+        assert diagnostico.caminho_da_gpu(self._amb(ffmpeg_encoder="x264")) == []
+
+    def test_nao_cobra_quando_o_nvenc_abre(self):
+        assert diagnostico.caminho_da_gpu(self._amb(nvenc_usavel=True)) == []
+
+    def test_desconhecido_nao_vira_acusacao(self):
+        """`None` e o diagnostico rodando onde nao ha ffmpeg."""
+        assert diagnostico.caminho_da_gpu(self._amb(nvenc_usavel=None)) == []
+
+    def test_o_motivo_sai_uma_vez_so(self):
+        """Ele e detalhe do bloco de ambiente; a conclusao so aponta para ele.
+        Repetir daria o mesmo paragrafo duas vezes na mesma tela."""
+        amb = self._amb(motivo_do_nvenc="o container nao recebeu as libs")
+        saida = diagnostico.texto(amb, timings_report.agregar([]))
+        assert saida.count("o container nao recebeu as libs") == 1
+        assert "porque:" in saida
+
+    def test_a_sonda_do_motivo_usa_o_comando_do_ffmpeg_utils(self):
+        """Uma definicao so: duas copias do comando divergem no dia em que uma
+        delas mudar, e ai o motivo passa a explicar outra coisa."""
+        import ffmpeg_utils
+        cmd = ffmpeg_utils.comando_da_sonda_nvenc()
+        assert cmd[0] == "ffmpeg" and "h264_nvenc" in cmd
+        import inspect
+        fonte = inspect.getsource(diagnostico.motivo_do_nvenc)
+        assert "comando_da_sonda_nvenc()" in fonte
+
+    @pytest.mark.parametrize("erro,esperado", [
+        ("Cannot load libnvidia-encode.so.1", "libs de ENCODE"),
+        ("No capable devices found", "nao achou placa"),
+        ("OpenEncodeSessionEx failed: out of memory", "sem memoria"),
+        ("Unknown encoder 'h264_nvenc'", "compilado sem"),
+    ])
+    def test_traduz_os_erros_conhecidos(self, erro, esperado, monkeypatch):
+        import subprocess
+
+        class _R:
+            returncode = 1
+            stderr = erro.encode()
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        assert esperado.lower() in (diagnostico.motivo_do_nvenc() or "").lower()
+
+    def test_erro_desconhecido_sai_cru_e_nao_inventado(self, monkeypatch):
+        """Explicar um erro que ninguem viu e o oposto do que este modulo faz.
+        Sai a ultima linha do ffmpeg, como ela e."""
+        import subprocess
+
+        class _R:
+            returncode = 1
+            stderr = b"linha de cima\nalgo que ninguem previu aqui\n"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        assert diagnostico.motivo_do_nvenc() == "algo que ninguem previu aqui"
+
+    def test_sonda_bem_sucedida_nao_tem_motivo(self, monkeypatch):
+        import subprocess
+
+        class _R:
+            returncode = 0
+            stderr = b""
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        assert diagnostico.motivo_do_nvenc() is None

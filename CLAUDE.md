@@ -69,6 +69,14 @@ ele, o erro e `failed to connect to the docker API at npipe:////...`, que nao
 diz "abra o Docker Desktop" -- diz que nao achou um cano, entao parece problema
 do projeto e e do Windows. Ja aconteceu por eu ter mandado o comando cru.
 
+**Para atualizar, mandar `atalhos\atualizar.bat` -- nunca `git pull` + `subir`.**
+Os dois nao sao equivalentes: o `subir` e `docker compose up -d`, que **nao
+recria container cujo config nao mudou**, entao o codigo novo fica no disco sem
+ninguem reler. O bind mount do Windows nao repassa evento de arquivo (ver
+`docs/COMO-EXECUTAR.md`), entao nem o `--reload` do uvicorn nem o grafo de
+modulos do Vite percebem sozinhos. Ja aconteceu por eu ter mandado `git pull` +
+`subir-gpu.bat`: o painel abriu **em preto**, sem erro e sem log.
+
 ### Idioma
 
 Documentacao, mensagens de commit e comentarios novos em portugues. Codigo

@@ -284,12 +284,18 @@ O que varia é se o processo que está rodando **percebe**:
 
 Daí a tabela:
 
+> **Use o `atalhos\atualizar.bat` em vez de `git pull` na mão.** Ele faz o pull
+> **e** reinicia os dois processos. Um `git pull` sozinho põe os arquivos no
+> disco e não avisa ninguém — e é assim que se chega numa tela preta sem
+> mensagem nenhuma (17-set-2026).
+
 | O que mudou no `pull` | O que rodar |
 |---|---|
 | só `docs/*.md` | nada |
-| `.jsx`, `.css` | nada — o Vite recarrega o navegador (com `Ctrl+F5` se teimar) |
+| `.jsx`, `.css` **editados** | nada — o polling do Vite pega (com `Ctrl+F5` se teimar) |
+| arquivos de frontend **acrescentados ou apagados** | `atalhos\atualizar.bat` (reinicia o painel). O polling vigia o conteúdo dos arquivos que o Vite já carregou; o **grafo de módulos** ele monta na subida. Um arquivo novo não entra nesse grafo, e o painel abre **em preto** — sem erro e sem log |
 | `.py` | `atalhos\atualizar.bat` já reinicia o backend; à mão, `docker compose restart backend` |
-| `vite.config.js`, ou arquivos de frontend **apagados** | `docker compose restart frontend` (~3 s) |
+| `vite.config.js` | `docker compose restart frontend` (~3 s) |
 | `docker-compose.yml` | `docker compose up -d` (recria o container, sem rebuild) |
 | `requirements.txt`, `package.json`, `Dockerfile` | `docker compose up -d --build` |
 

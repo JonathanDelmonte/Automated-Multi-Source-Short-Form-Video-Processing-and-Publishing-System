@@ -44,13 +44,22 @@ if %errorlevel% neq 0 (
 
 REM O `--reload` do uvicorn depende de eventos do sistema de arquivos, e eles
 REM NAO atravessam o bind mount do Docker Desktop quando o repositorio mora num
-REM caminho do Windows (C:\...). Entao aqui a atualizacao do backend e explicita
-REM em vez de torcer para ele perceber: sao ~3 s, e tira a duvida de "sera que
-REM o pull chegou?". O frontend nao precisa -- o Vite roda com polling
-REM (VITE_USE_POLLING=1 no docker-compose.yml).
+REM caminho do Windows (C:\...). Entao a atualizacao e explicita em vez de
+REM torcer para os processos perceberem: sao ~3 s cada, e tira a duvida de
+REM "sera que o pull chegou?".
+REM
+REM **O frontend tambem entra, e ate 17-set-2026 nao entrava.** O comentario
+REM antigo dizia "o frontend nao precisa -- o Vite roda com polling
+REM (VITE_USE_POLLING=1)", e o polling resolve mesmo a EDICAO de um arquivo que
+REM ja existia. O que ele nao cobre e a mudanca do GRAFO DE MODULOS: um pull que
+REM ACRESCENTA ou APAGA arquivo deixa o dev server servindo o grafo que leu na
+REM subida, e o painel abre em PRETO -- sem erro, sem log, so preto. Aconteceu
+REM depois do pull da Fase 5, e a tabela do docs/COMO-EXECUTAR.md ja previa o
+REM caso ("arquivos de frontend apagados -> docker compose restart frontend"):
+REM faltava o atalho fazer.
 echo.
-echo Reiniciando o backend para valer o que foi baixado...
-docker compose restart backend
+echo Reiniciando o backend e o painel para valer o que foi baixado...
+docker compose restart backend frontend
 
 :fim
 echo.

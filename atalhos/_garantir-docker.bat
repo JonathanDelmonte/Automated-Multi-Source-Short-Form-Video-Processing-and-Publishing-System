@@ -36,6 +36,12 @@ start "" "%DOCKER_EXE%"
 
 echo Esperando o motor responder. A primeira vez do dia leva de 30s a 2 min.
 set /a _tentativas=0
+REM Nada de parentese nos `echo` dentro do bloco abaixo (22-set-2026): um `)`
+REM ali FECHA o `if` no meio, e o resto do bloco -- inclusive o `exit /b 1` --
+REM passa a rodar sempre. Com o parentese que havia aqui, a espera de 3
+REM minutos pelo motor desistia na primeira volta, 2 segundos depois de abrir
+REM o Docker -- e so funcionava de novo na segunda tentativa.
+REM `tests/test_atalhos_gpu.py` confere todos os atalhos.
 :espera
 REM 2s por tentativa, 90 tentativas = 3 minutos de teto.
 docker info >nul 2>&1
@@ -46,8 +52,8 @@ if %_tentativas% geq 90 (
   echo ============================================================
   echo  O Docker abriu mas o motor nao respondeu em 3 minutos.
   echo  Veja a janela do Docker Desktop: se ela pedir alguma coisa
-  echo  (atualizacao, login, aceitar os termos), responda e rode
-  echo  este atalho de novo.
+  echo  -- atualizacao, login, aceitar os termos --, responda e
+  echo  rode este atalho de novo.
   echo ============================================================
   exit /b 1
 )

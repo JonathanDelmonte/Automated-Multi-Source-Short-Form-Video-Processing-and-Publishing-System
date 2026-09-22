@@ -274,3 +274,39 @@ class TestReusoDoWavDoPipeline:
 
         assert wav.exists(), (
             "apagar o WAV do estágio 02 deixaria o resto do job sem áudio")
+
+
+# --- qual whisper rodou (22-set-2026) ----------------------------------------
+
+class TestLinhaDoWhisper:
+    """O log do job tem de dizer qual whisper rodou.
+
+    Sem o overlay de GPU o `WHISPER_DEVICE` nem chega a ser `cuda`: o padrao
+    (`small` em CPU) roda sem erro e sem linha nenhuma. Um video de 10 min
+    levou 5 min so para transcrever numa maquina com RTX 3060, e o log colado
+    nao tinha como mostrar o motivo.
+    """
+
+    def test_em_cpu_a_linha_aponta_o_diagnostico(self):
+        linha = tb.linha_do_whisper("small", "cpu", "int8")
+        assert "small" in linha and "CPU" in linha and "int8" in linha
+        assert "diagnostico.bat" in linha
+
+    def test_em_cpu_a_frase_e_condicional(self):
+        """O container nao sabe se a maquina tem placa: afirmar que ela
+        "devia estar aqui" seria errado numa maquina sem nenhuma."""
+        assert "Se esta maquina tem placa" in tb.linha_do_whisper("small", "cpu", "int8")
+
+    def test_na_placa_nao_ha_o_que_consertar(self):
+        linha = tb.linha_do_whisper("large-v3-turbo", "cuda", "float16")
+        assert "large-v3-turbo" in linha and "cuda" in linha
+        assert "diagnostico" not in linha
+
+    def test_a_linha_sai_no_log_da_transcricao(self, fake_faster_whisper,
+                                               monkeypatch, capsys):
+        monkeypatch.setenv("WHISPER_MODEL", "small")
+        monkeypatch.setenv("WHISPER_DEVICE", "cpu")
+        monkeypatch.setenv("WHISPER_COMPUTE", "int8")
+        monkeypatch.setattr(tb, "_whisper_force_cpu", False)
+        tb.run_whisper_transcription("video.mp4")
+        assert "whisper small em CPU (int8)" in capsys.readouterr().out

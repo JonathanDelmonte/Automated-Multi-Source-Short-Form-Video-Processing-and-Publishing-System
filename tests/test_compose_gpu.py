@@ -130,8 +130,11 @@ def test_o_atalho_do_diagnostico_existe_e_garante_o_docker():
     # `-T` e o que faz o `>` receber a saida limpa, sem o terminal no meio.
     assert "exec -T backend python diagnostico.py" in texto
     # E ele nao pode terminar em silencio quando o backend esta parado: `exec`
-    # nao sobe nada, entao a mensagem tem de dizer qual atalho subir.
-    assert "subir-gpu.bat" in texto and "subir.bat" in texto
+    # nao sobe nada, entao a mensagem tem de dizer qual atalho subir. E um so:
+    # desde 22-set-2026 o subir.bat descobre a placa sozinho, e mandar escolher
+    # entre dois era o que tirava a GPU de quem escolhia o errado.
+    assert "subir.bat" in texto
+    assert "subir-gpu.bat" not in _sem_comentarios(texto)
 
 
 def test_nenhum_atalho_deixa_o_erro_do_cano_chegar_na_tela():
@@ -148,7 +151,10 @@ def test_nenhum_atalho_deixa_o_erro_do_cano_chegar_na_tela():
     lugar. Exigir o `call` faria o teste recusar a decisao certa.
     """
     for nome, texto in _bats().items():
-        if nome == "_garantir-docker.bat":
+        if nome.startswith("_"):
+            # Os `_*.bat` nao se rodam direto: quem os chama ja garantiu o
+            # Docker, e isso e cobrado de QUEM CHAMA em
+            # `tests/test_atalhos_gpu.py`.
             continue
         corpo = _sem_comentarios(texto)
         if "docker compose" not in corpo and "docker info" not in corpo:

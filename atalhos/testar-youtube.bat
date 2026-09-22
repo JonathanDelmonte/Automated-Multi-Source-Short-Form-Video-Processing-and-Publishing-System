@@ -39,8 +39,7 @@ if %errorlevel% neq 0 (
   echo  Nao consegui falar com o backend. O mais provavel e que os
   echo  servicos estejam parados. Suba:
   echo.
-  echo     subir-gpu.bat   se a maquina tem placa NVIDIA
-  echo     subir.bat       se nao tem
+  echo     subir.bat   - ele mesmo descobre se ha placa NVIDIA
   echo.
   echo  E depois rode este atalho de novo.
   echo ============================================================

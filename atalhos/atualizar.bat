@@ -10,12 +10,34 @@ for /f %%i in ('git rev-parse HEAD') do set ANTES=%%i
 git pull
 for /f %%i in ('git rev-parse HEAD') do set DEPOIS=%%i
 
+REM **NAO EDITE NADA ACIMA DA LINHA DO `git pull`.** Este arquivo e trocado
+REM enquanto roda: o `git pull` reescreve o proprio atualizar.bat, e o cmd.exe
+REM nao rele o arquivo do comeco -- ele continua da mesma POSICAO EM BYTES,
+REM agora dentro do arquivo novo. Com o trecho de cima identico, essa posicao cai
+REM no comeco da linha seguinte e tudo segue certo; qualquer mudanca em cima faz
+REM a primeira atualizacao depois dela executar um pedaco de linha qualquer.
+REM `tests/test_atalhos_gpu.py` congela esse trecho byte a byte.
+REM
+REM **Os dois caminhos de subida passam pelo _modo-gpu.bat** (22-set-2026). Este
+REM atalho fazia `docker compose up -d` so com o arquivo base -- e, numa
+REM maquina que tinha subido pelo subir-gpu.bat, isso RECRIAVA o backend sem a
+REM placa, porque a configuracao do servico muda sem o docker-compose.gpu.yml.
+REM Cada atualizacao desligava a GPU em silencio: o whisper voltava ao `small`
+REM em CPU e um video de 10 min passava a levar 5 min so para transcrever.
+
 if "%ANTES%"=="%DEPOIS%" (
   echo.
   echo Nada novo para baixar. Subindo o que ja existe.
   call "%~dp0_garantir-docker.bat"
   if errorlevel 1 ( pause & exit /b 1 )
-  docker compose up -d
+  call "%~dp0_modo-gpu.bat"
+  call "%~dp0_subir.bat"
+  if errorlevel 1 (
+    echo.
+    echo Nao subiu. O erro esta acima.
+    pause
+    exit /b 1
+  )
   goto fim
 )
 
@@ -34,7 +56,8 @@ if %errorlevel%==0 (
 call "%~dp0_garantir-docker.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
-docker compose up -d
+call "%~dp0_modo-gpu.bat"
+call "%~dp0_subir.bat"
 if %errorlevel% neq 0 (
   echo.
   echo Nao subiu. O erro esta acima.

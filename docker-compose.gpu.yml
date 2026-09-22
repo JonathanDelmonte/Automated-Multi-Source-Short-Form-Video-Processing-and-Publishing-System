@@ -34,6 +34,19 @@
 
 services:
   backend:
+    # **A imagem sai com as libs de CUDA sempre que este arquivo esta junto**
+    # (22-set-2026). Antes o `GPU=1` so existia na linha de comando do
+    # reconstruir-gpu.bat; o reconstruir.bat -- que o atualizar.bat manda rodar
+    # quando uma dependencia muda -- construia SEM ele, e a placa sumia de vez:
+    # so 40 minutos de reconstruir-gpu.bat a devolviam. Com o argumento aqui,
+    # qualquer `build` que leve este arquivo constroi certo.
+    #
+    # Nao provoca recriacao sozinho: o compose tira o `build` do hash que
+    # decide se o container precisa ser recriado.
+    build:
+      context: .
+      args:
+        GPU: "1"
     environment:
       # `large-v3-turbo` so faz sentido com GPU; em CPU ele e proibitivo.
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}

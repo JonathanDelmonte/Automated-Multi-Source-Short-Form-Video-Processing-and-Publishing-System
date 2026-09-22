@@ -229,9 +229,9 @@ class TestCaminhoDaGpu:
         f = diagnostico.caminho_da_gpu(
             _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
                       driver_no_container=False))
-        assert _diz(f, "reconstruir-gpu.bat")
+        assert _diz(f, "reconstruir.bat")
         assert _diz(f, "15 a 40 minutos")
-        assert not _diz(f, "subir-gpu.bat")
+        assert not _diz(f, "subir.bat")
 
     def test_libs_presentes_e_placa_nao_reservada_manda_subir(self):
         """O segundo dos dois passos que o CLAUDE.md ja avisava faltar: a
@@ -239,9 +239,9 @@ class TestCaminhoDaGpu:
         f = diagnostico.caminho_da_gpu(
             _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=True,
                       driver_no_container=False))
-        assert _diz(f, "subir-gpu.bat")
+        assert _diz(f, "subir.bat")
         assert _diz(f, "segundos")
-        assert not _diz(f, "reconstruir-gpu.bat")
+        assert not _diz(f, "reconstruir.bat")
 
     def test_reconstruir_vence_quando_faltam_as_libs_mesmo_com_driver(self):
         """Placa reservada numa imagem CPU: o `up` ja esta certo, o que falta e
@@ -249,8 +249,8 @@ class TestCaminhoDaGpu:
         f = diagnostico.caminho_da_gpu(
             _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
                       driver_no_container=True))
-        assert _diz(f, "reconstruir-gpu.bat")
-        assert not _diz(f, "subir-gpu.bat")
+        assert _diz(f, "reconstruir.bat")
+        assert not _diz(f, "subir.bat")
 
     def test_as_duas_metades_no_lugar_deixa_de_ser_configuracao(self):
         f = diagnostico.caminho_da_gpu(
@@ -279,7 +279,7 @@ class TestCaminhoDaGpu:
             _ambiente(cuda_para_o_whisper=False, libs_de_cuda_na_imagem=False,
                       driver_no_container=False),
             timings_report.agregar([]))
-        assert _diz(f, "reconstruir-gpu.bat")
+        assert _diz(f, "reconstruir.bat")
         assert _diz(f, "nenhum job medido")
 
     def test_os_dois_elos_aparecem_no_texto_so_quando_a_placa_falta(self):

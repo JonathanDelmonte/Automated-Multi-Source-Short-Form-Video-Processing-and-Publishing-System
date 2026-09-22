@@ -6,17 +6,23 @@ na pasta certa sozinhos e TODOS abrem o Docker Desktop se ele nao estiver
 rodando -- nao e preciso abrir nada antes.
 
   subir.bat           o do dia a dia. Sobe em segundos e devolve o terminal.
+                      Usa a placa NVIDIA sozinho quando a maquina tem uma: a
+                      primeira linha que ele escreve diz qual foi o caso.
   atualizar.bat       git pull + sobe. Avisa se as dependencias mudaram.
   parar.bat           para tudo de verdade (fechar a janela nao para).
   ver-log.bat         mostra o log do backend ao vivo. A unica janela que rola.
   abrir-painel.bat    abre http://localhost:5175 no navegador.
 
   reconstruir.bat     SO quando muda requirements.txt, package.json ou o
-                      Dockerfile. Demora de 15 a 40 minutos.
+                      Dockerfile. Demora de 15 a 40 minutos. Com placa NVIDIA,
+                      ja constroi com as libs de CUDA.
 
-  subir-gpu.bat       o do dia a dia, usando a placa NVIDIA.
-  reconstruir-gpu.bat constroi a imagem com as libs de CUDA. Roda-se uma vez.
   conferir-gpu.bat    responde se a placa chegou ao container.
+
+  subir-gpu.bat       ficaram pelo costume: desde 22-set-2026 fazem o mesmo
+  reconstruir-gpu.bat que subir.bat e reconstruir.bat. Ter dois de cada era o
+                      que fazia a placa sumir -- atualizar.bat subia pelo
+                      caminho sem ela. Podem ser apagados.
 
   diagnostico.bat     "por que esta lento": mostra onde o tempo foi e o que o
                       ambiente esta usando de verdade (placa, encoder), salva
@@ -28,6 +34,11 @@ rodando -- nao e preciso abrir nada antes.
 
   _garantir-docker.bat  nao se roda direto. E o pedaco que os outros chamam
                         para abrir o Docker Desktop e esperar o motor subir.
+  _modo-gpu.bat         nao se roda direto. Pergunta ao nvidia-smi se ha
+                        placa e escolhe os arquivos do compose. E o UNICO
+                        lugar que decide isso.
+  _subir.bat            nao se roda direto. O `up` de todos; se o Docker
+                        recusar a placa, sobe em CPU e avisa.
 
 Esta pasta inteira e conveniencia de quem roda no Windows: pode ser apagada
 sem afetar o projeto. O passo a passo completo esta em docs/COMO-EXECUTAR.md.

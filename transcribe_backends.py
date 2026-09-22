@@ -114,8 +114,29 @@ def _get_whisper_model():
     return _whisper_model, cfg["device"]
 
 
+def linha_do_whisper(model_size, device, compute_type):
+    """A linha de log que diz QUAL whisper vai rodar.
+
+    Existe porque a pior queda deste modulo nao era a que levanta: sem o
+    `docker-compose.gpu.yml` o `WHISPER_DEVICE` nem chega a ser `cuda`, e o
+    padrao (`small` em CPU, int8) roda sem erro e sem uma linha sequer. Em
+    22-set-2026 um video de 10 min levou 5 min so para transcrever numa maquina
+    com RTX 3060, e o log colado nao tinha como mostrar por que.
+
+    Em CPU a frase e CONDICIONAL, pela mesma regra do `diagnostico.py`: o
+    container nao sabe se a maquina tem placa, sabe so que ela nao esta aqui.
+    """
+    if str(device).lower() == "cpu":
+        return (f"🎙️ [ASR] whisper {model_size} em CPU ({compute_type}). Se esta "
+                f"maquina tem placa NVIDIA, ela nao chegou ao container: "
+                f"atalhos\\diagnostico.bat diz onde parou.")
+    return f"🎙️ [ASR] whisper {model_size} em {device} ({compute_type})"
+
+
 def _run_whisper_once(media_path, **params):
     model, device = _get_whisper_model()
+    if _whisper_key:
+        print(linha_do_whisper(*_whisper_key), flush=True)
     gate = _ASR_GATE if device != "cpu" else _NULL_GATE
     with gate:
         segments, info = model.transcribe(media_path, **params)

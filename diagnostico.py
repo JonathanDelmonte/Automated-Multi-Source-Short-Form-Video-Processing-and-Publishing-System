@@ -295,9 +295,16 @@ def caminho_da_gpu(ambiente: dict) -> list:
     As duas dao o mesmo `nao` em `placa p/ o whisper` e a correcao e outra:
 
     - **imagem sem as libs de CUDA** (`--build-arg GPU=1` nunca rodou, ou
-      falhou): `reconstruir-gpu.bat`, 15 a 40 minutos;
+      falhou): `reconstruir.bat`, 15 a 40 minutos;
     - **placa nao reservada** (subiu sem o `docker-compose.gpu.yml`):
-      `subir-gpu.bat`, segundos.
+      `subir.bat`, segundos.
+
+    Os dois atalhos sao os de sempre desde 22-set-2026: eles perguntam ao
+    `nvidia-smi` do Windows se ha placa (`_modo-gpu.bat`) e poem o overlay
+    sozinhos. As variantes `-gpu` viraram apelido -- ter duas de cada era o que
+    tirava a placa, porque o `atualizar.bat` subia pelo caminho sem ela. Por
+    isso a frase manda ler a PRIMEIRA linha do atalho: se ela disser que nenhuma
+    placa respondeu, o problema saiu do container e esta no driver do Windows.
 
     Sem separar, escolher entre as duas e cara ou coroa -- e a coroa custa 40
     minutos. Era o unico buraco que restava no diagnostico: ele dizia que a
@@ -321,14 +328,22 @@ def caminho_da_gpu(ambiente: dict) -> list:
         return ["A placa nao chega no container porque **a imagem nao tem as "
                 "libs de CUDA** -- ela foi construida sem `--build-arg GPU=1`, "
                 "ou aquela construcao falhou. Os caminhos do `LD_LIBRARY_PATH` "
-                "nao existem aqui dentro. Conserto: `atalhos\\reconstruir-gpu"
-                ".bat`, que constroi e sobe. Leva de 15 a 40 minutos, uma vez."]
+                "nao existem aqui dentro. Conserto: `atalhos\\reconstruir.bat`, "
+                "que constroi e sobe; numa maquina com placa NVIDIA ele poe as "
+                "libs sozinho. Leva de 15 a 40 minutos, uma vez. Se a primeira "
+                "linha dele disser que nenhuma placa respondeu, o que falta e o "
+                "driver da NVIDIA no Windows (`nvidia-smi` no Prompt de "
+                "Comando responde)."]
     if libs is True and driver is False:
         return ["A imagem TEM as libs de CUDA, mas **a placa nao foi reservada "
                 "para o container**: nem o `nvidia-smi` nem os nos de "
                 "dispositivo estao aqui dentro. Foi o segundo dos dois passos "
-                "que ficou faltando. Conserto: `atalhos\\subir-gpu.bat`, que "
-                "sobe com o `docker-compose.gpu.yml`. Leva segundos."]
+                "que ficou faltando. Conserto: `atalhos\\subir.bat`, que "
+                "pergunta ao Windows se ha placa e sobe com o "
+                "`docker-compose.gpu.yml`. Leva segundos. Leia a primeira "
+                "linha dele: se disser que nenhuma placa respondeu, e o driver "
+                "da NVIDIA no Windows; se disser que o Docker recusou a placa, "
+                "e o Docker Desktop fora do motor WSL 2."]
     if libs is True and driver is True:
         return ["As duas metades estao no lugar -- libs de CUDA na imagem e "
                 "driver injetado --, e o `ctranslate2` ainda nao ve a placa. "

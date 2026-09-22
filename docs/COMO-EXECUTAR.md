@@ -222,16 +222,34 @@ responder, até 3 minutos.
 
 | Arquivo | Quando |
 |---|---|
-| **`subir.bat`** | **o do dia a dia.** Sobe em segundos, sem reconstruir |
-| `subir-gpu.bat` | o mesmo, usando a placa NVIDIA |
+| **`subir.bat`** | **o do dia a dia.** Sobe em segundos, sem reconstruir. Usa a placa NVIDIA sozinho quando há uma |
 | `parar.bat` | para tudo de verdade (`docker compose down`) |
 | `atualizar.bat` | `git pull` + sobe. Avisa se as dependências mudaram |
-| `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile` |
-| `reconstruir-gpu.bat` | o mesmo, com as libs de CUDA. Roda-se **uma vez** |
+| `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile`. Com placa, já constrói com as libs de CUDA |
+| `subir-gpu.bat`, `reconstruir-gpu.bat` | ficaram pelo costume: fazem o mesmo que os dois de cima |
 | `abrir-painel.bat` | abre `localhost:5175` no navegador |
 | `conferir-gpu.bat` | responde se a placa chegou ao container |
 | `ver-log.bat` | mostra o log do backend ao vivo. **A única janela que fica rolando** |
 | `_garantir-docker.bat` | não se roda direto: é o pedaço que os outros chamam para abrir o Docker |
+| `_modo-gpu.bat`, `_subir.bat` | não se rodam direto: decidem se há placa e sobem (veja abaixo) |
+
+**A placa NVIDIA é decidida num lugar só, e pela máquina** (desde 22-set-2026).
+Antes havia um `subir` para CPU e outro para GPU, e o `atualizar.bat` subia pelo
+de CPU: bastava atualizar uma vez para o `docker compose up -d` **recriar** o
+backend sem a placa — sem erro, sem aviso. O whisper voltava ao `small` em CPU,
+e um vídeo de 10 minutos passava a levar 5 só para transcrever.
+
+Agora todo atalho que sobe pergunta ao `nvidia-smi` do Windows (que vem com o
+driver da NVIDIA) e escolhe os arquivos do compose sozinho. A **primeira linha**
+que ele escreve diz o que decidiu:
+
+```
+Placa NVIDIA encontrada: subindo com a GPU.
+```
+
+Se o Docker recusar a placa — o Docker Desktop fora do motor WSL 2, por
+exemplo —, ele sobe em CPU para não ficar fora do ar e diz isso com todas as
+letras. Devagar é melhor que parado; devagar **em silêncio** era o defeito.
 
 **Todos sobem em modo destacado (`-d`) e devolvem o terminal**, desde
 13-set-2026. Antes ficavam anexados ao log, e daí vinha uma confusão razoável:
@@ -507,17 +525,23 @@ Sobem três serviços:
 
 ### Com GPU NVIDIA
 
-São **dois** passos, e faltar o segundo é a armadilha: instalar as libs de CUDA
-na imagem não faz o container enxergar a placa.
+Pelos atalhos, **não há passo nenhum**: `atalhos\reconstruir.bat` constrói a
+imagem com as libs de CUDA e `atalhos\subir.bat` reserva a placa, os dois
+sozinhos quando o `nvidia-smi` do Windows responde.
+
+Por baixo, continuam sendo **dois** passos — e faltar o segundo era a armadilha:
+instalar as libs de CUDA na imagem não faz o container enxergar a placa. À mão:
 
 ```bat
 cd /d C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System
-docker compose build --build-arg GPU=1 backend
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml build backend
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
-O `docker-compose.gpu.yml` é uma **sobreposição**: ele reserva a GPU para o
-container e já liga `WHISPER_MODEL=large-v3-turbo` + `WHISPER_DEVICE=cuda`.
+O `docker-compose.gpu.yml` é uma **sobreposição**: ele passa `GPU=1` ao build,
+reserva a GPU para o container e liga `WHISPER_MODEL=large-v3-turbo` +
+`WHISPER_DEVICE=cuda`. **Todo comando `docker compose` à mão precisa dele**, ou o
+`up` recria o backend sem a placa.
 Ficou em arquivo separado de propósito — a reserva de dispositivo é exigência,
 não preferência, e numa máquina sem placa o `up` falharia em vez de cair para
 CPU.
@@ -947,14 +971,10 @@ o que deixa ver onde ele engasga.
 As observações apontam para coisas que dá para conferir, não para palpites. A mais
 provável, se a transcrição dominar:
 
-> **Sem GPU, a transcrição roda em CPU e ninguém avisa.** `WHISPER_DEVICE=cuda` cai
-> para CPU **em silêncio** quando o container não enxerga a placa. E são dois passos
-> separados: `--build-arg GPU=1` instala as libs na imagem, e o
-> `docker-compose.gpu.yml` é que reserva o dispositivo:
->
-> ```bat
-> docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-> ```
+> **Sem GPU, a transcrição roda em CPU.** Desde 22-set-2026 o log do job diz qual
+> whisper rodou (`🎙️ [ASR] whisper small em CPU ...`), porque antes isso não
+> aparecia em lugar nenhum. Numa máquina com placa, `atalhos\subir.bat` a devolve —
+> e `atalhos\diagnostico.bat` diz, se não devolver, onde a corrente arrebentou.
 
 Se o tempo estiver **fora de estágio nenhum**, o relatório diz isso também — aí é fila,
 subida do subprocesso, ou um pedaço que ninguém instrumentou, e não o pipeline.

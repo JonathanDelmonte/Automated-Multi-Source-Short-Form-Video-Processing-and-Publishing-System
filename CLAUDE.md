@@ -900,9 +900,10 @@ juntas, viram um proximo passo.
   arrebentou** (17-set-2026). Era o unico buraco que restava: o diagnostico
   respondia `placa p/ o whisper: nao` e as duas causas possiveis tem o mesmo
   sintoma e correcoes de custo muito diferente -- imagem sem as libs de CUDA
-  pede `reconstruir-gpu.bat` (15 a 40 min), placa nao reservada pede
-  `subir-gpu.bat` (segundos). Escolher entre as duas era cara ou coroa, e a
-  coroa custava 40 minutos.
+  pede `reconstruir.bat` (15 a 40 min), placa nao reservada pede
+  `subir.bat` (segundos) -- os dois descobrem a placa sozinhos desde
+  22-set-2026. Escolher entre as duas era cara ou coroa, e a coroa custava 40
+  minutos.
   - **A imagem e sondada pelo `LD_LIBRARY_PATH`**, cujo comentario no
     Dockerfile diz, com estas palavras, que os caminhos "simplesmente nao
     existem em imagens CPU". A lista vem dele, entao a sonda continua certa se
@@ -1350,7 +1351,7 @@ Quando existir um logo proprio, e substituir o arquivo em `dashboard/public/`.
 invisivel, e renomear so invalidaria as sessoes de quem ja usa sem ganho
 nenhum.
 
-### GPU: sao dois passos
+### GPU: sao dois passos, e os atalhos dao os dois
 
 `--build-arg GPU=1` instala as libs de CUDA na imagem e **nao** faz o container
 enxergar a placa. A reserva do dispositivo esta em `docker-compose.gpu.yml`,
@@ -1358,6 +1359,58 @@ uma sobreposicao (`-f docker-compose.yml -f docker-compose.gpu.yml`), separada
 de proposito: `reservations.devices` e exigencia, e numa maquina sem GPU o `up`
 falharia em vez de cair para CPU. Sem a placa no container,
 `WHISPER_DEVICE=cuda` cai para CPU **em silencio** -- funciona, so que lento.
+
+Desde 22-set-2026 o overlay tambem passa `GPU=1` ao build, e os atalhos poem o
+overlay sozinhos quando o `nvidia-smi` do Windows responde. Ver a secao abaixo.
+
+### Os atalhos tiravam a placa (22-set-2026)
+
+"Esta mais rapido, mas ainda demora": o log mostrava 5 min de transcricao para
+10 min de audio numa RTX 3060. Nao era o pipeline -- era o `atualizar.bat`, que
+eu mandei rodar. Ele fazia `docker compose up -d` so com o arquivo base, e isso
+**recria** o backend sem a placa: sem o overlay a configuracao do servico muda
+(medido com `docker compose config --hash=backend`, os dois hashes diferem), e
+o compose recria o container quando ela muda. Sem o overlay o `WHISPER_DEVICE`
+nem chega a ser `cuda`: roda o padrao, `small` em CPU int8, sem erro -- e sem a
+linha `⚠️ [ASR] whisper GPU failed`, que so existe para a queda de cuda.
+
+- **A decisao "tem placa?" mora num lugar so: `atalhos/_modo-gpu.bat`**, que
+  pergunta ao `nvidia-smi` do Windows e poe `COMPOSE_FILE` no ambiente. O
+  proprio `docker compose` le essa variavel, entao todo comando seguinte na
+  mesma janela (up, build, restart, ps) usa os mesmos arquivos sem repetir
+  `-f`. Separador `;` explicito (`COMPOSE_PATH_SEPARATOR`). Conferido com o
+  binario do compose: `COMPOSE_FILE` com `;` da o mesmo hash que os dois `-f`.
+- **Todo `up` passa pelo `_subir.bat`**, que cai para CPU e AVISA se o Docker
+  recusar a placa (Docker Desktop fora do motor WSL 2). Devagar e melhor que
+  parado; devagar em silencio era o defeito.
+- **`subir-gpu.bat` e `reconstruir-gpu.bat` viraram apelidos.** Ter dois de
+  cada era o proprio defeito: quem clicava no errado perdia a placa.
+- **O overlay passa `GPU=1` ao build**, entao o `reconstruir.bat` -- que o
+  `atualizar.bat` manda rodar quando uma dependencia muda -- nao constroi mais
+  uma imagem sem CUDA. O `build` fica fora do hash de recriacao do compose:
+  acrescenta-lo nao recria nada sozinho.
+- **O `atualizar.bat` se reescreve enquanto roda**, e o cmd.exe continua da
+  mesma posicao EM BYTES no arquivo novo. Tudo ate a linha do `git pull` tem de
+  ficar identico; `tests/test_atalhos_gpu.py` congela esse trecho. Mudar ali
+  exige duas etapas (o docstring do teste diz como).
+- **O log do job diz qual whisper rodou** (`transcribe_backends.
+  linha_do_whisper`). Em CPU a frase e condicional -- o container nao sabe se a
+  maquina tem placa.
+- **De brinde, um bug que estava la desde a criacao dos atalhos**: no
+  `_garantir-docker.bat`, um `)` dentro de um `echo` no bloco `if` fechava o
+  bloco no meio, e o `exit /b 1` passava a rodar sempre -- a espera de 3 min
+  pelo motor desistia na primeira volta. O teste novo que pegou isso confere
+  todos os atalhos: nada de parentese em `echo` dentro de bloco, nem `%` em
+  `REM` (o cmd expande `%` antes de reconhecer o comentario).
+- **Nao mandar comando `docker compose` cru ao autor sem o overlay.** A mao,
+  sem os dois `-f`, e exatamente o `up` que recria o backend sem a placa.
+- **Um caso de transicao, conhecido e barulhento:** numa maquina com placa e
+  uma imagem construida SEM CUDA (so pelos atalhos antigos), o `subir.bat` passa
+  a pedir a placa e o whisper grande cai para CPU. O log mostra o `⚠️ [ASR]
+  whisper GPU failed` e a linha nova, e o diagnostico manda o `reconstruir.bat`.
+  A maquina do autor nao esta nesse caso: a imagem dele ja tem as libs.
+  Distinguir isso no proprio `_modo-gpu.bat` exigiria um LABEL no Dockerfile --
+  e mudar o Dockerfile faz o `atualizar.bat` mandar reconstruir, 40 minutos.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

@@ -67,13 +67,31 @@ def main() -> int:
             'nocheckcertificate': True,
             'cachedir': False,
         }
-        # yt-dlp's default player clients (tv_downgraded/web_safari with
-        # cookies, android_vr/web_safari anonymous) are the ones that still
-        # serve HD without PO tokens — never override them here.
+        # A lista de clientes e a MESMA do download (`yt_clients`), e por
+        # tentativa. O comentario que estava aqui dizia para nunca sobrescrever
+        # o padrao do yt-dlp, porque ele "ainda serve HD sem PO token" -- em
+        # 22-set-2026 o padrao anonimo (`visionos`, `web`) respondeu
+        # LOGIN_REQUIRED, e um probe que mede por uma lista e um download que
+        # baixa por outra medem coisas diferentes. E o mesmo motivo pelo qual
+        # o `yt_clients` existe.
+        import yt_clients
+        _bgutil_http = os.environ.get("BGUTIL_BASE_URL", "").strip()
+        _bgutil_script = os.environ.get("BGUTIL_SCRIPT_PATH", "").strip()
+
+        def _opts(cookies):
+            # `fallback_...` e nao `hd_...` porque este e um probe: ele nao
+            # pode devolver None e desistir quando falta o provedor de PO
+            # token -- a medicao que sobra (o formato progressivo) ainda
+            # responde a pergunta "qual altura este video oferece".
+            return {**base_opts,
+                    'cookiefile': cookies_path if cookies else None,
+                    'extractor_args': yt_clients.fallback_extractor_args(
+                        _bgutil_http, _bgutil_script, cookies=cookies)}
+
         attempts = []
         if cookies_path:
-            attempts.append(("cookie-auth", {**base_opts, 'cookiefile': cookies_path}))
-        attempts.append(("anonymous", {**base_opts, 'cookiefile': None}))
+            attempts.append(("cookie-auth", _opts(True)))
+        attempts.append(("anonymous", _opts(False)))
 
         for mode, opts in attempts:
             try:

@@ -22,6 +22,10 @@ rodando -- nao e preciso abrir nada antes.
                       ambiente esta usando de verdade (placa, encoder), salva
                       em diagnostico.txt e abre no Bloco de Notas para colar.
 
+  testar-youtube.bat  recebe uma URL e mede qual cliente do yt-dlp o YouTube
+                      ainda serve daqui. Para o dia em que um link parar de
+                      baixar: ele diz a linha de .env a por, se for o caso.
+
   _garantir-docker.bat  nao se roda direto. E o pedaco que os outros chamam
                         para abrir o Docker Desktop e esperar o motor subir.
 

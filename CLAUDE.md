@@ -338,6 +338,59 @@ descoberta nenhuma -- lia `YOUTUBE_COOKIES` e, sem ela, desistia.
   conserto acima fez o arquivo passar a existir no diretorio de trabalho, entao
   a falta virou risco de verdade. Ha teste chamando `git check-ignore`.
 
+### Sem cookies e o caminho NORMAL: a lista de clientes e outra (22-set-2026)
+
+Colar um link e ver o job morrer em "sign in to confirm you're not a bot" nao
+era falta de cookies -- era a lista de `player_client` medida PARA A CONTA
+sendo imposta a quem nao tem conta. `yt_clients.HD_CLIENTS = default,mweb` veio
+de uma medicao de 6-set-2026 com cookies, em IP de datacenter, e valia; a linha
+da mesma medicao que dizia "sem cookies o padrao devolve 1080p" venceu, e no
+dia em que venceu nao sobrou naquele trio um cliente que o YouTube sirva
+anonimamente: `visionos`, `web` e `mweb` respondem todos LOGIN_REQUIRED.
+
+- **Duas listas, escolhidas POR TENTATIVA** (`yt_clients.args_da_tentativa`):
+  `default,mweb` quando aquela tentativa leva cookies, `tv,default` quando nao
+  leva. Quem decide e o que de FATO acontece (`envia_cookies and tem_jar`), nao
+  a intencao do plano -- a tentativa `fallback` sai anonima de proposito depois
+  de uma HD, e mandava a lista da conta junto.
+- **`tv` porque e o unico sem exigencia nenhuma.** Na tabela do proprio yt-dlp
+  (`INNERTUBE_CLIENTS`) ele e o unico cliente sem `REQUIRE_AUTH` e sem PO token
+  -- nem GVS nem player. Pede o player JS, que o Deno da imagem resolve. Um
+  teste le aquela tabela e falha se um nome com `REQUIRE_AUTH` entrar na lista
+  anonima.
+- **A decisao mora no `yt_clients` e nao no `main.py`** porque e regra, e
+  `main.py` so e importavel com torch: no `yt_clients` (stdlib puro) o CI
+  exercita as quatro combinacoes. No `main.py` sobrou um AST guard contra o
+  formato antigo, que montava os args UMA vez para todas as tentativas.
+- **`YT_CLIENTS_ANON` / `YT_CLIENTS_AUTH` sobrescrevem, e isso e a parte
+  importante.** Esta e a unica peca do pipeline cuja resposta certa muda sem
+  ninguem tocar no codigo -- quem decide e o YouTube. Com o repositorio montado
+  em `/app`, trocar a lista e editar o `.env` e reiniciar o backend (segundos);
+  sem a variavel seria reconstruir a imagem (40 min) a cada palpite. Variavel
+  em branco ou so com virgulas cai no padrao: `player_client: []` nao extrai
+  nada.
+- **`python diagnostico_youtube.py <url>`** (atalho: `testar-youtube.bat`) mede
+  qual lista passa HOJE, desta maquina, e imprime a linha de `.env` a por --
+  ou diz que nao ha nada a mudar. Ele **nao aplica** a troca: mexer na lista
+  que todo download usa e decisao de quem esta olhando, nao efeito colateral de
+  um diagnostico. `conclusoes()` e pura, entao o CI le a regra sem rede.
+- **Quando TODOS os candidatos caem no anti-bot, o relatorio nao manda trocar
+  de lista**: ai a causa e o IP, e a saida e esperar, sair por outra rede ou
+  dar cookies. Afirmar "e o cliente" quando todos falharam igual seria o
+  chute que este repositorio recusa em toda decisao.
+- **O PO token NAO era a causa, e isso custou quase um rebuild.** No mesmo log
+  o `bgutil:script-node` aparece indisponivel (o `nodejs` do Debian trixie e
+  20.19.2 e o bgutil 2.0.0 pede `>= 22` -- e o `git clone --depth 1` sem tag no
+  Dockerfile foi buscar o 2.0.0 no rebuild da GPU). Mas o `bgutil:script-deno`
+  aparece DISPONIVEL e tem preferencia MAIOR, e mesmo assim nenhum token foi
+  pedido: o LOGIN_REQUIRED acontece antes de existir formato para assinar.
+  Subir o Node arrumaria uma linha de aviso, nao o download. Fica registrado
+  como candidato ao proximo `reconstruir.bat`, nao como conserto.
+- **O probe usa a MESMA lista** (`quality_probe.py`), e o comentario que mandava
+  nunca sobrescrever o padrao do yt-dlp saiu: um probe que mede por uma lista e
+  um download que baixa por outra medem coisas diferentes, e e exatamente o que
+  o `yt_clients` existe para impedir.
+
 ### Google Drive por cookies, nao OAuth (`sources/gdrive.py`, bloco 1.6)
 
 Divergencia deliberada do §4, que previa "Drive API v3 + OAuth com refresh

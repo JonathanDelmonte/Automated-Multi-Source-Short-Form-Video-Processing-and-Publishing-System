@@ -697,17 +697,47 @@ certa.
 
 ### Se o YouTube recusar o download
 
-No log do job:
+**Colar o link e pronto é o caminho normal — cookies não são pré-requisito.**
+O download sai anonimamente pelo cliente `tv` do yt-dlp, que é o único que o
+YouTube ainda serve sem conta e sem token. No log isso aparece assim:
 
 ```
-⚠️ Sem cookies: nem a variável YOUTUBE_COOKIES no .env, nem um cookies.txt
+🔓 Sem cookies (YOUTUBE_COOKIES nao esta no .env e nao ha jar na pasta):
+   usando os clientes anonimos do yt-dlp (tv, default).
+```
+
+Se mesmo assim o job morrer com:
+
+```
 ERROR: Sign in to confirm you're not a bot.
 ```
 
-O YouTube passou a exigir sessão para boa parte dos vídeos. Não é bloqueio da
-sua máquina nem versão velha do yt-dlp: é falta de cookies.
+então uma de duas coisas aconteceu, e **elas têm consertos diferentes** — não
+adivinhe qual, meça:
 
-**O conserto são três passos, e o arquivo vai na pasta do projeto** — não
+```
+atalhos\testar-youtube.bat https://youtu.be/xxxxxxxx
+```
+
+Ele tenta um cliente por vez e imprime uma tabela. Leia assim:
+
+- **Algum candidato passou** → é a lista de clientes que envelheceu. O próprio
+  relatório imprime a linha a colar no `.env` (por exemplo `YT_CLIENTS_ANON=ios`).
+  Cole, rode `atalhos\atualizar.bat` e mande o vídeo de novo. Não precisa
+  reconstruir a imagem.
+- **Nenhum passou, e todos no anti-bot** → é o IP desta casa, não a lista.
+  Trocar de cliente não resolve. As saídas são esperar algumas horas, sair por
+  outra rede, ou dar os cookies de uma conta — que é o que vem abaixo.
+
+> Por que isso muda sozinho: quem decide qual cliente é servido é o YouTube, e
+> a resposta troca sem aviso. Em 6-set-2026 a lista padrão devolvia 1080p sem
+> cookies; em 22-set-2026 a mesma lista respondia "sign in to confirm you're
+> not a bot", com o mesmo código, na mesma casa. Por isso a lista é variável de
+> ambiente e existe um comando que a mede.
+
+#### Dar cookies de uma conta (só se o passo acima disser que é o IP)
+
+**São três passos, e o arquivo vai na pasta do projeto** — não
 dentro do `.env`. A variável `YOUTUBE_COOKIES` continua valendo e vence quando
 existe, mas ela guarda o *conteúdo inteiro* do arquivo, dezenas de linhas: é o
 mecanismo de um deploy em nuvem, onde segredo se entrega por ambiente. Aqui o

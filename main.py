@@ -811,12 +811,15 @@ def download_youtube_video(url, output_dir="."):
             print(f"🍪 {cookies_var} nao esta no ambiente, mas achei "
                   f"{os.path.basename(achado)} na pasta do projeto.")
         else:
-            esperado = os.path.basename(cookies_path)
             cookies_path = None
-            print(f"⚠️ Sem cookies: nem a variavel {cookies_var} no .env, nem "
-                  f"um {esperado} na pasta do projeto. Sem eles o YouTube "
-                  f"responde \"sign in to confirm you're not a bot\" para boa "
-                  f"parte dos videos.")
+            # Sem jar NAO e um aviso de falha: e o caminho normal de quem so
+            # colou um link. O que muda e a lista de clientes (`yt_clients`),
+            # e dizer qual foi escolhida e o que torna o log legivel quando
+            # ela precisar mudar de novo.
+            from yt_clients import clients_for
+            print(f"🔓 Sem cookies ({cookies_var} nao esta no .env e nao ha "
+                  f"jar na pasta): usando os clientes anonimos do yt-dlp "
+                  f"({', '.join(clients_for(False))}).")
     
     # Optional HTTP proxy. Set PROXY_URL to route downloads through it; unset
     # (self-host) goes direct as before.
@@ -847,9 +850,23 @@ def download_youtube_video(url, output_dir="."):
     # explicit `default,mweb` because the authed defaults alone return
     # "Video unavailable" on a share of videos, from every IP, and that was
     # what fed the per-GB proxy (6-sep-2026, verified in the prod container).
-    from yt_clients import hd_extractor_args, fallback_extractor_args
-    hd_args = hd_extractor_args(_bgutil_http, _bgutil_script)
-    fallback_args = fallback_extractor_args(_bgutil_http, _bgutil_script)
+    #
+    # A lista depende de haver cookies NESTA tentativa, e nao da instalacao
+    # (22-set-2026). Ate aqui `default,mweb` valia para todas -- inclusive
+    # para o self-host sem conta nenhuma, que e a maioria de quem cola um
+    # link no painel --, e sem cookies nao sobra nesse trio um cliente que o
+    # YouTube ainda sirva: os tres respondem LOGIN_REQUIRED e o job morre com
+    # "sign in to confirm you're not a bot". O porque de cada lista esta no
+    # docstring do `yt_clients`.
+    from yt_clients import args_da_tentativa, hd_extractor_args
+
+    def _args_da_tentativa(label, envia_cookies):
+        return args_da_tentativa(label, envia_cookies, bool(cookies_path),
+                                 _bgutil_http, _bgutil_script)
+
+    # Para o PLANO: ha caminho HD para o estado de cookies desta instalacao?
+    hd_args = hd_extractor_args(_bgutil_http, _bgutil_script,
+                                cookies=bool(cookies_path))
 
     # Cap at 720p ONLY when the bytes actually go through the PER-GB paid proxy
     # — that cap exists to control bandwidth cost, and the direct attempt and
@@ -933,15 +950,13 @@ def download_youtube_video(url, output_dir="."):
     # Every attempt asks for the same 1080p spec: the fallback used to ask
     # for `best[ext=mp4]/best`, the best single-file format, which on
     # YouTube is the 360p progressive one even with 1080p streams listed.
-    attempts = [
-        (label,
-         fallback_args if label.startswith('fallback') else hd_args,
-         _hd_fmt_for(capped),
-         proxy,
-         not (label.startswith('fallback') and hd_args))
-        for label, capped, proxy in plan_download_attempts(
-            _direct_first, _statics, _proxy, bool(hd_args), youtube=is_youtube_url(url))
-    ]
+    attempts = []
+    for label, capped, proxy in plan_download_attempts(
+            _direct_first, _statics, _proxy, bool(hd_args),
+            youtube=is_youtube_url(url)):
+        envia_cookies = not (label.startswith('fallback') and hd_args)
+        attempts.append((label, _args_da_tentativa(label, envia_cookies),
+                         _hd_fmt_for(capped), proxy, envia_cookies))
     if not is_youtube_url(url):
         print("🌐 Direct file URL: downloading from the server's own IP (no proxy).")
 

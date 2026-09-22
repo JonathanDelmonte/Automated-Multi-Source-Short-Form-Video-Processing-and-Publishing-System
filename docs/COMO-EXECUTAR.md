@@ -679,6 +679,37 @@ O que deve acontecer, na ordem:
 Os cortes saem na pasta `output\<job-id>\` do projeto. Cada um vem com
 `_metadata.json`, título e descrição gerados.
 
+### Onde os projetos ficam (e por que o Docker mostra tão pouco)
+
+**No seu disco, na pasta do projeto — nunca dentro do Docker.** O
+`docker-compose.yml` monta a pasta do repositório dentro do container, então o
+programa roda no Docker mas escreve direto aqui:
+
+```
+C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System\output\<job-id>\
+```
+
+Apagar o container, reconstruir a imagem ou desinstalar o Docker não leva os
+cortes junto. O `416MB / 15.21GB` que o Docker Desktop mostra é **memória**
+(RAM) do container naquele instante, não espaço em disco.
+
+Na pasta de cada projeto há mais de uma versão de cada corte: `..._clip_1.mp4`
+é o reenquadrado limpo, `hooked_..._clip_1.mp4` tem o gancho e
+`subtitled_...` tem a legenda por cima — o painel mostra e baixa a mais
+completa. O vídeo original baixado também fica ali, porque o editor de cortes
+recorta dele de novo.
+
+**Nada é apagado sozinho desde 22-set-2026.** Até então uma limpeza automática
+apagava o projeto 24 horas depois, e outra apagava os mais antigos quando a
+pasta passava de 25 GB. Agora quem apaga é você, pelo ícone de lixeira na aba
+**Projetos** — que leva a pasta inteira e o vídeo enviado daquele projeto.
+Quem quiser a limpeza de volta põe no `.env`:
+
+```
+JOB_RETENTION_SECONDS=86400   # apaga projeto com mais de 24 h
+OUTPUT_MAX_GB=25              # apaga os mais antigos acima de 25 GB
+```
+
 ---
 
 ## Passo 6 — Ler o relatório de custo

@@ -148,12 +148,29 @@ const UserProfileSelector = ({ profiles, selectedUserId, onSelect, onConnect }) 
 const SESSION_KEY = 'openshorts_session';
 // Matches the self-host JOB_RETENTION_SECONDS default. A restore whose job was
 // already purged server-side fails gracefully and clears the saved session.
+// (Neste fork o projeto nao e mais apagado por idade: isto so decide se a tela
+// reabre sozinha o ultimo projeto. Depois de 24h ele segue na aba Projetos.)
 const SESSION_MAX_AGE = 86400000; // 24 hours
 
 // Erro proprio para "esse job nao existe mais", que e diferente de "a rede
 // falhou". A distincao importa: erro de rede se tenta de novo, job inexistente
 // nao -- insistir nele e o que prendia a tela para sempre.
 class JobSumiu extends Error {}
+
+// Uma linha do log e texto puro ou { texto, t }. O backend carimba a hora em
+// que cada linha NASCEU (`log_times`, epoch); antes a tela escrevia
+// `new Date()` ao desenhar, e todas as linhas saiam com a hora de quem olhava.
+// Linha escrita pelo proprio painel ("Starting process...") fica sem hora:
+// melhor sem hora do que com a hora errada, que era o defeito.
+const linhasDoStatus = (data) => {
+  const linhas = data?.logs || [];
+  const horas = data?.log_times;
+  if (!Array.isArray(horas) || horas.length !== linhas.length) return linhas;
+  return linhas.map((texto, i) => (horas[i] ? { texto, t: horas[i] } : texto));
+};
+const textoDaLinha = (linha) => (typeof linha === 'string' ? linha : linha.texto);
+const horaDaLinha = (linha) =>
+  (typeof linha === 'string' || !linha.t ? '' : new Date(linha.t * 1000).toLocaleTimeString());
 
 const pollJob = async (jobId) => {
   const res = await apiFetch(`/api/status/${jobId}`);
@@ -592,7 +609,7 @@ function App() {
       if (!res.ok) throw new Error('não consegui abrir');
       const data = await res.json();
       setJobId(id);
-      setLogs(data.logs || []);
+      setLogs(linhasDoStatus(data));
       setResults(data.result || null);
       setStage(data.stage_index
         ? { label: data.stage_label, index: data.stage_index, total: data.stage_total }
@@ -626,7 +643,13 @@ function App() {
 
   const handleCopyLogs = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(logs.join('\n'));
+      // Com a hora na frente: quem cola o log para investigar lentidao ve
+      // quanto cada passo levou, e nao so o que aconteceu.
+      const texto = logs.map((linha) => {
+        const hora = horaDaLinha(linha);
+        return hora ? `[${hora}] ${textoDaLinha(linha)}` : textoDaLinha(linha);
+      }).join('\n');
+      await navigator.clipboard.writeText(texto);
       setLogsCopied(true);
       setTimeout(() => setLogsCopied(false), 2000);
     } catch (e) {
@@ -659,18 +682,21 @@ function App() {
             setCancelling(false);
             clearInterval(interval);
           } else if (data.status === 'completed') {
+            // O fim do log (o resumo de tempo do job) sai entre o ultimo poll
+            // e este: sem isto, so aparecia reabrindo o projeto.
+            if (data.logs) setLogs(linhasDoStatus(data));
             setStatus('complete');
             clearInterval(interval);
             refreshMe();
           } else if (data.status === 'failed') {
             setStatus('error');
             const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
-            setLogs(prev => [...prev, "Error: " + errorMsg]);
+            setLogs(prev => [...(data.logs ? linhasDoStatus(data) : prev), "Error: " + errorMsg]);
             clearInterval(interval);
             refreshMe();
           } else {
             // Update logs if available
-            if (data.logs) setLogs(data.logs);
+            if (data.logs) setLogs(linhasDoStatus(data));
           }
         } catch (e) {
           if (e instanceof JobSumiu) {
@@ -1489,7 +1515,7 @@ function App() {
                   <div className="sm:hidden mb-3 flex items-start gap-2 text-xs text-ink2 min-w-0">
                     <Loader2 size={14} className="animate-spin text-brass shrink-0 mt-px" />
                     <span className="min-w-0 leading-snug break-words">
-                      {logs.length ? logs[logs.length - 1] : 'starting up…'}
+                      {logs.length ? textoDaLinha(logs[logs.length - 1]) : 'starting up…'}
                     </span>
                   </div>
                 )}
@@ -1571,12 +1597,15 @@ function App() {
                   </div>
                   {logsVisible && (
                     <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto font-mono text-[11px] sm:text-xs space-y-1.5 custom-scrollbar text-muted break-words">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-2 ${log.toLowerCase().includes('error') ? 'text-danger' : 'text-muted'}`}>
-                          <span className="text-muted opacity-50 shrink-0 hidden sm:inline">{new Date().toLocaleTimeString()}</span>
-                          <span className="min-w-0 break-words">{log}</span>
-                        </div>
-                      ))}
+                      {logs.map((linha, i) => {
+                        const texto = textoDaLinha(linha);
+                        return (
+                          <div key={i} className={`flex gap-2 ${texto.toLowerCase().includes('error') ? 'text-danger' : 'text-muted'}`}>
+                            <span className="text-muted opacity-50 shrink-0 hidden sm:inline min-w-[8ch] tabular-nums">{horaDaLinha(linha)}</span>
+                            <span className="min-w-0 break-words">{texto}</span>
+                          </div>
+                        );
+                      })}
                       {status === 'processing' && (
                         <div className="animate-pulse text-brass">_</div>
                       )}

@@ -1457,6 +1457,82 @@ resumo do proprio job (`job_metrics`) dividiu assim:
   poucas pessoas, os caminhos sao: cada uma instala como o autor, ou o autor
   serve pela maquina dele -- a auth multiusuario da Fase 4 ja existe para isso.
 
+### Os projetos ficam no disco de quem usa (22-set-2026)
+
+O autor viu `416MB` no Docker Desktop e perguntou se o projeto estava "dentro
+do Docker". Nao estava: o numero e a MEMORIA do container, e `output/` e a pasta
+do repositorio montada no container (`./output:/app/output`). Mas havia duas
+limpezas que apagavam o trabalho sozinhas, e as duas foram desligadas:
+
+- **`JOB_RETENTION_SECONDS` nasce 0 (nunca) no self-host**, e nao 86400. As 24h
+  do upstream eram o mesmo defeito da issue #46 deles, so que um dia depois.
+- **`OUTPUT_MAX_GB` nasce 0.** O upstream justificava apagar os mais antigos com
+  "ja estao no R2, so custa um re-download" -- e o R2 saiu com o `cloud/`.
+- **O 0 precisa de guarda, e ela esta em `app._limpar_uma_vez`.** Sem ela,
+  `now - mtime > 0` vale para todo arquivo: o valor que quer dizer "nunca"
+  apagaria tudo na primeira volta, inclusive o upload do job que esta rodando.
+  O `_sweep_retained_sources` ganhou a mesma leitura (0 = nunca nos dois
+  relogios). `tests/test_retencao.py` pega a guarda removida.
+- **Apagar o projeto leva `uploads/<job_id>_*` junto.** Antes a varredura de
+  24h tirava o video enviado; sem ela, o botao de apagar e o unico caminho.
+- `UPLOADS_MAX_GB` (15) continua: ali ficam copias de arquivos que a pessoa ja
+  tem, e o teto so custa o re-editar de um projeto antigo enviado por upload.
+
+### O log diz a hora em que cada linha nasceu (22-set-2026)
+
+"A contagem de minutos nao passa": o painel escrevia `new Date()` ao DESENHAR
+cada linha, entao todas saiam com a hora de quem olhava. A hora certa so existe
+no servidor, quando a linha chega do subprocesso.
+
+- **`app.LinhasDoLog` e uma `list` que guarda a hora no `append`.** Continua
+  sendo lista de texto porque `_job_error_text`, o MCP e os testes a leem assim;
+  a hora fica em `.tempos`. Todo job nasce com ela -- um teste le a arvore do
+  `app.py` e falha se um `'logs': [...]` cru voltar. O `__reduce__` existe
+  porque sem ele um `copy` dobraria a lista de horas da ORIGINAL.
+- **`/api/status` manda `log_times` (epoch)**, e o painel formata no fuso do
+  navegador -- o container roda em UTC. Lista comum no lugar manda `null`, e a
+  tela mostra a linha sem hora: melhor que a hora errada.
+- **O "copiar log" leva a hora na frente** (`[15:29:03] ...`): quem cola o log
+  para investigar lentidao ve quanto cada passo levou.
+
+### Velocidade, rodada 3: o reenquadramento numa passada so (22-set-2026)
+
+O log do job de 608 s mostrou o `06_reenquadra` custando 2,5 s por segundo de
+clipe fora da classificacao de cenas. Parte disso era o render: **um ffmpeg por
+cena**, mais um concat -- 24 processos para um corte de 50 s com 23 cenas, cada
+um subindo o encoder de novo (no NVENC, um contexto CUDA) e voltando ao keyframe
+anterior a cena (GOP 250 = ate 8 s decodificados para jogar fora).
+
+- **Agora e um ffmpeg por clipe** (`reframe_v2._render_numa_passada`): cada
+  cena vira um ramo `split -> trim -> grafo -> concat`. Os grafos de trecho sao
+  os MESMOS de antes; `grafo_numa_passada` so troca o encanamento. Medido em
+  x264 (sem NVENC, que nao ha aqui): 15,7 s -> 11,1 s num clipe de 50 s.
+- **E consertou um defeito que ninguem tinha visto: o render por trecho
+  atrasava a imagem.** O corte por TEMPO (`-ss`/`-t`) saia com 0 a 2 quadros a
+  mais por trecho -- 1515 para 1500 --, e o audio vem inteiro do clipe, entao a
+  cada troca de cena a imagem ficava mais para tras do som: meio segundo no fim
+  daquele clipe. `trim` corta por QUADRO, e a saida bate quadro a quadro com a
+  referencia (framemd5, a 30 e a 29,97 fps). O teste com ffmpeg de verdade da
+  94 quadros para 90 se o render voltar a ser por trecho.
+- **O `setpts=PTS-STARTPTS` apaga a taxa de quadros do fio**, e sem ela o
+  encoder cai em 25 fps e JOGA QUADRO FORA (1251 de 1500). Por isso o `-r
+  <taxa>` na saida. **Nao trocar por `fps=` depois do concat**: parece
+  equivalente e come o ultimo quadro. `taxa_racional` devolve `30000/1001`, e
+  nao `29.97`, que desalinharia do relogio do video.
+- **`crop@c{idx}` e nao `crop@c`**: o `sendcmd` manda o comando a TODO filtro
+  com aquele nome, e num grafo so os trechos se moveriam uns aos outros.
+- **O render por trecho ficou como reserva** (`_render_por_trecho`), e cair nele
+  imprime uma linha `⚠️ Render numa passada falhou`. Em silencio, a regressao de
+  velocidade (e de sincronia) passaria despercebida.
+- **O CI instala `imageio-ffmpeg`** (um ffmpeg estatico pelo pip) para rodar a
+  comparacao quadro a quadro; sem ele esses testes pulam.
+
+O que falta medir, e o proximo log com os subestagios (`06_reenquadra/1_cenas`
+... `/4_ffmpeg`) vai dizer: cada clipe ainda e decodificado inteiro seis
+vezes (TransNetV2, estrategia, trajetoria, render, gancho, legenda), e gancho e
+legenda sao dois encodes a mais. Juntar essas passadas e o proximo alvo --
+depois de ver o numero, nao antes.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

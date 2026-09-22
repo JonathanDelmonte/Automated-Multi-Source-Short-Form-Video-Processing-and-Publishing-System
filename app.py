@@ -71,7 +71,14 @@ MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "10240"))  # 10GB
 # Ceiling for the working directory once it lives on a persistent volume: the
 # age-based sweep alone can't stop a burst of long videos from filling the disk.
 # 0 disables the cap.
-OUTPUT_MAX_GB = int(os.environ.get("OUTPUT_MAX_GB", "25"))
+#
+# Neste fork o padrao e 0, e nao 25 (22-set-2026). O teto apagava os projetos
+# mais antigos, e a justificativa do upstream era que eles ja estavam
+# arquivados no R2 e voltavam sob demanda -- "so custa um re-download". O R2
+# saiu com o `cloud/` (ADR-001): aqui `output/` e a pasta do repositorio no
+# disco de quem usa (bind mount do compose), e apagar dali e perder o trabalho.
+# Quem quiser o teto de volta poe o numero no `.env`.
+OUTPUT_MAX_GB = int(os.environ.get("OUTPUT_MAX_GB", "0"))
 # Same idea for source uploads, which are the biggest single files on disk.
 UPLOADS_MAX_GB = int(os.environ.get("UPLOADS_MAX_GB", "15"))
 # Pre-flight quality gate: warn before processing a YouTube source below this
@@ -111,8 +118,14 @@ BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "").lower() in ("1", "true",
 # deleting finished projects under users who never touched their env, and the
 # OUTPUT_MAX_GB / UPLOADS_MAX_GB caps below already bound the disk. Cloud keeps
 # the tight default because clips are archived to R2 as soon as a job finishes.
+#
+# Neste fork o self-host nasce com 0, que quer dizer NUNCA (22-set-2026). As 24h
+# do upstream ainda apagavam o projeto de ontem de quem nao mexeu no `.env` --
+# o mesmo defeito da issue #46, so que um dia depois. Os cortes sao o trabalho
+# da pessoa, no disco dela; quem apaga e ela, pela aba Projetos. Um numero no
+# `.env` religa a varredura por idade.
 JOB_RETENTION_SECONDS = int(
-    os.environ.get("JOB_RETENTION_SECONDS", "3600" if BILLING_ENABLED else "86400")
+    os.environ.get("JOB_RETENTION_SECONDS", "3600" if BILLING_ENABLED else "0")
 )
 # The retained download of a URL job (--keep-original) is the one artifact that
 # is a full copy of someone else's video rather than something we made, so it
@@ -672,7 +685,7 @@ def _recover_jobs_from_disk():
                 owner = int(raw) if raw.isdigit() else (raw or None)
             jobs[job_id] = {
                 'status': 'completed',
-                'logs': ["♻️ Job recovered from disk after server restart."],
+                'logs': LinhasDoLog(["♻️ Job recovered from disk after server restart."]),
                 'output_dir': job_path,
                 'user_id': owner,
                 'tenant_id': _tenant_do_disco(job_path),
@@ -1063,7 +1076,7 @@ def _resume_interrupted_jobs() -> set:
 
         jobs[job_id] = {
             'status': 'queued',
-            'logs': [f"♻️ Resuming your video after a server update (attempt {attempts})."],
+            'logs': LinhasDoLog([f"♻️ Resuming your video after a server update (attempt {attempts})."]),
             'cmd': m.get("cmd"),
             'env': env,
             'output_dir': job_path,
@@ -1167,7 +1180,12 @@ def _sweep_retained_sources(now=None):
     the user's own file and ages out with the job like everything else. Yields
     the job ids it emptied. A no-op unless the knob is set below the job clock.
     """
-    if SOURCE_RETENTION_SECONDS >= JOB_RETENTION_SECONDS:
+    # 0 e "nunca" nos dois relogios. Comparar so os numeros daria o contrario
+    # quando o do job e 0: qualquer valor aqui seria "maior ou igual" e a
+    # varredura da fonte, pedida de proposito, nunca rodaria.
+    if SOURCE_RETENTION_SECONDS <= 0:
+        return
+    if 0 < JOB_RETENTION_SECONDS <= SOURCE_RETENTION_SECONDS:
         return
     now = time.time() if now is None else now
     for job_id in os.listdir(OUTPUT_DIR):
@@ -1190,6 +1208,57 @@ def _sweep_retained_sources(now=None):
             continue
 
 
+def _limpar_uma_vez(now):
+    """Uma volta da limpeza. Separada do laco para que o teste a alcance.
+
+    Com `JOB_RETENTION_SECONDS` em 0 (o padrao do self-host) nenhum projeto e
+    nenhum upload sai por idade. A guarda nao e enfeite: sem ela, `now - mtime
+    > 0` vale para TODO arquivo, e o 0 que quer dizer "nunca" apagaria tudo na
+    primeira volta -- inclusive o upload do job que esta rodando.
+    """
+    por_idade = JOB_RETENTION_SECONDS > 0
+
+    # Simple directory cleanup based on modification time
+    # Check OUTPUT_DIR
+    for job_id in os.listdir(OUTPUT_DIR) if por_idade else ():
+        # Not a job: the thumbnails dir backs a StaticFiles mount, so
+        # deleting it would 500 every /thumbnails request until reboot.
+        if job_id == os.path.basename(THUMBNAILS_DIR):
+            continue
+        job_path = os.path.join(OUTPUT_DIR, job_id)
+        if os.path.isdir(job_path):
+            if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                print(f"🧹 Purging old job: {job_id}")
+                shutil.rmtree(job_path, ignore_errors=True)
+                if job_id in jobs:
+                    del jobs[job_id]
+
+    for job_id in _sweep_retained_sources(now):
+        print(f"🧹 Dropped retained source for job {job_id}")
+
+    # Hard disk cap. The time-based sweep above bounds the *age* of what
+    # we keep, not its size: a burst of long videos can fill the volume
+    # inside one retention window. Drop the oldest jobs until we're back
+    # under the cap — clips are already archived to R2 and get restored
+    # on demand, so this only costs a re-download.
+    # (Neste fork nao ha R2: por isso o OUTPUT_MAX_GB nasce 0. Ver la.)
+    _enforce_output_size_cap()
+    _enforce_uploads_size_cap()
+
+    # Agent upload slots: expire with their file (the file sweep below
+    # removes it; a slot whose file is gone or too old is dropped).
+    for uid in _sweep_pending_uploads(now):
+        print(f"🧹 Expired agent upload slot {uid}")
+
+    # Cleanup Uploads
+    for filename in os.listdir(UPLOAD_DIR) if por_idade else ():
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        try:
+            if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
+                 os.remove(file_path)
+        except Exception: pass
+
+
 async def cleanup_jobs():
     """Background task to remove old jobs and files."""
     import time
@@ -1197,47 +1266,7 @@ async def cleanup_jobs():
     while True:
         try:
             await asyncio.sleep(300) # Check every 5 minutes
-            now = time.time()
-            
-            # Simple directory cleanup based on modification time
-            # Check OUTPUT_DIR
-            for job_id in os.listdir(OUTPUT_DIR):
-                # Not a job: the thumbnails dir backs a StaticFiles mount, so
-                # deleting it would 500 every /thumbnails request until reboot.
-                if job_id == os.path.basename(THUMBNAILS_DIR):
-                    continue
-                job_path = os.path.join(OUTPUT_DIR, job_id)
-                if os.path.isdir(job_path):
-                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        print(f"🧹 Purging old job: {job_id}")
-                        shutil.rmtree(job_path, ignore_errors=True)
-                        if job_id in jobs:
-                            del jobs[job_id]
-
-            for job_id in _sweep_retained_sources(now):
-                print(f"🧹 Dropped retained source for job {job_id}")
-
-            # Hard disk cap. The time-based sweep above bounds the *age* of what
-            # we keep, not its size: a burst of long videos can fill the volume
-            # inside one retention window. Drop the oldest jobs until we're back
-            # under the cap — clips are already archived to R2 and get restored
-            # on demand, so this only costs a re-download.
-            _enforce_output_size_cap()
-            _enforce_uploads_size_cap()
-
-            # Agent upload slots: expire with their file (the file sweep below
-            # removes it; a slot whose file is gone or too old is dropped).
-            for uid in _sweep_pending_uploads(now):
-                print(f"🧹 Expired agent upload slot {uid}")
-
-            # Cleanup Uploads
-            for filename in os.listdir(UPLOAD_DIR):
-                file_path = os.path.join(UPLOAD_DIR, filename)
-                try:
-                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
-                         os.remove(file_path)
-                except Exception: pass
-
+            _limpar_uma_vez(time.time())
         except Exception as e:
             print(f"⚠️ Cleanup error: {e}")
 
@@ -1960,6 +1989,69 @@ _SENSITIVE_LOG_RE = re.compile(
     r'|\bcost\b|\$\s*[0-9]|scoring window|shortlist',
     re.IGNORECASE,
 )
+
+
+class LinhasDoLog(list):
+    """O log de um job, que lembra QUANDO cada linha chegou.
+
+    O painel carimbava cada linha com `new Date()` NA HORA DE DESENHAR, entao
+    todas saiam com a mesma hora -- a de quem estava olhando (22-set-2026: "a
+    contagem de minutos nao passa"). A hora certa so existe aqui, no instante em
+    que a linha chega do subprocesso; depois disso ela nao esta em lugar nenhum.
+
+    Continua sendo uma lista de texto porque ha leitores que tratam o log assim
+    (`_job_error_text`, o MCP, os testes). A hora vai num atributo ao lado, e so
+    quem quer le. Uma lista comum posta no lugar desta nao quebra nada: o
+    `/api/status` manda `log_times` nulo e a tela mostra a linha sem hora --
+    melhor sem hora do que com a hora errada, que era o defeito.
+    """
+
+    def __init__(self, linhas=()):
+        super().__init__(linhas)
+        self.tempos = [time.time()] * len(self)
+
+    def append(self, linha):
+        super().append(linha)
+        self.tempos.append(time.time())
+
+    def extend(self, linhas):
+        linhas = list(linhas)
+        super().extend(linhas)
+        self.tempos.extend([time.time()] * len(linhas))
+
+    def __iadd__(self, linhas):
+        # `+=` numa lista vai direto ao C e nao passaria pelo `extend` acima.
+        self.extend(linhas)
+        return self
+
+    def __reduce__(self):
+        # copy/pickle: sem isto o `copy` repoe o atributo ANTES dos itens, e o
+        # `append` acima dobraria a lista de horas -- a da ORIGINAL, que uma
+        # copia rasa compartilha.
+        return (_linhas_do_log, (list(self), list(self.tempos)))
+
+
+def _linhas_do_log(linhas, tempos):
+    novas = LinhasDoLog(linhas)
+    novas.tempos = list(tempos)
+    return novas
+
+
+def _log_com_horas(logs):
+    """`(linhas, horas)`, as duas do mesmo tamanho; `horas` e None sem carimbo.
+
+    O log cresce enquanto e lido (a thread do subprocesso continua escrevendo),
+    entao as duas saem de UMA foto, e o texto e fotografado primeiro: no
+    `append` ele entra antes da hora, logo nunca ha hora de linha que a foto nao
+    tem. O contrario acontece -- um poll que caia entre os dois passos ve uma
+    linha sem hora -- e ela vai com None nesse poll e ganha a hora no seguinte.
+    """
+    linhas = list(logs)
+    tempos = getattr(logs, "tempos", None)
+    if tempos is None:
+        return linhas, None
+    tempos = [round(t, 1) for t in list(tempos)[:len(linhas)]]
+    return linhas, tempos + [None] * (len(linhas) - len(tempos))
 
 
 def _visible_logs(logs):
@@ -2796,7 +2888,7 @@ async def process_endpoint(
         # aqui, entao `_resumo_do_job` cai na data da pasta -- pior, mas
         # existente, que e o que a ordenacao precisa.
         'created_at': time.time(),
-        'logs': [f"Job {job_id} queued."],
+        'logs': LinhasDoLog([f"Job {job_id} queued."]),
         'cmd': cmd,
         'env': env,
         'output_dir': job_output_dir,
@@ -2869,7 +2961,7 @@ def _job_view_from_disk(job_id):
     owner = m.get("user_id")
     return {
         'status': 'processing' if alive else 'queued',
-        'logs': ["♻️ The server was updated; your video continues on the new instance."],
+        'logs': LinhasDoLog(["♻️ The server was updated; your video continues on the new instance."]),
         'user_id': (int(owner) if isinstance(owner, str) and owner.isdigit() else owner),
         # Sem isto, um job em voo visto pela OUTRA instancia durante um deploy
         # apareceria sem dono -- e `_assert_job_owner` deixaria qualquer tenant
@@ -2932,6 +3024,16 @@ def _apagar_pasta_do_job(job_id: str) -> None:
     path = os.path.join(OUTPUT_DIR, job_id)
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+    # O video ENVIADO (nao o baixado, que mora na pasta do job) fica em
+    # `uploads/<job_id>_<nome>`. Enquanto a varredura por idade rodava, ele saia
+    # sozinho em 24h; sem ela (JOB_RETENTION_SECONDS = 0), apagar o projeto e a
+    # unica coisa que o tira do disco -- e "apagar projeto" que deixa o maior
+    # arquivo dele para tras nao apagou o projeto.
+    for fonte in glob.glob(os.path.join(UPLOAD_DIR, f"{glob.escape(job_id)}_*")):
+        try:
+            os.remove(fonte)
+        except OSError:
+            pass
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -2964,7 +3066,7 @@ async def cancel_job(job_id: str, request: Request):
 
     if job_id in jobs:
         jobs[job_id]['status'] = 'cancelled'
-        jobs[job_id].setdefault('logs', []).append("Job cancelado pelo usuário.")
+        jobs[job_id].setdefault('logs', LinhasDoLog()).append("Job cancelado pelo usuário.")
     print(f"🛑 Job cancelado pelo usuário: {job_id}")
     return {"status": "cancelled", "cancelled": True}
 
@@ -3063,9 +3165,14 @@ async def get_status(job_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Job not found")
 
     await _assert_job_owner(request, job)
+    linhas, horas = _log_com_horas(_visible_logs(job['logs']))
     return {
         "status": _presented_status(job_id, job),
-        "logs": _visible_logs(job['logs']),
+        "logs": linhas,
+        # A hora em que cada linha NASCEU (epoch), alinhada com `logs`. O
+        # painel formata no fuso do navegador: o container roda em UTC e nao
+        # sabe o fuso de quem olha.
+        "log_times": horas,
         "result": job.get('result'),
         "timings": _job_timings(job_id),
         **_stage_view(job),
@@ -3534,7 +3641,7 @@ async def _restore_job_files(job_id: str, proj, user_id: str) -> bool:
                     f"{_canonical_clip_file(job_dir, base_name, i)}")
         jobs[job_id] = {
             'status': 'completed',
-            'logs': ["♻️ Project restored from your library."],
+            'logs': LinhasDoLog(["♻️ Project restored from your library."]),
             'output_dir': job_dir,
             'user_id': user_id,
             'result': {'clips': clips, 'cost_analysis': data.get('cost_analysis')},

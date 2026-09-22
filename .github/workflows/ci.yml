@@ -22,11 +22,17 @@ jobs:
       # boto3, PyJWT e email-validator sairam com as dependencias pagas e com
       # o modulo cloud/ (ver docs/DECISOES.md, ADR-001). sqlalchemy e alembic
       # voltaram na Fase 0.5, agora para o schema proprio, com aiosqlite.
+      # imageio-ffmpeg traz um ffmpeg estatico dentro do pacote (22-set-2026):
+      # e o que deixa `tests/test_render_numa_passada.py` conferir, quadro a
+      # quadro, o render do reenquadramento aqui -- sem ele esses testes pulam.
+      # Pelo pip e nao pelo apt: um espelho do apt fora do ar deixaria o CI
+      # vermelho por um motivo que nao e do codigo.
       - name: Install test dependencies
         run: >
           pip install pytest pillow httpx pydantic numpy
           opencv-python-headless python-dotenv google-genai fastapi
           python-multipart 'sqlalchemy[asyncio]' aiosqlite alembic
+          imageio-ffmpeg
       - name: Run tests
         run: pytest tests/ -v
 

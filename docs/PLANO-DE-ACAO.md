@@ -843,6 +843,15 @@ medição que o acuse é palpite, e é exatamente o que este projeto recusa.
 **O próximo passo é do autor**, e é uma execução: rodar UM job novo (a medição
 antiga não serve para ordenar culpa) e mandar a saída do `diagnostico.py`.
 
+**Onde está (22-set-2026).** Com a GPU de volta ao container, o vídeo de 10,5 min
+caiu para 608 s, e o resumo do próprio job apontou o reenquadramento (338 s). Duas
+rodadas o atacaram por medição: a classificação de cenas passou a ler o clipe numa
+passada (25,8 s → 5,8 s por corte medido) e o render passou a ser **um ffmpeg por
+corte**, não um por cena — o que, de quebra, consertou um atraso da imagem em relação
+ao som que crescia a cada troca de cena. Os detalhes estão no `CLAUDE.md`, nas seções
+"Velocidade". O próximo alvo sai do próximo resumo `📊`, que agora abre o
+reenquadramento em quatro partes.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

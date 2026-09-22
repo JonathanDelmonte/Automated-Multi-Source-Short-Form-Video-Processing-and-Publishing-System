@@ -310,6 +310,34 @@ em `main.is_youtube_url` + `main.plan_download_attempts` + o `__main__` do
   numa listagem nao responde nada) e no `main.py` antes do yt-dlp. Nao e um
   video: o yt-dlp a trataria como playlist e baixaria o canal inteiro.
 
+### O jar de cookies pode ser ARQUIVO, nao so variavel (22-set-2026)
+
+O download de YouTube morria com "sign in to confirm you're not a bot" numa
+maquina onde o `quality_probe.py` achava os cookies. As duas metades
+procuravam em lugares diferentes, e o comentario do probe afirmava o
+contrario: *"Mirrors main.py's cookie discovery"*. O `main.py` nao tinha
+descoberta nenhuma -- lia `YOUTUBE_COOKIES` e, sem ela, desistia.
+
+- **`sources.jar_em_disco()` e a unica definicao**, e os dois chamam. Um teste
+  le o AST dos dois arquivos e falha se qualquer um voltar a ter lista propria
+  de caminhos -- foi exatamente assim que divergiram.
+- **A variavel continua vencendo quando esta posta.** Ela guarda o CONTEUDO do
+  `cookies.txt` e e o mecanismo certo em nuvem, onde segredo se entrega por
+  ambiente. Num `docker compose` com o repositorio montado em `/app`, o arquivo
+  na pasta e o natural -- e um jar velho esquecido ali nao pode calar quem
+  definiu a variavel de proposito.
+- **O nome alternativo mora no ADAPTER** (`cookie_file_alt`), como o
+  `cookie_env` e o `cookie_file`: `www.youtube.com_cookies.txt` e o nome com
+  que as extensoes salvam, e obrigar a renomear e um passo a mais para errar.
+  So o YouTube o declara, entao ele nao vira jar da Twitch por acidente.
+- **Arquivo vazio conta como ausente**: um `cookies.txt` de zero byte e o que
+  sobra de uma exportacao que falhou, e passa-lo ao yt-dlp devolve o MESMO erro
+  de bot sem dizer que o jar e que estava vazio.
+- **`.gitignore` passou a cobrir os jars**, e nao cobria. Cookie de sessao e
+  credencial viva: quem tem o arquivo entra na conta sem senha e sem 2FA. O
+  conserto acima fez o arquivo passar a existir no diretorio de trabalho, entao
+  a falta virou risco de verdade. Ha teste chamando `git check-ignore`.
+
 ### Google Drive por cookies, nao OAuth (`sources/gdrive.py`, bloco 1.6)
 
 Divergencia deliberada do §4, que previa "Drive API v3 + OAuth com refresh

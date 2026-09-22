@@ -76,6 +76,10 @@ class SourceAdapter:
     # plataforma: dois jobs simultaneos, um de cada, se sobrescreveriam.
     cookie_env: str = "YOUTUBE_COOKIES"
     cookie_file: str = "/app/cookies.txt"
+    #: Outros nomes que o jar desta fonte pode ter NA RAIZ DO REPOSITORIO.
+    #: Existe por um motivo so: e o nome com que a extensao do navegador salva
+    #: o arquivo. Obrigar a renomear e um passo a mais para errar.
+    cookie_file_alt: tuple = ()
 
     @classmethod
     def matches(cls, raw: str) -> bool:

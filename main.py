@@ -796,8 +796,27 @@ def download_youtube_video(url, output_dir="."):
             print(f"⚠️ Failed to write cookies file: {e}")
             cookies_path = None
     else:
-        cookies_path = None
-        print(f"⚠️ {cookies_var} env var not found.")
+        # Sem a variavel, ainda pode haver o ARQUIVO -- e ate 22-set-2026 o
+        # download nao olhava, enquanto o `quality_probe.py` sempre olhou. Na
+        # mesma maquina, com a mesma URL, o probe achava os cookies e o
+        # download falhava com "sign in to confirm you're not a bot".
+        #
+        # A variavel guarda o CONTEUDO do cookies.txt, dezenas de linhas dentro
+        # do `.env`: e o mecanismo de um deploy em nuvem, onde segredo se
+        # entrega por ambiente. Num `docker compose` com o repositorio montado
+        # em `/app`, largar o arquivo na pasta e o mecanismo natural.
+        achado = sources.jar_em_disco(url)
+        if achado:
+            cookies_path = achado
+            print(f"🍪 {cookies_var} nao esta no ambiente, mas achei "
+                  f"{os.path.basename(achado)} na pasta do projeto.")
+        else:
+            esperado = os.path.basename(cookies_path)
+            cookies_path = None
+            print(f"⚠️ Sem cookies: nem a variavel {cookies_var} no .env, nem "
+                  f"um {esperado} na pasta do projeto. Sem eles o YouTube "
+                  f"responde \"sign in to confirm you're not a bot\" para boa "
+                  f"parte dos videos.")
     
     # Optional HTTP proxy. Set PROXY_URL to route downloads through it; unset
     # (self-host) goes direct as before.

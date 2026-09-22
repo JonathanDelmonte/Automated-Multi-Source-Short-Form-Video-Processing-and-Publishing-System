@@ -19,17 +19,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _find_cookies_path():
-    # Mirrors main.py's cookie discovery.
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    for candidate in [
-        os.path.join(script_dir, 'www.youtube.com_cookies.txt'),
-        os.path.join(script_dir, 'cookies.txt'),
-        '/app/cookies.txt',
-    ]:
-        if os.path.exists(candidate):
-            return candidate
-    return None
+def _find_cookies_path(url: str = "https://www.youtube.com/"):
+    """Onde esta o jar de cookies desta fonte.
+
+    Delega para `sources.jar_em_disco`, que agora e a UNICA definicao. O
+    comentario que estava aqui dizia "mirrors main.py's cookie discovery", e
+    nao era verdade: o `main.py` so lia a variavel de ambiente. As duas metades
+    discordavam -- o probe achava o arquivo, o download nao --, e na mesma
+    maquina o probe passava e o download dizia "sign in to confirm you're not
+    a bot" (22-set-2026).
+    """
+    import sources
+    return sources.jar_em_disco(url)
 
 
 def main() -> int:

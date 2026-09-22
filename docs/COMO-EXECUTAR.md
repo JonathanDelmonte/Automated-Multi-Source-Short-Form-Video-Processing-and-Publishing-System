@@ -695,6 +695,47 @@ calcular, por medição e não por estimativa, quanto custaria uma live de 4 h �
 ~75.000 tokens para uma live de 4 h; este número diz se a estimativa estava
 certa.
 
+### Se o YouTube recusar o download
+
+No log do job:
+
+```
+⚠️ Sem cookies: nem a variável YOUTUBE_COOKIES no .env, nem um cookies.txt
+ERROR: Sign in to confirm you're not a bot.
+```
+
+O YouTube passou a exigir sessão para boa parte dos vídeos. Não é bloqueio da
+sua máquina nem versão velha do yt-dlp: é falta de cookies.
+
+**O conserto são três passos, e o arquivo vai na pasta do projeto** — não
+dentro do `.env`. A variável `YOUTUBE_COOKIES` continua valendo e vence quando
+existe, mas ela guarda o *conteúdo inteiro* do arquivo, dezenas de linhas: é o
+mecanismo de um deploy em nuvem, onde segredo se entrega por ambiente. Aqui o
+repositório está montado dentro do container, então o arquivo basta.
+
+1. No Chrome/Edge, instale uma extensão de exportar cookies no formato
+   **Netscape** (procure por "cookies.txt").
+2. Abra **youtube.com logado**, clique na extensão e exporte. O arquivo sai
+   como `www.youtube.com_cookies.txt`.
+3. Salve esse arquivo na **raiz do projeto**, ao lado do `docker-compose.yml`.
+   Não precisa renomear: o adapter do YouTube aceita esse nome e também
+   `cookies.txt`.
+
+Não precisa reiniciar nada — o `main.py` é um processo novo a cada job e lê o
+arquivo na hora. Mande o vídeo de novo e o log passa a dizer
+`🍪 ... achei www.youtube.com_cookies.txt na pasta do projeto`.
+
+> **O arquivo é credencial viva.** Quem o tiver entra na sua conta sem senha e
+> sem 2FA. Ele está no `.gitignore` (desde 22-set-2026), então não sobe num
+> `git push` — mas não o mande por e-mail, chat nem o cole num issue. Para
+> revogar, basta sair da conta do YouTube naquele navegador: os cookies
+> exportados morrem junto.
+
+Se voltar a falhar depois de semanas, é a sessão que expirou: exporte de novo
+por cima.
+
+---
+
 ### Se estiver lento
 
 ```bat

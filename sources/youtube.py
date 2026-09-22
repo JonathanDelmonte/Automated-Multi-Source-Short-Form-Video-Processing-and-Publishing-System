@@ -13,6 +13,9 @@ HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "googlevideo.com")
 class YouTubeAdapter(SourceAdapter):
     id = "youtube"
     label = "YouTube"
+    # O nome com que as extensoes de exportar cookies salvam o arquivo. Aceitar
+    # os dois evita o passo "agora renomeie", que e um passo a mais para errar.
+    cookie_file_alt = ("www.youtube.com_cookies.txt",)
 
     @classmethod
     def matches(cls, raw: str) -> bool:

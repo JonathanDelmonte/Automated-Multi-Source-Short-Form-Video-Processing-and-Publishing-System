@@ -52,3 +52,12 @@ skills-lock.json
 
 # Saida do atalhos/diagnostico.bat -- e para colar num chat, nao para versionar.
 /diagnostico.txt
+
+# Cookies de sessao. NUNCA versionar: sao credenciais vivas -- quem tiver o
+# arquivo entra na conta sem senha e sem 2FA. O `main.py` escreve o jar aqui a
+# partir de YOUTUBE_COOKIES/TWITCH_COOKIES/GDRIVE_COOKIES, e desde 22-set-2026
+# o download tambem ACEITA o arquivo largado na pasta -- entao ele passou a
+# existir no diretorio de trabalho de quem roda em casa.
+/cookies.txt
+/cookies-*.txt
+/www.*_cookies.txt

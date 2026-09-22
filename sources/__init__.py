@@ -21,6 +21,9 @@ deliberadamente nao instala torch, mediapipe nem scenedetect.
 """
 from __future__ import annotations
 
+import os
+from typing import Optional
+
 from .base import (  # noqa: F401  (reexportados: e esta a superficie publica)
     Fetched,
     SourceAdapter,
@@ -93,6 +96,47 @@ def cookie_jar_for(raw: str) -> tuple[str, str]:
     except Exception:
         return (SourceAdapter.cookie_env, SourceAdapter.cookie_file)
     return (adapter.cookie_env, adapter.cookie_file)
+
+
+def jar_em_disco(raw: str) -> Optional[str]:
+    """Um arquivo de cookies JA GRAVADO para esta fonte, ou None.
+
+    **Existe porque as duas metades do sistema discordavam.** O
+    `quality_probe.py` sempre procurou o ARQUIVO -- e o comentario dele dizia
+    "mirrors main.py's cookie discovery", o que nao era verdade: o `main.py` so
+    lia a VARIAVEL de ambiente e desistia. Entao o probe achava os cookies e o
+    download nao, na mesma maquina, com a mesma URL.
+
+    E a variavel sozinha nao serve a quem roda em casa: ela guarda o CONTEUDO
+    INTEIRO do `cookies.txt`, dezenas de linhas, dentro do `.env`. Isso e o
+    mecanismo certo para um deploy em nuvem, onde segredo se entrega por
+    ambiente; num `docker compose` com o repositorio montado em `/app`, largar
+    o arquivo na pasta e o mecanismo certo -- e ja era metade do que existia.
+
+    A variavel continua vencendo quando esta posta: quem a define escolheu
+    deliberadamente, e um arquivo velho esquecido na pasta nao pode calar essa
+    escolha.
+    """
+    try:
+        adapter = resolve(raw)
+    except Exception:
+        adapter = SourceAdapter
+    raiz = os.path.dirname(os.path.abspath(__file__))
+    raiz = os.path.dirname(raiz)          # sources/ -> raiz do repositorio
+    nomes = [adapter.cookie_file]
+    nomes += [os.path.join(raiz, n) for n in adapter.cookie_file_alt]
+    nomes.append(os.path.join(raiz, os.path.basename(adapter.cookie_file)))
+    for caminho in nomes:
+        try:
+            if os.path.isfile(caminho) and os.path.getsize(caminho) > 0:
+                return caminho
+        except OSError:
+            continue
+    # Arquivo vazio conta como ausente: um `cookies.txt` de zero byte e o que
+    # sobra de uma exportacao que falhou, e passa-lo ao yt-dlp devolveria o
+    # mesmo "sign in to confirm you're not a bot" sem dizer que o jar e que
+    # estava vazio.
+    return None
 
 
 def adapter_ids() -> tuple[str, ...]:

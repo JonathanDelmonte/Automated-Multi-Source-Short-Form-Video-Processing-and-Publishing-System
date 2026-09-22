@@ -1412,6 +1412,51 @@ linha `⚠️ [ASR] whisper GPU failed`, que so existe para a queda de cuda.
   Distinguir isso no proprio `_modo-gpu.bat` exigiria um LABEL no Dockerfile --
   e mudar o Dockerfile faz o `atualizar.bat` mandar reconstruir, 40 minutos.
 
+### Velocidade, rodada 2: o que o resumo do job mostrou (22-set-2026)
+
+Com a placa de volta, o mesmo video de 10,5 min caiu de ~20 min para 608 s. O
+resumo do proprio job (`job_metrics`) dividiu assim:
+
+| estagio | parede | o que era |
+|---|---|---|
+| 01_ingest | 41 s | download (com um 403 no meio, resolvido pelo retry) |
+| 03_transcribe | 113 s | 43 s de transcricao; o resto, muito provavelmente, a PRIMEIRA descida do `large-v3-turbo` (~1,6 GB) -- conferir no proximo job |
+| 04_detect | 86 s | tres chamadas ao Gemini, cada uma depois de um 404 do Groq |
+| 05_06_render | 366 s | 338 s de reenquadramento (790 s ocupados nos 3 workers) |
+
+- **Classificar as cenas lia o clipe por seek** (`amostragem_cenas.py`). Cada
+  `cap.set(CAP_PROP_POS_FRAMES)` num H.264 decodifica desde o keyframe
+  anterior (GOP de 250), e isso -- nao o BlazeFace -- custava 1-4 s POR CENA,
+  27-77 s por corte. Uma passada com `grab`/`retrieve`, medida num clipe 1080p
+  de 50 s com 23 cenas: 25,8 s -> 5,8 s, **quadros identicos 115/115**. Um
+  teste compara com o algoritmo antigo em 300 clipes sorteados: as decisoes
+  TRACK/GENERAL sao as mesmas. Mora fora do `main.py` para o CI alcancar.
+- **O reenquadramento ganhou filhos no resumo**: `06_reenquadra/1_cenas`
+  (TransNetV2), `/2_estrategia`, `/3_trajetoria` e `/4_ffmpeg` (todo `_run`
+  do `reframe_v2`). A barra no nome faz o resumo imprimir o filho recuado sob o
+  pai, e o tempo dele esta CONTIDO no do pai -- nao somar. O proximo alvo sai
+  daqui, e nao de palpite.
+- **O Groq estava fora do ar para este projeto desde 16-ago-2026**: o
+  `llama-3.3-70b-versatile` foi aposentado (registro de modelos do LiteLLM,
+  `deprecation_date`), e todo job tentava, levava 404 e caia no Gemini gratis,
+  que e mais lento e treina com o conteudo. Padrao trocado para
+  `openai/gpt-oss-120b`, e a cascata passou a lembrar, POR JOB, do provedor
+  cujo modelo nao existe (`llm_cascade._MODELO_INEXISTENTE`): avisa uma vez,
+  com o `GROQ_MODEL=` a pôr no `.env`, e nao gasta cota fantasma. Erro
+  passageiro (429, 503) continua sendo tentado de novo -- so o 404 de modelo
+  desliga.
+- **A linha `💰 Total cost (...)` passou a dizer quem RESPONDEU**; dizia o
+  primeiro da cascata, entao anunciava llama enquanto o Gemini trabalhava.
+- **Processar no navegador de quem usa foi considerado e recusado.** O
+  programa JA roda na maquina e na placa de quem o instala (Docker + atalhos).
+  No navegador ele ficaria mais lento, nao mais rapido: o ffmpeg em WebAssembly
+  e uma ordem de grandeza mais lento que o nativo, o whisper grande seriam
+  ~1,5 GB baixados por pessoa, notebook sem placa fica pior que o servidor, e o
+  download do YouTube nem pode acontecer ali (e Python, e o navegador bloqueia
+  por CORS). Seria reescrever o pipeline inteiro para perder velocidade. Para
+  poucas pessoas, os caminhos sao: cada uma instala como o autor, ou o autor
+  serve pela maquina dele -- a auth multiusuario da Fase 4 ja existe para isso.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

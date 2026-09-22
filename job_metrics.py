@@ -338,7 +338,13 @@ def summary_line() -> str:
     for nome, s in sorted(snap["stages"].items()):
         linhas.append(_linha(nome, s))
     for nome, s in sorted(snap.get("substages", {}).items()):
-        linhas.append(_linha(nome, s, recuo="└ "))
+        # `pai/filho` e um pedaco DENTRO de outro substage: sai recuado, so com
+        # o nome curto, logo abaixo do pai (a ordem alfabetica ja o poe ali).
+        # O tempo dele esta contido no do pai -- nao e para somar os dois.
+        if "/" in nome:
+            linhas.append(_linha(nome.split("/", 1)[1], s, recuo="  └ "))
+        else:
+            linhas.append(_linha(nome, s, recuo="└ "))
     t = snap["totals"]
     linhas.append(f"   {'TOTAL':<20} {snap['wall_seconds']:>8.1f}s"
                   f"  {t['calls']} chamada(s)  {t['tokens']} tokens")

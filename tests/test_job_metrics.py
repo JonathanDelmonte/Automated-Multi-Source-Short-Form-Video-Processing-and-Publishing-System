@@ -336,3 +336,18 @@ class TestSubstage:
         # Mas o total do job inclui: um token gasto e um token gasto.
         assert s["totals"]["tokens"] == 3060
         assert s["totals"]["calls"] == 1
+
+
+def test_substage_filho_sai_recuado_debaixo_do_pai():
+    """`pai/filho` e um pedaco dentro de outro substage (o reenquadramento,
+    desde 22-set-2026): sai com o nome curto, recuado, logo abaixo do pai --
+    e nao como mais uma linha do mesmo nivel, que convidaria a somar os dois."""
+    job_metrics.reset()
+    with job_metrics.stage("05_06_render"):
+        with job_metrics.substage("06_reenquadra"):
+            with job_metrics.substage("06_reenquadra/1_cenas"):
+                pass
+    linhas = job_metrics.summary_line().splitlines()
+    i_pai = next(i for i, l in enumerate(linhas) if "└ 06_reenquadra" in l)
+    assert "  └ 1_cenas" in linhas[i_pai + 1]
+    assert "06_reenquadra/1_cenas" not in "\n".join(linhas)

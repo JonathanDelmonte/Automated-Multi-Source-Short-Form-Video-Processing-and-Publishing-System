@@ -609,7 +609,7 @@ No `/api/config`, procure o campo **`localLlm`**. Com a chave do Groq no `.env`,
 ele vem parecido com isto:
 
 ```json
-"localLlm": { "provider": "cascade", "model": "llama-3.3-70b-versatile", ... }
+"localLlm": { "provider": "cascade", "model": "openai/gpt-oss-120b", ... }
 ```
 
 **Se vier `"localLlm": null`, a chave não chegou ao container.** Quase sempre é
@@ -1057,7 +1057,7 @@ tem `\` no fim:
 
 ```powershell
 $k = "gsk_COLE_A_SUA_CHAVE_AQUI"
-Invoke-RestMethod -Uri "https://api.groq.com/openai/v1/chat/completions" -Method Post -Headers @{ Authorization = "Bearer $k" } -ContentType "application/json" -Body '{"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":"responda apenas: ok"}]}' | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Uri "https://api.groq.com/openai/v1/chat/completions" -Method Post -Headers @{ Authorization = "Bearer $k" } -ContentType "application/json" -Body '{"model":"openai/gpt-oss-120b","messages":[{"role":"user","content":"responda apenas: ok"}]}' | ConvertTo-Json -Depth 6
 ```
 
 **Funcionou** se vier um JSON com `"content": "ok"` e um bloco `usage` com
@@ -1111,7 +1111,7 @@ curl http://localhost:8000/api/config
 O teste do Apêndice A, em uma linha:
 
 ```bash
-curl -s https://api.groq.com/openai/v1/chat/completions -H "Authorization: Bearer $GROQ_API_KEY" -H "Content-Type: application/json" -d '{"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":"responda apenas: ok"}]}'
+curl -s https://api.groq.com/openai/v1/chat/completions -H "Authorization: Bearer $GROQ_API_KEY" -H "Content-Type: application/json" -d '{"model":"openai/gpt-oss-120b","messages":[{"role":"user","content":"responda apenas: ok"}]}'
 ```
 
 E rodar um vídeo pelo terminal em vez do painel:

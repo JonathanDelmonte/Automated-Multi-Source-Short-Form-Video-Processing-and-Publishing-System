@@ -286,7 +286,7 @@ Duas integrações que faltavam e teriam quebrado na prática, encontradas ao li
   chave.
 - **`/api/process` rejeitava a requisição**, e o painel escondia a opção, pelo mesmo
   motivo. Ambos passam a aceitar a cascata: com `GROQ_API_KEY`, `/api/config` devolve
-  `localLlm: cascade / llama-3.3-70b-versatile` e o painel para de pedir chave do
+  `localLlm: cascade / openai/gpt-oss-120b` e o painel para de pedir chave do
   Google.
 
 **Um bug de desenho que os testes pegaram:** o Ollama tinha default para

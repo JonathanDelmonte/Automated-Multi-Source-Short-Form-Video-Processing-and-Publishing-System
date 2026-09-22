@@ -109,3 +109,56 @@ def test_os_substages_do_render_sao_os_que_o_relatorio_ordena():
     faltando = usados - set(timings_report.ORDEM_DOS_SUBESTAGIOS)
     assert not faltando, (
         f"substages sem lugar na ordem do relatorio: {sorted(faltando)}")
+
+
+# --------------------------------------------------------------------------- #
+# Por dentro do reenquadramento (22-set-2026)
+# --------------------------------------------------------------------------- #
+
+def _reframe():
+    with open(os.path.join(RAIZ, "reframe_v2.py"), encoding="utf-8") as fh:
+        return ast.parse(fh.read())
+
+
+def _chamadas_dentro_de_substage(arvore):
+    """{nome da funcao chamada: constante do substage que a envolve}."""
+    achadas = {}
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.With):
+            continue
+        for item in no.items:
+            ctx = item.context_expr
+            if (isinstance(ctx, ast.Call) and isinstance(ctx.func, ast.Attribute)
+                    and ctx.func.attr == "substage" and ctx.args):
+                rotulo = ast.unparse(ctx.args[0])
+                for dentro in ast.walk(no):
+                    if isinstance(dentro, ast.Call):
+                        nome = ast.unparse(dentro.func)
+                        achadas.setdefault(nome, rotulo)
+    return achadas
+
+
+def test_os_quatro_pedacos_do_reenquadramento_sao_medidos():
+    """O `06_reenquadra` foi 338 s de parede num job de 608 s, e era um bloco
+    so: sem os filhos, "atacar o reenquadramento" seria chute. Se um destes
+    sair de dentro do `substage`, o resumo do job volta a esconder onde o
+    tempo vai -- e ninguem percebe, porque o job continua funcionando."""
+    achadas = _chamadas_dentro_de_substage(_reframe())
+    assert achadas.get("m.detect_scenes") == "_SUB_CENAS"
+    assert achadas.get("m.analyze_scenes_strategy") == "_SUB_ESTRATEGIA"
+    assert achadas.get("_analyze_trajectory") == "_SUB_TRAJETORIA"
+    assert achadas.get("subprocess.run") == "_SUB_FFMPEG"
+
+
+def test_os_filhos_moram_debaixo_do_pai():
+    """O nome `pai/filho` e o que faz o resumo imprimir o filho recuado sob o
+    `06_reenquadra` -- e o relatorio ordena-los logo depois dele."""
+    import reframe_v2
+    import timings_report
+    filhos = [reframe_v2._SUB_CENAS, reframe_v2._SUB_ESTRATEGIA,
+              reframe_v2._SUB_TRAJETORIA, reframe_v2._SUB_FFMPEG]
+    ordem = timings_report.ORDEM_DOS_SUBESTAGIOS
+    pai = ordem.index("06_reenquadra")
+    for filho in filhos:
+        assert filho.startswith("06_reenquadra/")
+        assert ordem.index(filho) > pai

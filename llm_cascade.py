@@ -93,7 +93,17 @@ def _ollama_base() -> str:
 _CATALOG = (
     Provider(
         id="groq", label="Groq", base_url="https://api.groq.com/openai/v1",
-        model=os.environ.get("GROQ_MODEL") or "llama-3.3-70b-versatile",
+        # `llama-3.3-70b-versatile` foi aposentado pelo Groq em 16-ago-2026
+        # (registro de modelos do LiteLLM, `deprecation_date`), e dali em
+        # diante TODO job batia nele, levava 404 `model_not_found` e caia no
+        # Gemini gratis -- mais lento e que treina com o conteudo. Visto no
+        # log do autor em 22-set-2026, tres vezes por job. O `gpt-oss-120b` e
+        # o modelo grande vivo do Groq, com 131k de contexto e saida em
+        # json_schema. O teto de 100k tokens/dia fica como estava: e o do
+        # modelo antigo, provavelmente CONSERVADOR para este, e um teto baixo
+        # demais so faz o pre-filtro cortar um pouco mais cedo -- sobrescreva
+        # com LLM_GROQ_TPD quando o numero publicado for conferido.
+        model=os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b",
         key_env="GROQ_API_KEY", max_context=128_000,
         tokens_per_day=100_000, calls_per_day=1_000, calls_per_minute=30,
     ),
@@ -272,6 +282,28 @@ class AllProvidersFailed(RuntimeError):
     """Nenhum provedor da cascata aceitou a chamada."""
 
 
+#: Provedores cujo modelo o PROPRIO provedor disse nao existir, neste
+#: processo. O `main.py` e um processo por job, entao isto vale por job.
+#:
+#: Existe por causa do 22-set-2026: com o modelo do Groq aposentado, cada
+#: chamada do job tentava o Groq de novo, levava o mesmo 404 e escrevia a
+#: mesma linha de erro -- tres vezes num video de 10 min, e uma ida a rede
+#: a mais em cada uma. "O modelo nao existe" nao melhora em 5 segundos.
+_MODELO_INEXISTENTE: dict = {}
+
+
+def modelo_inexistente(erro) -> bool:
+    """O erro e o provedor dizendo que o MODELO pedido nao existe (ou que
+    esta chave nao o alcanca)? Os dois casos pedem a mesma coisa: trocar o
+    modelo no `.env`, e nao tentar de novo. Precisa do 404 junto para que um
+    erro transitorio que so mencione "model" nao desligue um provedor bom."""
+    texto = str(erro).lower()
+    if "404" not in texto:
+        return False
+    return ("model_not_found" in texto or "does not exist" in texto
+            or ("not found" in texto and "model" in texto))
+
+
 def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
         duration_seconds: Optional[float] = None,
         log: Callable[[str], None] = print) -> tuple[dict, dict]:
@@ -297,6 +329,10 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
 
     errors: list[str] = []
     for p in chain:
+        if p.id in _MODELO_INEXISTENTE:
+            # Ja avisado na primeira vez, com o conserto; aqui so pula.
+            errors.append(f"{p.id}: modelo {_MODELO_INEXISTENTE[p.id]} nao existe")
+            continue
         ok, why = available(p, need)
         if not ok:
             log(f"   ⏭️  {p.label}: {why}")
@@ -309,6 +345,17 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
         try:
             parsed, cost = call(prompt, schema, p)
         except Exception as e:                      # noqa: BLE001 - a cascata existe para isso
+            if modelo_inexistente(e):
+                _MODELO_INEXISTENTE[p.id] = p.model
+                log(f"   ⚠️  {p.label}: o modelo `{p.model}` nao existe (ou esta "
+                    f"chave nao tem acesso a ele). Pulando o {p.label} no resto "
+                    f"deste job -- para volta-lo, ponha {p.id.upper()}_MODEL="
+                    f"<modelo atual> no .env.")
+                errors.append(f"{p.id}: modelo {p.model} nao existe")
+                # Sem `record`: um 404 de modelo nao gasta cota nenhuma, e
+                # somar tokens fantasmas encheria o teto diario de um
+                # provedor que nem chegou a trabalhar.
+                continue
             log(f"   ⚠️  {p.label} falhou ({type(e).__name__}: {e}); proximo provedor")
             errors.append(f"{p.id}: {type(e).__name__}: {e}")
             # Uma tentativa que falhou ainda consumiu cota no provedor.

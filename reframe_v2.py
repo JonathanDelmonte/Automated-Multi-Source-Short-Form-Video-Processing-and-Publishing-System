@@ -25,6 +25,7 @@ import active_speaker
 import camera_inset
 import punch_in
 import screencast_layout
+import job_metrics
 import layout_ranges
 import split_layout
 from ffmpeg_utils import (video_encode_args, escape_filter_value, QUALITY_FAST,
@@ -336,9 +337,24 @@ def _analyze_trajectory(input_video, scenes_boundaries, scene_strategies,
 
 # --- render -----------------------------------------------------------------
 
+# Os quatro pedacos do reenquadramento tem nome proprio no resumo do job
+# (22-set-2026). Ate aqui o `06_reenquadra` era um bloco so -- 338 s de parede
+# num job de 608 s --, e nao havia como saber se o peso estava em achar as
+# cenas, em classifica-las, em seguir o rosto ou no ffmpeg. A barra no nome
+# faz o `job_metrics` imprimir o filho recuado, debaixo do pai.
+_SUB_CENAS = "06_reenquadra/1_cenas"
+_SUB_ESTRATEGIA = "06_reenquadra/2_estrategia"
+_SUB_TRAJETORIA = "06_reenquadra/3_trajetoria"
+_SUB_FFMPEG = "06_reenquadra/4_ffmpeg"
+
+
 def _run(cmd):
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.PIPE, timeout=1800)
+    # Todo ffmpeg do reenquadramento passa por aqui -- um por trecho de cena e
+    # o concat final --, entao medir aqui cobre o render inteiro sem reindentar
+    # o laco dos segmentos.
+    with job_metrics.substage(_SUB_FFMPEG):
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE, timeout=1800)
 
 
 def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
@@ -363,7 +379,8 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
     content_ranges = content_ranges or []
 
     print("   🚀 Reframe engine v2 (ffmpeg-native render)")
-    scenes, fps = m.detect_scenes(input_video)
+    with job_metrics.substage(_SUB_CENAS):
+        scenes, fps = m.detect_scenes(input_video)
     fps = float(fps)  # PySceneDetect can hand back a Fraction
     orig_w, orig_h = m.get_video_resolution(input_video)
 
@@ -394,7 +411,8 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
         print(f"   ↕️  Source is already {orig_w}x{orig_h} vertical — "
               f"passing it through, no reframe")
     else:
-        strategies = m.analyze_scenes_strategy(input_video, scenes)
+        with job_metrics.substage(_SUB_ESTRATEGIA):
+            strategies = m.analyze_scenes_strategy(input_video, scenes)
 
     # SPLIT is an upgrade applied on top of the TRACK/GENERAL verdict, keyed by
     # the scene's START FRAME rather than its index: scene_frame_ranges() drops
@@ -485,8 +503,9 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
     cameraman = m.SmoothedCameraman(out_w, out_h, orig_w, orig_h, aspect_ratio=aspect_ratio)
     tracker = m.SpeakerTracker(cooldown_frames=30)
 
-    xs = _analyze_trajectory(input_video, scene_boundaries, strategies, fps,
-                             orig_w, orig_h, cameraman, tracker)
+    with job_metrics.substage(_SUB_TRAJETORIA):
+        xs = _analyze_trajectory(input_video, scene_boundaries, strategies, fps,
+                                 orig_w, orig_h, cameraman, tracker)
     if not xs:
         raise RuntimeError("analysis produced no frames")
 

@@ -43,8 +43,13 @@ ORDEM_DOS_ESTAGIOS = ("01_ingest", "02_probe", "03_transcribe", "04_detect",
 #: Os passes medidos DENTRO de `05_06_render`, na ordem em que um corte os
 #: atravessa. Cada um e um encode inteiro do clipe (menos o hook grounding, que
 #: e uma chamada de LLM), e ate 16-set-2026 todos eram invisiveis.
-ORDEM_DOS_SUBESTAGIOS = ("05_corte", "06_reenquadra", "06_marca_dagua",
-                         "06_hook_grounding", "06_gancho", "06_legenda")
+ORDEM_DOS_SUBESTAGIOS = ("05_corte", "06_reenquadra",
+                         # os quatro pedacos DENTRO do reenquadramento
+                         # (22-set-2026); o tempo deles esta contido no do pai
+                         "06_reenquadra/1_cenas", "06_reenquadra/2_estrategia",
+                         "06_reenquadra/3_trajetoria", "06_reenquadra/4_ffmpeg",
+                         "06_marca_dagua", "06_hook_grounding", "06_gancho",
+                         "06_legenda")
 
 #: Acima desta razao entre a soma dos estagios e a parede do job, a medida nao
 #: fecha. O caso real e o dado anterior a 16-set-2026: o laco de cortes somava

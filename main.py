@@ -588,47 +588,19 @@ def analyze_scenes_strategy(video_path, scenes):
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
-        s_f, e_f = start.get_frames(), end.get_frames()
-        # Sample 5 frames spread across the scene, clamped inside it (the old
-        # start+5/end-5 samples landed outside scenes shorter than ~10 frames).
-        margin = min(2, max(0, (e_f - s_f - 1) // 2))
-        frames_to_check = sorted(set(
-            int(round(f)) for f in np.linspace(s_f + margin, e_f - 1 - margin, 5)
-        ))
-
-        face_counts = []
-        for f_idx in frames_to_check:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
-            ret, frame = cap.read()
-            if not ret: continue
-
-            # Near-black frames (fades, cut-to-black) carry no faces and used
-            # to drag single-person scenes into GENERAL. Skip them.
-            if frame.mean() < 16:
-                continue
-
-            # Detect faces
-            candidates = detect_face_candidates(frame)
-            face_counts.append(len(candidates))
-
-        # Decision Logic
-        if not face_counts:
-            avg_faces = 0
-        else:
-            avg_faces = sum(face_counts) / len(face_counts)
-
-        # Strategy:
-        # 0 faces -> GENERAL (Landscape/B-roll)
-        # 1 face -> TRACK
-        # > 1.2 faces -> GENERAL (Group)
-
-        if avg_faces > 1.2 or avg_faces < 0.5:
-            strategies.append('GENERAL')
-        else:
-            strategies.append('TRACK')
-
+    # Uma passada pelo clipe em vez de um seek por quadro (22-set-2026): cada
+    # seek num H.264 decodificava desde o keyframe anterior, e era isso -- nao
+    # o rosto -- que custava 1-4 s por cena. Os quadros lidos sao os mesmos,
+    # entao a decisao tambem; o porque e a medicao estao em `amostragem_cenas`.
+    import amostragem_cenas
+    t0 = time.time()
+    faixas = [(start.get_frames(), end.get_frames()) for start, end in scenes]
+    contagens = amostragem_cenas.contar_rostos_por_cena(
+        cap, faixas, detect_face_candidates)
+    strategies = [amostragem_cenas.estrategia(c) for c in contagens]
     cap.release()
+    print(f"   🎭 {len(scenes)} cena(s) classificada(s) em "
+          f"{time.time() - t0:.1f}s")
 
     # Hysteresis: a short scene whose two neighbors agree on the opposite
     # strategy is almost always a sampling miss (profile face, insert shot).
@@ -1828,13 +1800,17 @@ def get_viral_clips(transcript_result, video_duration, audio_path=None):
         # Aggregate cost across both passes.
         cost_analysis = None
         if costs:
+            # O modelo de QUEM RESPONDEU, e nao o primeiro da cascata
+            # (22-set-2026): com o Groq em 404 o log dizia "llama-3.3-70b"
+            # enquanto as tres respostas vinham do Gemini.
+            respondeu = ", ".join(sorted({c.get("model") or model_name for c in costs}))
             cost_analysis = {
                 "input_tokens": sum(c.get("input_tokens", 0) for c in costs),
                 "output_tokens": sum(c.get("output_tokens", 0) for c in costs),
                 "total_cost": sum(c.get("total_cost", 0) for c in costs),
-                "model": model_name,
+                "model": respondeu,
             }
-            print(f"\U0001f4b0 Total cost ({model_name}, 2-pass, {len(costs)} calls): ${cost_analysis['total_cost']:.6f}")
+            print(f"\U0001f4b0 Total cost ({respondeu}, 2-pass, {len(costs)} calls): ${cost_analysis['total_cost']:.6f}")
 
         if not shorts:
             print("⚠️ 2-pass returned no clips.")

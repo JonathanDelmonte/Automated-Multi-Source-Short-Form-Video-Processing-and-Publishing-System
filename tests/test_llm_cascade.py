@@ -30,6 +30,9 @@ def ambiente_limpo(tmp_path, monkeypatch):
     # Sem OLLAMA_BASE_URL o default aponta para localhost e o Ollama entraria
     # em toda cascata; os testes que o querem ligam de proposito.
     monkeypatch.setenv("OLLAMA_BASE_URL", "")
+    # A lista de modelos inexistentes vale por processo (um job); entre testes
+    # ela tem de voltar vazia, ou um teste desligaria o Groq do seguinte.
+    monkeypatch.setattr(llm_cascade, "_MODELO_INEXISTENTE", {})
     return tmp_path
 
 
@@ -284,3 +287,88 @@ class TestDescribe:
         monkeypatch.setenv("GEMINI_API_KEY", "m")
         d = llm_cascade.describe(10)
         assert next(p for p in d["providers"] if p["id"] == "gemini")["trains_on_data"]
+
+
+
+# --------------------------------------------------------------------------- #
+# Modelo que nao existe mais (22-set-2026)
+# --------------------------------------------------------------------------- #
+
+ERRO_DO_GROQ = (
+    'LLM server 404 from https://api.groq.com/openai/v1/chat/completions: '
+    '{"error":{"message":"The model `llama-3.3-70b-versatile` does not exist or '
+    'you do not have access to it.","type":"invalid_request_error",'
+    '"code":"model_not_found"}}')
+
+
+class TestModeloInexistente:
+    """O `llama-3.3-70b-versatile` foi aposentado pelo Groq em 16-ago-2026, e
+    dali em diante toda chamada de todo job tentava o Groq, levava 404 e caia
+    no Gemini -- tres vezes num video de 10 min, com a mesma linha de erro."""
+
+    def test_o_padrao_do_groq_nao_e_o_modelo_aposentado(self):
+        groq = next(p for p in llm_cascade._CATALOG if p.id == "groq")
+        assert groq.model != "llama-3.3-70b-versatile"
+
+    def test_reconhece_o_erro_real_do_log(self):
+        assert llm_cascade.modelo_inexistente(RuntimeError(ERRO_DO_GROQ))
+
+    @pytest.mark.parametrize("texto", [
+        "429 rate limited",
+        "503 UNAVAILABLE. This model is currently experiencing high demand",
+        "500 internal error",
+        "1 validation error for Resposta",
+    ])
+    def test_erro_passageiro_nao_desliga_o_provedor(self, texto):
+        assert not llm_cascade.modelo_inexistente(RuntimeError(texto))
+
+    def test_depois_do_404_o_job_nao_tenta_o_groq_de_novo(self, monkeypatch):
+        _todos(monkeypatch)
+        vistos = []
+        avisos = []
+
+        def call(prompt, schema, provider):
+            vistos.append(provider.id)
+            if provider.id == "groq":
+                raise RuntimeError(ERRO_DO_GROQ)
+            return {"ok": True}, {}
+
+        for _ in range(3):              # as tres chamadas de um job
+            llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
+                            log=avisos.append)
+        assert vistos == ["groq", "gemini", "gemini", "gemini"]
+        # um aviso so, e ele diz o que fazer
+        sobre_o_modelo = [a for a in avisos if "nao existe" in a]
+        assert len(sobre_o_modelo) == 1
+        assert "GROQ_MODEL=" in sobre_o_modelo[0]
+
+    def test_404_de_modelo_nao_gasta_cota_fantasma(self, monkeypatch):
+        """Um 404 de modelo nao consome nada no provedor; somar tokens ali
+        encheria o teto diario de quem nem chegou a trabalhar."""
+        _todos(monkeypatch)
+
+        def call(prompt, schema, provider):
+            if provider.id == "groq":
+                raise RuntimeError(ERRO_DO_GROQ)
+            return {"ok": True}, {}
+
+        llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
+                        log=lambda _m: None)
+        assert llm_cascade.usage("groq")["calls"] == 0
+
+    def test_erro_passageiro_continua_tentando_na_proxima_chamada(self, monkeypatch):
+        """So o modelo inexistente desliga o provedor: um 429 hoje pode ser um
+        200 daqui a 10 segundos."""
+        _todos(monkeypatch)
+        vistos = []
+
+        def call(prompt, schema, provider):
+            vistos.append(provider.id)
+            if provider.id == "groq":
+                raise RuntimeError("429 rate limited")
+            return {"ok": True}, {}
+
+        for _ in range(2):
+            llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
+                            log=lambda _m: None)
+        assert vistos == ["groq", "gemini", "groq", "gemini"]

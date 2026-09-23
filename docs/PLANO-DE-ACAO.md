@@ -854,10 +854,11 @@ reenquadramento em quatro partes.
 
 **23-set-2026.** O job seguinte, do mesmo vídeo, levou 343 s (−44%). O resumo dele
 guiou a rodada 4: o fundo desfocado passou a ser borrado em 1/4 da resolução (o
-layout de plano aberto ficou ~2x mais rápido, com o mesmo fundo), o 429 do Groq
-deixou de custar 15 s de espera inútil, e o whisper passou a carregar durante o
-download. Cada corte agora diz no log quanto dele é plano aberto e a que ritmo o
-ffmpeg andou — é daí que sai a rodada 5.
+layout de plano aberto ficou ~2x mais rápido, com o mesmo fundo) e o 429 do Groq
+deixou de custar 15 s de espera inútil. Cada corte agora diz no log quanto dele é
+plano aberto e a que ritmo o ffmpeg andou — é daí que sai a rodada 5. Uma terceira
+mudança, carregar o whisper durante o download, travou a transcrição na máquina do
+autor e foi revertida no mesmo dia (detalhes no `CLAUDE.md`).
 
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 

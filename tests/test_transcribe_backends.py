@@ -316,79 +316,25 @@ class TestLinhaDoWhisper:
         assert "whisper small em CPU (int8)" in capsys.readouterr().out
 
 
-class TestPreCargaDoWhisper:
-    """O whisper carrega numa thread enquanto o video baixa (23-set-2026).
-
-    No job de 343 s a carga levou 17 s e so comecava depois dos 40 s de
-    download. As duas esperas sao independentes -- rede de um lado, disco e
-    placa do outro --, entao a carga cabe dentro do download.
+def test_o_whisper_nao_carrega_em_thread_de_fundo():
+    """Carregar o whisper numa thread de fundo, durante o download, TRAVOU a
+    transcricao na maquina do autor (23-set-2026): o modelo subiu, a thread
+    acabou e a primeira chamada a placa nunca voltou -- sem erro e sem log.
+    O CI nao tem placa para reproduzir isso, entao a guarda e de forma: nem o
+    modulo abre thread, nem o `main.py` pede o modelo por fora da transcricao.
+    Ver o docstring de `_get_whisper_model` antes de mudar qualquer um dos dois.
     """
-
-    def test_a_transcricao_espera_a_carga_e_nao_carrega_de_novo(self, monkeypatch):
-        import threading
-        import time as _time
-        criados = []
-        comecou = threading.Event()
-
-        class ModeloLento:
-            def __init__(self, model_size, device=None, compute_type=None):
-                comecou.set()
-                _time.sleep(0.3)          # a leitura dos pesos
-                criados.append(self)
-
-        monkeypatch.setitem(sys.modules, "faster_whisper",
-                            types.SimpleNamespace(WhisperModel=ModeloLento))
-        monkeypatch.setattr(tb, "_whisper_model", None)
-        monkeypatch.setattr(tb, "_whisper_key", None)
-        monkeypatch.setattr(tb, "_whisper_force_cpu", False)
-        monkeypatch.delenv("TRANSCRIBE_BACKEND", raising=False)
-
-        thread = tb.pre_carregar_whisper()
-        assert comecou.wait(2)            # a carga esta EM CURSO...
-        modelo, _ = tb._get_whisper_model()   # ...quando a transcricao pede
-        thread.join(2)
-        assert len(criados) == 1          # um modelo so, o da pre-carga
-        assert modelo is criados[0]
-
-    def test_so_o_whisper_e_pre_carregado(self, monkeypatch):
-        monkeypatch.setenv("TRANSCRIBE_BACKEND", "parakeet")
-        chamadas = []
-        monkeypatch.setattr(tb, "_get_whisper_model", lambda: chamadas.append(1))
-        assert tb.pre_carregar_whisper() is None
-        assert chamadas == []
-
-    def test_falha_na_pre_carga_vira_uma_linha_e_nao_derruba(self, monkeypatch, capsys):
-        monkeypatch.delenv("TRANSCRIBE_BACKEND", raising=False)
-
-        def sem_placa():
-            raise RuntimeError("CUDA failed with error out of memory")
-
-        monkeypatch.setattr(tb, "_get_whisper_model", sem_placa)
-        tb.pre_carregar_whisper().join(2)
-        saida = capsys.readouterr().out
-        assert "pre-carga do whisper falhou" in saida
-        assert "carrega na hora de transcrever" in saida
-
-
-def test_o_main_pre_carrega_antes_do_download():
-    """`main.py` so importa com torch, entao o CI le a arvore: a pre-carga tem
-    de vir ANTES do estagio 01_ingest, e so quando algo vai ser transcrito."""
     import ast
-    caminho = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                           "main.py")
-    arvore = ast.parse(open(caminho, encoding="utf-8").read())
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    chamada = next(n for n in ast.walk(arvore)
-                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                   and n.func.attr == "pre_carregar_whisper")
-    ingest = next(n for n in ast.walk(arvore)
-                  if isinstance(n, ast.With) and "01_ingest" in ast.unparse(n.items[0]))
-    assert chamada.lineno < ingest.lineno
+    def chamadas(arquivo):
+        arvore = ast.parse(open(os.path.join(raiz, arquivo), encoding="utf-8").read())
+        for n in ast.walk(arvore):
+            if isinstance(n, ast.Call):
+                f = n.func
+                yield f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
 
-    # O `if` mais de dentro que envolve a chamada (o de fora e o `__main__`).
-    guarda = max((n for n in ast.walk(arvore)
-                  if isinstance(n, ast.If) and chamada in list(ast.walk(n))),
-                 key=lambda n: n.lineno)
-    condicao = ast.unparse(guarda.test)
-    for termo in ("args.skip_analysis", "args.transcript", "TRANSCRIPT_CHECKPOINT"):
-        assert termo in condicao
+    assert "Thread" not in set(chamadas("transcribe_backends.py"))
+    do_main = set(chamadas("main.py"))
+    assert "pre_carregar_whisper" not in do_main
+    assert "_get_whisper_model" not in do_main

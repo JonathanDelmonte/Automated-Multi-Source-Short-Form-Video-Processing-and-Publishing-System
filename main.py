@@ -2021,14 +2021,11 @@ if __name__ == '__main__':
             else:
                 output_dir = os.path.dirname(args.input)
 
-    # O whisper carrega DURANTE o download, e nao depois dele (23-set-2026):
-    # sao ~17 s de disco e placa que cabem dentro dos ~40 s de rede. Nao vale
-    # quando nada vai ser transcrito -- video inteiro, transcricao pronta, ou o
-    # checkpoint de um job retomado. Ver transcribe_backends.pre_carregar_whisper.
-    if (not args.skip_analysis and not args.transcript
-            and not os.path.exists(os.path.join(output_dir, TRANSCRIPT_CHECKPOINT))):
-        import transcribe_backends
-        transcribe_backends.pre_carregar_whisper()
+    # O whisper NAO carrega durante o download, e isso ja foi tentado
+    # (23-set-2026): carregado numa thread de fundo enquanto o yt-dlp baixava,
+    # o modelo subiu inteiro e a transcricao travou na primeira chamada a placa,
+    # sem erro e sem log, na maquina do autor (RTX 3060, Docker Desktop/WSL 2).
+    # Revertido no mesmo dia. Ver `transcribe_backends._get_whisper_model`.
 
     # Um unico ponto de busca para as duas entradas: acima so se decide ONDE
     # gravar. `SourceNotReady` e a fonte reconhecida cujo tipo ainda nao tem

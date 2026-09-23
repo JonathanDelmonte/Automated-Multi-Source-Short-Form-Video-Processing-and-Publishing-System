@@ -1608,18 +1608,21 @@ carregar o modelo), `04_detect` 27 s (15 s esperando o Groq a toa) e
   score gastam ~6,6 mil dos 8 mil tokens por minuto do Groq gratis.
   - O corpo do erro chega cortado em 300 caracteres (`llm_backend`), e a dica
     do Groq fica perto do caractere 215. O teste usa o corpo JA cortado.
-- **O whisper carrega durante o download**
-  (`transcribe_backends.pre_carregar_whisper`, chamado pelo `main.py` antes do
-  `01_ingest`). Os 17 s
-  eram import, CUDA e ~1,6 GB de pesos lidos do `.cache/` da pasta do projeto,
-  que no Docker Desktop e disco do Windows. O download espera a rede e a carga
-  espera disco e placa: em paralelo, a carga some. O `_whisper_lock` faz a
-  transcricao esperar a carga em curso, e nao carregar de novo -- ha teste. Nao
-  pre-carrega sem transcricao pela frente (`--skip-analysis`, `--transcript`,
-  checkpoint de job retomado).
-  - Levar o `.cache/` para um volume do Docker deixaria a carga rapida de vez,
-    mas poe ~1,6 GB no disco do Docker, que o autor pediu para nao crescer. E
-    decisao dele, nao efeito colateral de uma rodada de velocidade.
+- **O whisper carregando durante o download foi TENTADO E REVERTIDO no mesmo
+  dia.** Uma thread de fundo subia o modelo enquanto o yt-dlp baixava, para
+  esconder os ~17 s de carga (import, CUDA e ~1,6 GB de pesos lidos do
+  `.cache/` da pasta do projeto, que no Docker Desktop e disco do Windows). O
+  modelo subiu inteiro, e a primeira transcricao travou para sempre na
+  placa, sem erro e sem log, na maquina do autor. A causa nao foi isolada --
+  aqui nao ha placa --, e duas diferencas em relacao ao caminho que sempre
+  funcionou sao suspeitas: a thread que criou o modelo (e os recursos de CUDA
+  por thread do ctranslate2) ja tinha acabado quando ele foi usado, e o CUDA
+  subiu enquanto o processo fazia fork para o yt-dlp, o deno e o ffmpeg.
+  `test_o_whisper_nao_carrega_em_thread_de_fundo` trava a volta. **Nao
+  reintroduzir sem reproduzir na maquina do autor antes.**
+  - O caminho seguro para os 17 s continua sendo o outro: levar o `.cache/`
+    para um volume do Docker, que carrega do disco Linux. Poe ~1,6 GB no disco
+    do Docker, que o autor pediu para nao crescer -- decisao dele.
 - **Duas linhas novas por corte no log**: `🎞️ corte N: 13 cena(s), 900
   quadros: GENERAL 62% (5), TRACK 38% (8)` e `⏱️ corte N: ffmpeg do
   reenquadramento, 900 quadros em 42.0s (21 q/s)`. O log dizia "13 cenas" e

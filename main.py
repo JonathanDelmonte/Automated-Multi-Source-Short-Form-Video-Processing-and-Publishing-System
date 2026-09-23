@@ -1547,6 +1547,7 @@ def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
         response_schema=schema,
     )
     max_attempts = 3
+    esperado = 0.0
     for attempt in range(1, max_attempts + 1):
         try:
             if use_local:
@@ -1586,10 +1587,21 @@ def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
                 'validation error'))
             if attempt == max_attempts or not transient:
                 raise
-            wait = 5 * (2 ** (attempt - 1))
             who = (provider.label if provider is not None
                    else ("LLM server" if use_local else "Gemini"))
-            print(f"⚠️ {who} transient error (attempt {attempt}/{max_attempts}), retrying in {wait}s: {msg[:150]}")
+            # Um 429 costuma dizer quanto esperar ("try again in 20.4s"). A
+            # paciencia com o provedor e a mesma de sempre (5 s + 10 s); a
+            # dica so decide se ela vale a pena -- ver
+            # llm_cascade.espera_antes_de_repetir.
+            wait = llm_cascade.espera_antes_de_repetir(
+                msg, attempt, esperado, max_attempts)
+            if wait is None:
+                print(f"⏭️ {who}: o servidor pede "
+                      f"{llm_cascade.espera_sugerida(msg):.0f}s de espera, mais "
+                      f"que a paciencia com um provedor -- desistindo dele agora.")
+                raise
+            esperado += wait
+            print(f"⚠️ {who} transient error (attempt {attempt}/{max_attempts}), retrying in {wait:.3g}s: {msg[:150]}")
             time.sleep(wait)
 
 
@@ -2008,6 +2020,15 @@ if __name__ == '__main__':
                 output_dir = os.path.dirname(args.output) or os.path.dirname(args.input)
             else:
                 output_dir = os.path.dirname(args.input)
+
+    # O whisper carrega DURANTE o download, e nao depois dele (23-set-2026):
+    # sao ~17 s de disco e placa que cabem dentro dos ~40 s de rede. Nao vale
+    # quando nada vai ser transcrito -- video inteiro, transcricao pronta, ou o
+    # checkpoint de um job retomado. Ver transcribe_backends.pre_carregar_whisper.
+    if (not args.skip_analysis and not args.transcript
+            and not os.path.exists(os.path.join(output_dir, TRANSCRIPT_CHECKPOINT))):
+        import transcribe_backends
+        transcribe_backends.pre_carregar_whisper()
 
     # Um unico ponto de busca para as duas entradas: acima so se decide ONDE
     # gravar. `SourceNotReady` e a fonte reconhecida cujo tipo ainda nao tem

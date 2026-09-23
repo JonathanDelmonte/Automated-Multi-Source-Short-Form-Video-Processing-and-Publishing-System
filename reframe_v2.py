@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from fractions import Fraction
 
 import active_speaker
@@ -32,7 +33,7 @@ import job_metrics
 import layout_ranges
 import split_layout
 from ffmpeg_utils import (video_encode_args, escape_filter_value, QUALITY_FAST,
-                          METADATA_SCRUB)
+                          METADATA_SCRUB, fundo_desfocado)
 
 ANALYSIS_MAX_WIDTH = 640
 
@@ -106,6 +107,34 @@ def scene_frame_ranges(scene_boundaries, strategies, total_frames):
         if end_f > start_f:
             ranges.append((start_f, end_f, strategy))
     return ranges
+
+
+def resumo_dos_layouts(ranges):
+    """Uma linha para o log: quantos QUADROS do corte cada layout ocupa.
+
+    Quadros, e nao cenas, porque e o quadro que custa: o GENERAL monta fundo e
+    frente a cada quadro (tres escalas, um desfoque e uma sobreposicao), o
+    TRACK so recorta e escala. Sem esta linha o log dizia so "13 cenas", e nao
+    havia como saber se um render lento era um corte cheio de planos abertos ou
+    outra coisa (23-set-2026).
+    """
+    total = sum(fim - inicio for inicio, fim, _ in ranges)
+    if total <= 0:
+        return ""
+    quadros, cenas = {}, {}
+    for inicio, fim, estrategia in ranges:
+        quadros[estrategia] = quadros.get(estrategia, 0) + (fim - inicio)
+        cenas[estrategia] = cenas.get(estrategia, 0) + 1
+    partes = [f"{nome} {quadros[nome] / total:.0%} ({cenas[nome]})"
+              for nome in sorted(quadros, key=lambda n: (-quadros[n], n))]
+    return f"{len(ranges)} cena(s), {total} quadros: " + ", ".join(partes)
+
+
+def rotulo_do_corte(caminho):
+    """"corte 3: " para `..._clip_3.mp4`, ou "" -- os cortes renderizam em
+    paralelo e as linhas deles se intercalam no log."""
+    m = re.search(r"_clip_(\d+)\.mp4$", os.path.basename(str(caminho)))
+    return f"corte {m.group(1)}: " if m else ""
 
 
 def concat_list_content(segment_paths):
@@ -236,8 +265,8 @@ def general_filtergraph(out_w, out_h, content_h=None, orig_w=None, orig_h=None):
     fg_h += fg_h % 2
     return (
         f"[0:v]split=2[bga][fga];"
-        f"[bga]scale=-2:{out_h},crop=w=min(iw\\,{out_w}):h={out_h},"
-        f"scale={out_w}:{out_h},gblur=sigma=12[bg];"
+        # Desfocado em 1/4 da resolucao: ver `ffmpeg_utils.fundo_desfocado`.
+        f"[bga]{fundo_desfocado(out_w, out_h, 12)}[bg];"
         # Scale by HEIGHT, then trim any overflow to the output width. crop
         # centres by default, and min() makes it a no-op when the scaled source
         # is already narrower than the frame (portrait/square sources).
@@ -776,9 +805,12 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
             f"scale={out_w}:{out_h},setsar=1[v]"
         )
 
+    rotulo = rotulo_do_corte(final_output_video)
+    print(f"   🎞️ {rotulo}{resumo_dos_layouts(ranges)}")
     try:
         graphs = [grafo_do_trecho(idx, start_f, end_f, strategy)
                   for idx, (start_f, end_f, strategy) in enumerate(ranges)]
+        inicio_do_render = time.time()
         try:
             _render_numa_passada(input_video, final_output_video, ranges,
                                  graphs, fps, workdir)
@@ -795,6 +827,13 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
                   f"— refazendo trecho por trecho.")
             _render_por_trecho(input_video, final_output_video, ranges,
                                graphs, fps, workdir)
+        # O ritmo do ffmpeg por corte, ao lado do resumo dos layouts acima: e
+        # o par que diz se o render e lento por causa do conteudo ou da maquina.
+        decorrido = time.time() - inicio_do_render
+        quadros = sum(fim - inicio for inicio, fim, _ in ranges)
+        if decorrido > 0:
+            print(f"   ⏱️ {rotulo}ffmpeg do reenquadramento, {quadros} quadros "
+                  f"em {decorrido:.1f}s ({quadros / decorrido:.0f} q/s)")
     finally:
         import shutil
         shutil.rmtree(workdir, ignore_errors=True)

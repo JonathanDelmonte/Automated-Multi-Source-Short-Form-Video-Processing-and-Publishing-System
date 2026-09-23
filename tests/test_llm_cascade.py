@@ -372,3 +372,97 @@ class TestModeloInexistente:
             llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
                             log=lambda _m: None)
         assert vistos == ["groq", "gemini", "groq", "gemini"]
+
+
+# --------------------------------------------------------------------------- #
+# 429 com a espera que o proprio servidor pede (23-set-2026)
+# --------------------------------------------------------------------------- #
+
+# O corpo como o `llm_backend` o entrega: cortado em 300 caracteres. A dica
+# tem de sobreviver ao corte, senao a regra nova nunca teria o que ler.
+_CORPO_429 = (
+    '{"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b` in '
+    'organization `org_01m2bq0m83e1tvq443x51kxymk` service tier `on_demand` on '
+    'tokens per minute (TPM): Limit 8000, Used 6586, Requested 4123. Please try '
+    'again in 20.4095s. Need more tokens? Upgrade to Dev Tier today at '
+    'https://console.groq.com/settings/billing","type":"tokens",'
+    '"code":"rate_limit_exceeded"}}')
+ERRO_429_DO_GROQ = ('LLM server 429 from https://api.groq.com/openai/v1/chat/'
+                    'completions: ' + _CORPO_429[:300])
+
+
+class TestEsperaDo429:
+    """No job de 23-set-2026 o Groq devolveu 429 de tokens por minuto na
+    terceira chamada, e a regra antiga esperou 5 s e 10 s para levar o mesmo
+    429 as tres vezes: 15 s jogados fora antes de passar ao Gemini."""
+
+    def test_le_a_dica_do_groq_depois_do_corte(self):
+        assert llm_cascade.espera_sugerida(ERRO_429_DO_GROQ) == pytest.approx(20.4095)
+
+    @pytest.mark.parametrize("texto,segundos", [
+        ("Please try again in 6.55s. Need more tokens?", 6.55),
+        ("Please try again in 1m26.4s.", 86.4),         # duracao do Go
+        ("Please try again in 780ms.", 0.78),
+        ("Please try again in 2h3m4.5s.", 7384.5),      # teto diario
+        ("429 RESOURCE_EXHAUSTED ... Please retry in 44.52s.", 44.52),  # Gemini
+        ("'details': [{'retryDelay': '44s'}]", 44.0),   # RetryInfo do Gemini
+    ])
+    def test_formatos_de_dica(self, texto, segundos):
+        assert llm_cascade.espera_sugerida(texto) == pytest.approx(segundos)
+
+    @pytest.mark.parametrize("texto", [
+        "429 rate limited", "503 UNAVAILABLE", "please try again later",
+        "ReadTimeout", "1 validation error for Resposta",
+    ])
+    def test_sem_dica_e_none(self, texto):
+        assert llm_cascade.espera_sugerida(texto) is None
+
+    def test_sem_dica_a_regra_e_a_de_sempre(self):
+        assert llm_cascade.espera_antes_de_repetir("503", 1, 0.0, 3) == 5
+        assert llm_cascade.espera_antes_de_repetir("503", 2, 5.0, 3) == 10
+
+    def test_o_caso_do_log_desiste_ja(self):
+        # 20 s pedidos contra 15 s de paciencia: esperar seria levar o mesmo
+        # "nao" tres vezes. A cascata passa ao proximo no mesmo instante.
+        assert llm_cascade.espera_antes_de_repetir(ERRO_429_DO_GROQ, 1, 0.0, 3) is None
+
+    def test_dica_que_cabe_e_esperada_com_folga(self):
+        espera = llm_cascade.espera_antes_de_repetir(
+            "Please try again in 3s.", 1, 0.0, 3)
+        assert espera == pytest.approx(3 + llm_cascade.FOLGA_DA_DICA_S)
+
+    def test_a_paciencia_e_a_soma_do_que_ja_se_esperou(self):
+        # 3,5 s ja gastos; pedir mais 12 passaria dos 15 da regra antiga.
+        assert llm_cascade.espera_antes_de_repetir(
+            "Please try again in 12s.", 2, 3.5, 3) is None
+        # Na fronteira ainda espera: e o que a regra antiga alcancaria.
+        assert llm_cascade.espera_antes_de_repetir(
+            "Please try again in 14.5s.", 1, 0.0, 3) == pytest.approx(15.0)
+
+    @pytest.mark.parametrize("dicas", [
+        (0.2, 0.2), (3, 9), (4.4, 9.9), (14.5, 1), (0, 0), (7, 7),
+    ])
+    def test_nunca_espera_mais_que_a_regra_antiga(self, dicas):
+        esperado = 0.0
+        for tentativa, dica in enumerate(dicas, start=1):
+            espera = llm_cascade.espera_antes_de_repetir(
+                f"Please try again in {dica}s.", tentativa, esperado, 3)
+            if espera is None:
+                break
+            esperado += espera
+        assert esperado <= 5 + 10
+
+
+def test_o_main_pergunta_a_espera_a_cascata():
+    """O `main.py` so importa com torch, entao o CI le a arvore: o laco de
+    tentativas tem de perguntar a espera ao `llm_cascade`, e nao voltar ao
+    `5 * 2 ** (attempt - 1)` que ignorava a dica."""
+    import ast
+    caminho = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "main.py")
+    arvore = ast.parse(open(caminho, encoding="utf-8").read())
+    funcao = next(n for n in ast.walk(arvore)
+                  if isinstance(n, ast.FunctionDef) and n.name == "_run_gemini_stage")
+    fonte = ast.unparse(funcao)
+    assert "llm_cascade.espera_antes_de_repetir(" in fonte
+    assert "2 ** (attempt - 1)" not in fonte

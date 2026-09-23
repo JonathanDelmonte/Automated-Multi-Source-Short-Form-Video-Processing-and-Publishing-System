@@ -101,7 +101,7 @@ class TestGeneralLayout:
 
     def test_content_height_is_even(self):
         # Odd dimensions are rejected by the encoder. Read the FOREGROUND
-        # scale — the background line also contains a scale=-2: term.
+        # scale: it is the one that follows [fga].
         for out_h in (1920, 1080, 1078, 976):
             graph = general_filtergraph(1080, out_h)
             fg = graph.split("[fga]scale=-2:")[1]
@@ -171,3 +171,37 @@ class TestVerticalSource:
             graph = general_filtergraph(1080, 1920, orig_w=1080, orig_h=orig_h)
             h = int(graph.split("[fga]scale=-2:")[1].split(",")[0])
             assert h % 2 == 0, (orig_h, h)
+
+
+class TestResumoDosLayouts:
+    """A linha do log que diz quanto do corte cada layout ocupa (23-set-2026).
+
+    O render lento do job de 343 s nao tinha como ser explicado pelo log: ele
+    dizia "13 cenas" e nada sobre quantos QUADROS eram plano aberto (GENERAL,
+    o layout caro) e quantos eram recorte de rosto (TRACK, o barato).
+    """
+
+    def test_fatia_por_quadros_e_nao_por_cenas(self):
+        from reframe_v2 import resumo_dos_layouts
+        linha = resumo_dos_layouts([(0, 100, "TRACK"), (100, 110, "TRACK"),
+                                    (110, 900, "GENERAL")])
+        # Duas cenas de TRACK, mas so 110 dos 900 quadros.
+        assert linha == "3 cena(s), 900 quadros: GENERAL 88% (1), TRACK 12% (2)"
+
+    def test_sem_trecho_nao_imprime_nada(self):
+        from reframe_v2 import resumo_dos_layouts
+        assert resumo_dos_layouts([]) == ""
+
+    def test_rotulo_do_corte(self):
+        from reframe_v2 import rotulo_do_corte
+        assert rotulo_do_corte("output/j/Titulo_(1)_clip_3.mp4") == "corte 3: "
+        assert rotulo_do_corte("/x/recut_17_Titulo_clip_12.mp4") == "corte 12: "
+        assert rotulo_do_corte("/x/video.mp4") == ""
+
+    def test_o_render_imprime_o_resumo_e_o_ritmo(self):
+        import ast
+        import inspect
+        import reframe_v2
+        fonte = ast.unparse(ast.parse(inspect.getsource(reframe_v2.render)))
+        assert "resumo_dos_layouts(ranges)" in fonte
+        assert "ffmpeg do reenquadramento" in fonte

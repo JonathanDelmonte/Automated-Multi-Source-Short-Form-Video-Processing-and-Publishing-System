@@ -114,6 +114,43 @@ def _get_whisper_model():
     return _whisper_model, cfg["device"]
 
 
+def pre_carregar_whisper():
+    """Carrega o whisper numa thread de fundo, ENQUANTO o video baixa.
+
+    No job de 23-set-2026 (RTX 3060, video de 10 min) o modelo levou 17 s para
+    carregar -- importar o faster-whisper e o ctranslate2, abrir o CUDA e ler
+    ~1,6 GB de pesos do `.cache/` da pasta do projeto, que no Docker Desktop e
+    disco do Windows --, e esses 17 s so comecavam DEPOIS dos 40 s de download.
+    As duas esperas nao dependem uma da outra: o download espera a rede, a carga
+    espera o disco e a placa. Em paralelo, a carga some dentro do download.
+
+    Nao muda o que fica na placa: o modelo ja ficava residente do momento em
+    que carregava ate o fim do processo (um por job, ver `_get_whisper_model`);
+    agora so comeca a ficar uns segundos antes. Quem transcreve chama o mesmo
+    `_get_whisper_model()`, e o `_whisper_lock` o faz esperar a carga em curso
+    em vez de carregar de novo.
+
+    Falha aberto: um erro aqui vira uma linha no log, e a transcricao tenta
+    carregar de novo na hora dela, com a queda para CPU de sempre. Devolve a
+    thread (para teste), ou None quando o backend nao e o whisper.
+    """
+    backend = os.environ.get("TRANSCRIBE_BACKEND", "whisper").strip().lower()
+    if backend != "whisper":
+        return None
+
+    def _carregar():
+        try:
+            _get_whisper_model()
+        except Exception as e:  # noqa: BLE001 - so antecipa o que a transcricao faria
+            print(f"   ⚠️ [ASR] pre-carga do whisper falhou ({type(e).__name__}: "
+                  f"{e}) — ele carrega na hora de transcrever.", flush=True)
+
+    thread = threading.Thread(target=_carregar, name="pre-carga-whisper",
+                              daemon=True)
+    thread.start()
+    return thread
+
+
 def linha_do_whisper(model_size, device, compute_type):
     """A linha de log que diz QUAL whisper vai rodar.
 

@@ -309,3 +309,51 @@ def cut_clip(input_video, clip_temp_path, start, end, clip_number):
         f"attempts: {report}")
 
 
+
+
+# O fundo desfocado do GENERAL e do INSET e desfocado em 1/4 da resolucao
+# (23-set-2026). A cadeia de antes ampliava o quadro INTEIRO da fonte ate a
+# altura da saida -- 1920x1080 virava 3413x1920, 6,5 milhoes de pixels por
+# quadro em bicubico -- para jogar dois tercos fora no `crop` e depois borrar
+# 1080x1920 com sigma 12. Era o filtro mais caro do render, e o resultado e um
+# borrao: nenhum detalhe daquela resolucao sobrevive ao desfoque.
+#
+# Agora recorta primeiro (na fonte, a fatia com o formato da saida), reduz a
+# 1/4, borra com sigma/4 -- o mesmo desfoque, medido na escala da saida -- e
+# amplia. O renderizador v1 do upstream ja fazia exatamente isso em OpenCV
+# ("visually identical for a defocused backdrop", `main.py`); o v2 em ffmpeg e
+# que tinha voltado ao desfoque em resolucao cheia.
+#
+# Medido contra a cadeia antiga numa CPU de 4 nucleos: o grafo GENERAL inteiro,
+# decodificacao incluida, foi de 105 para 206 quadros/s. SSIM do fundo sozinho:
+# 0,9993 num video comum e 0,989 num zone plate, o pior caso de serrilhado.
+#
+# **A reducao nao pode ser `fast_bilinear`**, e foi a primeira tentativa: ela
+# nao alarga o filtro ao reduzir, entao textura fina (listra de camisa, telao
+# de LED) dobra em frequencia baixa, que o desfoque NAO remove. Nos testes
+# ela caiu para SSIM 0,955 no zone plate, e numa textura fina em movimento o
+# fundo passou a tremer 44% mais entre quadros. O padrao do `scale` (bicubico)
+# alarga o filtro e nao treme; a ampliacao, de uma imagem ja borrada, e
+# bilinear sem perda visivel.
+FUNDO_DIVISOR = 4
+
+
+def fundo_desfocado(out_w, out_h, sigma):
+    """A cadeia do fundo, de um `[entrada]` a um `[saida]` que quem chama poe.
+
+    ``sigma`` e o desfoque na escala da SAIDA (12 no GENERAL, 14 no INSET),
+    como era antes; a divisao pela reducao fica aqui dentro.
+
+    O `crop` usa o formato da saida sobre a altura inteira da fonte: e a mesma
+    fatia central que a cadeia antiga pegava depois de ampliar. Numa fonte mais
+    estreita que a saida o `min` a deixa inteira, e o `scale` a estica, como o
+    `scale={out_w}:{out_h}` de antes tambem esticava.
+    """
+    w = max(2, out_w // FUNDO_DIVISOR)
+    h = max(2, out_h // FUNDO_DIVISOR)
+    w -= w % 2
+    h -= h % 2
+    return (f"crop=w=min(iw\\,ih*{out_w}/{out_h}):h=ih,"
+            f"scale={w}:{h},"
+            f"gblur=sigma={sigma / FUNDO_DIVISOR:g},"
+            f"scale={out_w}:{out_h}:flags=bilinear")

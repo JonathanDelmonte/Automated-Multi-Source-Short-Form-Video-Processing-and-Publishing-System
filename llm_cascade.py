@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -302,6 +303,74 @@ def modelo_inexistente(erro) -> bool:
         return False
     return ("model_not_found" in texto or "does not exist" in texto
             or ("not found" in texto and "model" in texto))
+
+
+# --------------------------------------------------------------------------- #
+# Quanto esperar antes de repetir o mesmo provedor
+# --------------------------------------------------------------------------- #
+
+#: Folga sobre a espera que o servidor pede: o relogio dele e o daqui nao batem
+#: ao milissegundo, e chegar 50 ms antes custa a tentativa inteira.
+FOLGA_DA_DICA_S = 0.5
+
+# "Please try again in 20.4s" (Groq, em duracao do Go: 1m26.4s, 780ms, 2h3m4s)
+# e "Please retry in 44.52s" (Gemini).
+_DICA = re.compile(r"(?:try again|retry) in ((?:\d+(?:\.\d+)?(?:ms|us|µs|ns|h|m|s))+)",
+                   re.IGNORECASE)
+# O RetryInfo do Gemini: 'retryDelay': '44s'.
+_RETRY_DELAY = re.compile(r"retryDelay\W+(\d+(?:\.\d+)?)s")
+_UNIDADE_S = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 1e-3, "us": 1e-6,
+              "µs": 1e-6, "ns": 1e-9}
+
+
+def espera_sugerida(mensagem) -> Optional[float]:
+    """Os segundos que o PROPRIO servidor mandou esperar, lidos do erro.
+
+    None quando o erro nao diz: ai quem decide e a regra sem dica.
+    """
+    texto = str(mensagem)
+    m = _DICA.search(texto)
+    if m:
+        partes = re.findall(r"(\d+(?:\.\d+)?)(ms|us|µs|ns|h|m|s)", m.group(1),
+                            re.IGNORECASE)
+        return sum(float(n) * _UNIDADE_S[u.lower()] for n, u in partes)
+    m = _RETRY_DELAY.search(texto)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def espera_sem_dica(tentativa: int) -> float:
+    """A regra de sempre: 5 s antes da 2a tentativa, 10 s antes da 3a."""
+    return 5.0 * 2 ** (tentativa - 1)
+
+
+def espera_antes_de_repetir(mensagem, tentativa: int, ja_esperado: float,
+                            tentativas: int) -> Optional[float]:
+    """Quanto esperar antes de repetir o MESMO provedor, ou None para desistir
+    dele agora -- e ai a cascata passa ao proximo.
+
+    Existe por causa do 23-set-2026: o Groq devolveu 429 de tokens por minuto
+    na terceira chamada de um video de 10 min (as duas primeiras ja tinham
+    gastado 6.586 dos 8.000 do minuto), e a regra sem dica esperou 5 s, depois
+    10 s, levou o mesmo 429 as tres vezes e so entao passou ao Gemini: 15 s
+    jogados fora -- e que se repetiriam em todo video desse tamanho.
+
+    A paciencia com um provedor continua a MESMA de antes -- a soma das esperas
+    sem dica. A dica so muda como ela e gasta: se o que o servidor pede cabe no
+    que ainda resta, espera exatamente isso (e volta ao mesmo provedor, que era
+    o primeiro da fila por algum motivo); se nao cabe, desiste ja, em vez de
+    esperar para levar o mesmo "nao" que a dica anunciava. Nunca espera mais do
+    que antes, e nunca desiste de quem a regra antiga ainda alcancaria.
+    """
+    dica = espera_sugerida(mensagem)
+    if dica is None:
+        return espera_sem_dica(tentativa)
+    paciencia = sum(espera_sem_dica(k) for k in range(1, tentativas))
+    espera = dica + FOLGA_DA_DICA_S
+    if ja_esperado + espera > paciencia:
+        return None
+    return espera
 
 
 def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],

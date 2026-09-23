@@ -1580,6 +1580,67 @@ vezes (TransNetV2, estrategia, trajetoria, render, gancho, legenda), e gancho e
 legenda sao dois encodes a mais. Juntar essas passadas e o proximo alvo --
 depois de ver o numero, nao antes.
 
+### Velocidade, rodada 4: o log de 343 s (23-set-2026)
+
+O mesmo video de 10,5 min caiu de 608 s para 343 s com a rodada 3. O resumo do
+job dividiu assim: `01_ingest` 40 s, `03_transcribe` 61 s (17 s so para
+carregar o modelo), `04_detect` 27 s (15 s esperando o Groq a toa) e
+`05_06_render` 212 s, com ~42 s de ffmpeg de reenquadramento por corte de ~30 s.
+
+- **O fundo desfocado e borrado em 1/4 da resolucao**
+  (`ffmpeg_utils.fundo_desfocado`, usado pelo GENERAL, pelo WIDE e pelo
+  INSET). A cadeia antiga ampliava o quadro inteiro para 3413x1920, jogava dois
+  tercos fora e borrava 1080x1920 -- para produzir um borrao. Medido numa CPU
+  de 4 nucleos: o grafo GENERAL foi de 105 para 206 quadros/s; SSIM do fundo
+  0,9993 num video comum e 0,989 num zone plate. O renderizador v1 do upstream
+  ja borrava assim, em OpenCV; o v2 e que tinha voltado a resolucao cheia.
+  - **Nao reduzir com `fast_bilinear`.** Foi a primeira tentativa e serrilha:
+    SSIM 0,955 no zone plate, e o fundo tremendo 44% mais numa textura em
+    movimento. `tests/test_fundo_desfocado.py` mede com ffmpeg de verdade contra
+    a cadeia antiga, que fica no teste como referencia.
+- **O 429 com dica** (`llm_cascade.espera_antes_de_repetir`). O Groq diz
+  quanto esperar ("try again in 20.4s"), e a regra antiga esperava 5 s e 10 s
+  para levar o mesmo 429 tres vezes. A paciencia com um provedor continua a
+  mesma (15 s); a dica so decide como gasta-la: se cabe, espera exatamente
+  aquilo e volta ao mesmo provedor; se nao cabe, passa ao proximo na hora.
+  Nunca espera mais que antes, e nunca desiste de quem a regra antiga ainda
+  alcancaria. Deve acontecer em todo video desse tamanho: as duas chamadas de
+  score gastam ~6,6 mil dos 8 mil tokens por minuto do Groq gratis.
+  - O corpo do erro chega cortado em 300 caracteres (`llm_backend`), e a dica
+    do Groq fica perto do caractere 215. O teste usa o corpo JA cortado.
+- **O whisper carrega durante o download**
+  (`transcribe_backends.pre_carregar_whisper`, chamado pelo `main.py` antes do
+  `01_ingest`). Os 17 s
+  eram import, CUDA e ~1,6 GB de pesos lidos do `.cache/` da pasta do projeto,
+  que no Docker Desktop e disco do Windows. O download espera a rede e a carga
+  espera disco e placa: em paralelo, a carga some. O `_whisper_lock` faz a
+  transcricao esperar a carga em curso, e nao carregar de novo -- ha teste. Nao
+  pre-carrega sem transcricao pela frente (`--skip-analysis`, `--transcript`,
+  checkpoint de job retomado).
+  - Levar o `.cache/` para um volume do Docker deixaria a carga rapida de vez,
+    mas poe ~1,6 GB no disco do Docker, que o autor pediu para nao crescer. E
+    decisao dele, nao efeito colateral de uma rodada de velocidade.
+- **Duas linhas novas por corte no log**: `🎞️ corte N: 13 cena(s), 900
+  quadros: GENERAL 62% (5), TRACK 38% (8)` e `⏱️ corte N: ffmpeg do
+  reenquadramento, 900 quadros em 42.0s (21 q/s)`. O log dizia "13 cenas" e
+  nada sobre quantos QUADROS eram plano aberto, o layout caro -- sem isso,
+  "o render esta lento" nao se separa em "o conteudo e caro" e "a maquina esta
+  sem folga". Quadros e nao cenas porque e o quadro que custa.
+
+Ficou de fora, de proposito:
+
+- **Gancho e legenda num encode so.** Economizaria um encode por corte, mas o
+  `hooked_` intermediario e o que o `/api/subtitle` usa para trocar a legenda
+  sem empilhar uma sobre a outra: `_strip_burned_captions` so volta um nivel
+  se o arquivo de baixo existe. Sem ele, a legenda nova sairia por cima da
+  velha -- o defeito que o `_reapply_captions` documenta.
+- **A extracao dupla do yt-dlp** (~5 s: o titulo numa instancia, o download
+  noutra, e cada uma inicializa o provedor de PO token por ~3 s). Mexer no
+  download sem poder testar contra o YouTube de verdade e o risco errado para
+  5 s.
+- **Mais `CLIP_WORKERS`.** Sem saber se a maquina tem folga, mais workers pode
+  ser so mais disputa. As duas linhas novas por corte respondem isso.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

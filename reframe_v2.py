@@ -717,7 +717,13 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None,
     ranges = scene_frame_ranges(scene_boundaries, strategies, len(xs))
     if not ranges:
         raise RuntimeError("no usable scene ranges")
-    workdir = tempfile.mkdtemp(prefix="reframe_v2_")
+    # Na pasta do projeto, e nao no /tmp do container: la dentro o arquivo
+    # temporario ocupa o disco do Docker, que no Windows e um .vhdx que cresce
+    # e nao encolhe sozinho. A pasta do projeto e a do Windows (bind mount), e
+    # apagar o projeto leva junto o que um render interrompido deixar.
+    workdir = tempfile.mkdtemp(
+        prefix=".reframe_",
+        dir=os.path.dirname(os.path.abspath(final_output_video)))
 
     def grafo_do_trecho(idx, start_f, end_f, strategy):
         """O filtergraph de UM trecho, de `[0:v]` a `[v]`, com o relogio

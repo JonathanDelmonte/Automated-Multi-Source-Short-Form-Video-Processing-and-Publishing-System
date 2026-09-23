@@ -472,3 +472,75 @@ class TestSubmitGravaNoBanco:
             assert r.json()["job_id"]
         finally:
             db.reset_engine()
+
+
+class TestApagarJob:
+    """Apagar o projeto apaga o registro dele -- menos o que ja foi publicado.
+
+    O cascade das FKs compostas leva os cortes junto (no SQLite, so com o
+    `PRAGMA foreign_keys=ON` do `db.py`), e a fonte sai quando fica orfa. Um
+    corte PUBLICADO segura tudo: `publications` e `metrics` sao o historico que
+    a calibracao le, e o cascade os levaria junto sem ninguem pedir.
+    """
+
+    def _job_com_cortes(self):
+        job_id = str(uuid.uuid4())
+
+        async def _t():
+            src = await job_registry.registrar_fonte("youtube", "https://y/apagar")
+            await job_registry.registrar_job(job_id, src)
+            await job_registry.registrar_clipes(
+                job_id, [{"start": 0.0, "end": 1.0}, {"start": 2.0, "end": 3.0}])
+            return src
+        return job_id, corre(_t)
+
+    def _contar(self, job_id, src):
+        async def _t():
+            async with db.tenant() as t:
+                return (await t.get(db_models.Job, job_id) is not None,
+                        len(await t.all(db_models.Clip, db_models.Clip.job_id == job_id)),
+                        await t.get(db_models.Source, src) is not None)
+        return corre(_t)
+
+    def test_leva_job_cortes_e_fonte(self, banco):
+        job_id, src = self._job_com_cortes()
+        assert self._contar(job_id, src) == (True, 2, True)
+
+        assert corre(lambda: job_registry.apagar_job(job_id)) is True
+        assert self._contar(job_id, src) == (False, 0, False)
+
+    def test_fonte_usada_por_outro_job_fica(self, banco):
+        job_id, src = self._job_com_cortes()
+        outro = str(uuid.uuid4())
+        corre(lambda: job_registry.registrar_job(outro, src))
+
+        assert corre(lambda: job_registry.apagar_job(job_id)) is True
+        assert self._contar(job_id, src) == (False, 0, True)
+
+    def test_corte_publicado_segura_o_registro(self, banco):
+        job_id, src = self._job_com_cortes()
+
+        async def _publicar():
+            async with db.tenant() as t:
+                corte = (await t.all(db_models.Clip, db_models.Clip.job_id == job_id))[0]
+                conta = t.add(db_models.Account(platform="youtube", handle="@canal"))
+                await t.flush()
+                t.add(db_models.Publication(clip_id=corte.id, account_id=conta.id,
+                                            driver="manual", status="published"))
+                await t.commit()
+        corre(_publicar)
+
+        assert corre(lambda: job_registry.apagar_job(job_id)) is False
+        assert self._contar(job_id, src) == (True, 2, True)
+
+    def test_job_que_nao_existe_nao_levanta(self, banco):
+        assert corre(lambda: job_registry.apagar_job(str(uuid.uuid4()))) is False
+
+    def test_banco_quebrado_nao_levanta(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL",
+                           f"sqlite+aiosqlite:///{tmp_path}/nao-existe/x.db")
+        db.reset_engine()
+        try:
+            assert corre(lambda: job_registry.apagar_job("qualquer")) is False
+        finally:
+            db.reset_engine()

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -251,7 +252,7 @@ class TestReusoDoWavDoPipeline:
         assert e_nosso is True
         assert caminho != str(tmp_path / "outro.wav")
 
-    def test_mp4_nao_paga_ffprobe(self, monkeypatch):
+    def test_mp4_nao_paga_ffprobe(self, monkeypatch, tmp_path):
         # O caso normal decide pela extensão: nenhum processo extra.
         import audio_probe
 
@@ -259,8 +260,11 @@ class TestReusoDoWavDoPipeline:
             raise AssertionError("ffprobe não deveria ser chamado para um mp4")
         monkeypatch.setattr(audio_probe, "probe", _nao_devia)
         monkeypatch.setattr(tb.subprocess, "run", lambda *a, **k: None)
-        _, e_nosso = tb._extract_wav("video.mp4")
+        caminho, e_nosso = tb._extract_wav(str(tmp_path / "video.mp4"))
         assert e_nosso is True
+        # Ao lado da mídia, e não no /tmp do container (22-set-2026): lá dentro
+        # o arquivo ocupa o disco do Docker, que no Windows não encolhe.
+        assert os.path.dirname(caminho) == str(tmp_path)
 
     def test_parakeet_nao_apaga_o_wav_do_pipeline(self, monkeypatch, tmp_path):
         wav = tmp_path / ".audio16k.wav"

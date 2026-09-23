@@ -228,6 +228,7 @@ responder, até 3 minutos.
 | `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile`. Com placa, já constrói com as libs de CUDA |
 | `subir-gpu.bat`, `reconstruir-gpu.bat` | ficaram pelo costume: fazem o mesmo que os dois de cima |
 | `abrir-painel.bat` | abre `localhost:5175` no navegador |
+| `abrir-pasta-dos-cortes.bat` | abre no Explorer a pasta `output`, onde ficam os vídeos |
 | `conferir-gpu.bat` | responde se a placa chegou ao container |
 | `ver-log.bat` | mostra o log do backend ao vivo. **A única janela que fica rolando** |
 | `_garantir-docker.bat` | não se roda direto: é o pedaço que os outros chamam para abrir o Docker |
@@ -691,7 +692,12 @@ C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processin
 
 Apagar o container, reconstruir a imagem ou desinstalar o Docker não leva os
 cortes junto. O `416MB / 15.21GB` que o Docker Desktop mostra é **memória**
-(RAM) do container naquele instante, não espaço em disco.
+(RAM) do container naquele instante, não espaço em disco — e ela sobe enquanto
+um vídeo processa (o modelo de transcrição e os quadros ficam na memória) e
+desce depois. O `Disk: ... GB used` do rodapé do Docker Desktop também não são
+vídeos: são as imagens do programa (Python, torch com CUDA, ffmpeg).
+
+`atalhos\abrir-pasta-dos-cortes.bat` abre essa pasta no Explorer.
 
 Na pasta de cada projeto há mais de uma versão de cada corte: `..._clip_1.mp4`
 é o reenquadrado limpo, `hooked_..._clip_1.mp4` tem o gancho e
@@ -702,8 +708,13 @@ recorta dele de novo.
 **Nada é apagado sozinho desde 22-set-2026.** Até então uma limpeza automática
 apagava o projeto 24 horas depois, e outra apagava os mais antigos quando a
 pasta passava de 25 GB. Agora quem apaga é você, pelo ícone de lixeira na aba
-**Projetos** — que leva a pasta inteira e o vídeo enviado daquele projeto.
-Quem quiser a limpeza de volta põe no `.env`:
+**Projetos** — que leva a pasta inteira, o vídeo enviado daquele projeto e o
+registro dele no banco (menos o de um corte já publicado, que é o histórico de
+métricas). Se algum arquivo estiver aberto em outro programa (um player, a
+pasta aberta no Explorer, o antivírus), o painel diz qual e pede para fechar e
+apagar de novo, em vez de dizer "apagado" com o vídeo ainda no disco.
+
+Quem quiser a limpeza automática de volta põe no `.env`:
 
 ```
 JOB_RETENTION_SECONDS=86400   # apaga projeto com mais de 24 h

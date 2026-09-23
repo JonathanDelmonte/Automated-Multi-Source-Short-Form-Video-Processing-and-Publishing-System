@@ -18,6 +18,9 @@ export function AuthProvider({ children }) {
   const [config, setConfig] = useState({ billingEnabled: false, googleAuthEnabled: false, authAtiva: false });
   const [me, setMe] = useState(null);           // /api/me payload, or null when signed out
   const [loading, setLoading] = useState(true);
+  // `/api/config` já respondeu pelo menos uma vez. Antes disso nada que a
+  // config decide (auth, chave de LLM) pode ser afirmado -- nem negado.
+  const [configCarregada, setConfigCarregada] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
 
   const refreshMe = useCallback(async () => {
@@ -125,10 +128,27 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    let vivo = true;
     (async () => {
+      // Tenta até o servidor responder. Era uma tentativa só, e a falha virava
+      // "config padrão": sem `localLlm`, o painel concluía que não havia chave
+      // de LLM e pedia uma (22-set-2026). É exatamente o que acontece logo
+      // depois do `atualizar.bat`, quando o painel volta antes do backend -- e
+      // um F5 "consertava", porque aí o backend já estava de pé.
+      let cfg = null;
+      for (let tentativa = 0; vivo && !cfg; tentativa += 1) {
+        try {
+          const res = await fetch(getApiUrl('/api/config'));
+          if (!res.ok) throw new Error(`config ${res.status}`);
+          cfg = await res.json();
+        } catch (_) {
+          await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** tentativa, 5000)));
+        }
+      }
+      if (!vivo) return;
+      setConfig(cfg);
+      setConfigCarregada(true);
       try {
-        const cfg = await (await fetch(getApiUrl('/api/config'))).json();
-        setConfig(cfg);
         // `authAtiva` entrou aqui na Fase 4, e não é detalhe: `billingEnabled`
         // é sempre falso neste fork (ADR-001), então sem esta segunda condição
         // o `refreshMe` nunca rodava no boot — e quem tinha token válido caía
@@ -138,9 +158,10 @@ export function AuthProvider({ children }) {
           if (!handled) await refreshMe();
           if (cfg.authAtiva) await pegarMediaToken();
         }
-      } catch (_) { /* config fetch failed — stay in BYOK */ }
+      } catch (_) { /* sessão inválida: o refreshMe já limpa o token */ }
       setLoading(false);
     })();
+    return () => { vivo = false; };
   }, [handleAuthHash, refreshMe, pegarMediaToken]);
 
   const requestMagicLink = useCallback(async (email) => {
@@ -175,8 +196,11 @@ export function AuthProvider({ children }) {
   // resposta de `/api/config` de antes já está desatualizada por definição.
   const refreshConfig = useCallback(async () => {
     try {
-      const cfg = await (await fetch(getApiUrl('/api/config'))).json();
+      const res = await fetch(getApiUrl('/api/config'));
+      if (!res.ok) return null;
+      const cfg = await res.json();
       setConfig(cfg);
+      setConfigCarregada(true);
       return cfg;
     } catch {
       return null;
@@ -213,6 +237,7 @@ export function AuthProvider({ children }) {
   const value = {
     billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
+    configCarregada,
     googleAuthEnabled: config.googleAuthEnabled,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,

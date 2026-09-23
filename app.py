@@ -2145,7 +2145,11 @@ async def run_job(job_id, job_data):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # Merge stderr to stdout
             env=env,
-            cwd=os.getcwd()
+            cwd=os.getcwd(),
+            # Grupo de processos proprio: o `main.py` abre ffmpeg, e matar so ele
+            # deixava esses filhos orfaos, gravando na pasta de um projeto que
+            # acabou de ser cancelado ou apagado. Ver `_terminar_processo`.
+            start_new_session=True,
         )
         # Publica o handle para que `/api/jobs/{id}/cancel` tenha o que matar.
         # Um job cancelado enquanto esperava vaga na fila ja chega aqui na lista
@@ -3011,29 +3015,100 @@ def _terminar_processo(process) -> None:
     if process is None or process.poll() is not None:
         return
     try:
-        process.terminate()
+        _sinalizar_grupo(process, signal.SIGTERM)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
+            _sinalizar_grupo(process, signal.SIGKILL)
     except Exception as e:
         print(f"⚠️ Não consegui encerrar o processo do job: {e}")
 
 
-def _apagar_pasta_do_job(job_id: str) -> None:
+def _sinalizar_grupo(process, sinal) -> None:
+    """Manda o sinal ao `main.py` E aos ffmpeg que ele abriu.
+
+    O job nasce em grupo proprio (`start_new_session` no `run_job`), e o grupo e
+    o unico jeito de alcancar os netos: o `main.py` morto nao repassa sinal a
+    ninguem. Sem isto, apagar um projeto em andamento deixava um ffmpeg orfao
+    gravando na pasta recem-apagada -- o arquivo que "voltava" depois.
+    Sem grupo (Windows, ou um processo de teste), cai no sinal so para ele.
+    """
+    try:
+        grupo = os.getpgid(process.pid)
+        # So o grupo que o proprio job lidera. Um processo que nao nasceu com
+        # `start_new_session` esta no grupo do SERVIDOR, e o killpg ali
+        # derrubaria o uvicorn junto com o job.
+        if grupo != process.pid or grupo == os.getpgrp():
+            raise PermissionError("processo sem grupo proprio")
+        os.killpg(grupo, sinal)
+    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        if sinal == signal.SIGKILL:
+            process.kill()
+        else:
+            process.terminate()
+
+
+# Espera antes de cada tentativa de apagar. No Docker Desktop a pasta e do
+# Windows, e o Windows nao apaga arquivo aberto: um ffmpeg que ainda nao acabou
+# de morrer, o antivirus lendo o mp4 recem-escrito, o Explorer gerando a
+# miniatura. Dois segundos costumam bastar; o que sobrar vira erro na tela.
+_ESPERAS_PARA_APAGAR = (0.0, 0.5, 1.5)
+
+
+def _o_que_sobrou(pasta: str) -> list:
+    if not os.path.exists(pasta):
+        return []
+    restos = [os.path.join(raiz, nome)
+              for raiz, _pastas, nomes in os.walk(pasta) for nome in nomes]
+    return restos or [pasta]
+
+
+def _apagar_pasta_do_job(job_id: str) -> list:
+    """Apaga a pasta do projeto e o video enviado, e devolve o que SOBROU.
+
+    Era um `rmtree(ignore_errors=True)` e pronto: um arquivo preso ficava no
+    disco e o painel dizia "apagado". Se o que sobrava era o metadata, o projeto
+    voltava sozinho na proxima listagem (`_recover_jobs_from_disk`); se era so
+    o video, ninguem mais o via -- ficava ocupando disco sem aparecer em lugar
+    nenhum. Bloqueante (dorme entre as tentativas): chamar numa thread.
+    """
     path = os.path.join(OUTPUT_DIR, job_id)
-    if os.path.isdir(path):
-        shutil.rmtree(path, ignore_errors=True)
-    # O video ENVIADO (nao o baixado, que mora na pasta do job) fica em
-    # `uploads/<job_id>_<nome>`. Enquanto a varredura por idade rodava, ele saia
-    # sozinho em 24h; sem ela (JOB_RETENTION_SECONDS = 0), apagar o projeto e a
-    # unica coisa que o tira do disco -- e "apagar projeto" que deixa o maior
-    # arquivo dele para tras nao apagou o projeto.
-    for fonte in glob.glob(os.path.join(UPLOAD_DIR, f"{glob.escape(job_id)}_*")):
-        try:
-            os.remove(fonte)
-        except OSError:
-            pass
+
+    def enviados():
+        # O video ENVIADO (nao o baixado, que mora na pasta do job) fica em
+        # `uploads/<job_id>_<nome>`. Sem a varredura por idade
+        # (JOB_RETENTION_SECONDS = 0), apagar o projeto e a unica coisa que o
+        # tira do disco.
+        return glob.glob(os.path.join(UPLOAD_DIR, f"{glob.escape(job_id)}_*"))
+
+    sobrou = []
+    for espera in _ESPERAS_PARA_APAGAR:
+        if espera:
+            time.sleep(espera)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        for fonte in enviados():
+            try:
+                os.remove(fonte)
+            except OSError:
+                pass
+        sobrou = _o_que_sobrou(path) + enviados()
+        if not sobrou:
+            return []
+    return sobrou
+
+
+def _recusar_se_sobrou(job_id: str, sobrou: list) -> None:
+    """409 com o motivo, em vez de dizer "apagado" com arquivo no disco."""
+    if not sobrou:
+        return
+    print(f"⚠️ Projeto {job_id}: {len(sobrou)} arquivo(s) não saíram do disco: "
+          f"{[os.path.basename(p) for p in sobrou[:3]]}")
+    raise HTTPException(status_code=409, detail=(
+        f"Não consegui apagar {len(sobrou)} arquivo(s) deste projeto "
+        f"(ex.: {os.path.basename(sobrou[0])}). Algum programa está com eles "
+        "abertos: um player de vídeo, a pasta aberta no Windows ou o antivírus. "
+        "Feche e apague de novo."))
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -3139,19 +3214,30 @@ async def delete_job(job_id: str, request: Request):
     """
     job = jobs.get(job_id) or _job_view_from_disk(job_id)
     if job is None:
-        # Ja nao existe: apagar o que nao existe e sucesso, nao erro.
-        _apagar_pasta_do_job(job_id)
+        # Ja nao existe: apagar o que nao existe e sucesso, nao erro. Mas o que
+        # tiver sobrado de uma tentativa anterior sai agora.
+        sobrou = await asyncio.to_thread(_apagar_pasta_do_job, job_id)
         jobs.pop(job_id, None)
+        _recusar_se_sobrou(job_id, sobrou)
+        await job_registry.apagar_job(job_id)
         return {"deleted": True}
     await _assert_job_owner(request, job)
 
     if job.get('status') in ('processing', 'queued'):
         _cancelled_jobs.add(job_id)
         _clear_resume_manifest(job_id)
-        _terminar_processo(_job_processes.get(job_id))
+        # Numa thread: espera o processo morrer (ate 5 s), e isso no laco do
+        # servidor travaria toda requisicao enquanto isso.
+        await asyncio.to_thread(_terminar_processo, _job_processes.get(job_id))
 
     jobs.pop(job_id, None)
-    _apagar_pasta_do_job(job_id)
+    # Numa thread tambem: e rmtree de centenas de MB na pasta do Windows, com
+    # espera entre as tentativas.
+    sobrou = await asyncio.to_thread(_apagar_pasta_do_job, job_id)
+    _recusar_se_sobrou(job_id, sobrou)
+    # O registro no banco so sai depois dos arquivos: se o disco recusou, o
+    # projeto ainda existe e a pessoa vai tentar de novo.
+    await job_registry.apagar_job(job_id)
     print(f"🗑️  Projeto apagado: {job_id}")
     return {"deleted": True}
 

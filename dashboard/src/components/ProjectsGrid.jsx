@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Loader2, Plus, AlertTriangle, RotateCcw, Film } from 'lucide-react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, apiJson } from '../lib/api';
 
 // A tela de projetos: uma grade de cartoes, um por vídeo processado.
 //
@@ -34,7 +34,7 @@ const ESTADO = {
   cancelled: { texto: 'cancelado', cor: 'text-muted' },
 };
 
-export default function ProjectsGrid({ onOpen, onNew, refreshKey = 0 }) {
+export default function ProjectsGrid({ onOpen, onNew, onApagado, refreshKey = 0 }) {
   const [projetos, setProjetos] = useState(null);
   const [erro, setErro] = useState(null);
   const [apagando, setApagando] = useState(null);
@@ -70,10 +70,18 @@ export default function ProjectsGrid({ onOpen, onNew, refreshKey = 0 }) {
     setApagando(jobId);
     setConfirmando(null);
     try {
-      await apiFetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+      // `apiJson` e nao `apiFetch`: o `apiFetch` nao falha em 409, e o servidor
+      // responde 409 quando um arquivo do projeto ficou preso no disco. Antes
+      // o cartao sumia da tela com o arquivo ainda la.
+      await apiJson(`/api/jobs/${jobId}`, { method: 'DELETE' });
       setProjetos((atual) => (atual || []).filter((p) => p.job_id !== jobId));
-    } catch {
-      setErro('Não consegui apagar esse projeto.');
+      setErro(null);
+      // Quem abriu este projeto no Clip Generator precisa soltá-lo: senão a
+      // tela continua mostrando os cortes de um projeto que não existe mais.
+      if (onApagado) onApagado(jobId);
+    } catch (err) {
+      setErro(err?.detail || 'Não consegui apagar esse projeto.');
+      carregar();
     } finally {
       setApagando(null);
     }

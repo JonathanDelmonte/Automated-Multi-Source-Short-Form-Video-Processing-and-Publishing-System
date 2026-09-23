@@ -12,6 +12,9 @@ rodando -- nao e preciso abrir nada antes.
   parar.bat           para tudo de verdade (fechar a janela nao para).
   ver-log.bat         mostra o log do backend ao vivo. A unica janela que rola.
   abrir-painel.bat    abre http://localhost:5175 no navegador.
+  abrir-pasta-dos-cortes.bat
+                      abre a pasta output no Explorer: e ali, no seu disco,
+                      que ficam os videos. Nada fica dentro do Docker.
 
   reconstruir.bat     SO quando muda requirements.txt, package.json ou o
                       Dockerfile. Demora de 15 a 40 minutos. Com placa NVIDIA,

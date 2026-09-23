@@ -237,7 +237,10 @@ def _extract_wav(media_path):
         if audio_probe.ja_e_wav_do_pipeline(audio_probe.probe(media_path)):
             return media_path, False
 
-    fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="asr_")
+    # Ao lado da midia, e nao no /tmp do container (ver `reframe_v2.render`).
+    fd, wav_path = tempfile.mkstemp(
+        suffix=".wav", prefix="asr_",
+        dir=os.path.dirname(os.path.abspath(media_path)))
     os.close(fd)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error", "-i", media_path,

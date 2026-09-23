@@ -1478,6 +1478,53 @@ limpezas que apagavam o trabalho sozinhas, e as duas foram desligadas:
 - `UPLOADS_MAX_GB` (15) continua: ali ficam copias de arquivos que a pessoa ja
   tem, e o teto so custa o re-editar de um projeto antigo enviado por upload.
 
+**Apagar apaga tudo, e diz quando nao conseguiu** (22-set-2026, segunda volta:
+"excluo o projeto, volto no Clip Generator e ele ainda esta la"):
+
+- **`_apagar_pasta_do_job` devolve o que SOBROU**, com tres tentativas (0 /
+  0,5 / 1,5 s), e o endpoint responde 409 com o nome do arquivo. Era
+  `rmtree(ignore_errors=True)`: no Docker Desktop a pasta e do Windows, que nao
+  apaga arquivo aberto, e o painel dizia "apagado" com o video no disco. Se
+  sobrava o metadata, o projeto voltava na listagem; se sobrava so o video,
+  ninguem mais o via. Roda numa thread: e rmtree de centenas de MB com espera.
+- **O job nasce em grupo de processos proprio** (`start_new_session=True`), e
+  cancelar mata o GRUPO (`_sinalizar_grupo`). Matar so o `main.py` deixava os
+  ffmpeg filhos vivos, gravando na pasta recem-apagada. **A guarda nao e
+  enfeite**: so ha `killpg` quando o grupo e do proprio job (pgid == pid e
+  diferente do grupo do servidor) -- um processo sem grupo proprio esta no
+  grupo do uvicorn, e o `killpg` ali derrubaria o servidor.
+- **O registro no banco sai junto** (`job_registry.apagar_job`: job, cortes
+  pelo cascade, fonte se ficou orfa), **menos o que ja foi publicado**: o
+  cascade levaria `publications` e `metrics`, o historico que a calibracao le.
+- **O painel solta o projeto apagado**: `onApagado` nas duas listas chama o
+  `handleReset` quando o apagado e o aberto. Sem isso o Clip Generator seguia
+  mostrando os cortes de um projeto que nao existia mais.
+- **Nada do processamento fica dentro do Docker.** Os dois temporarios que
+  caiam no /tmp do container (os comandos do render e o WAV do Parakeet) vao
+  para a pasta do projeto; `tests/test_nada_dentro_do_docker.py` falha num
+  `tempfile` sem `dir=`. E o log do container ganhou teto (3 x 10 MB,
+  `x-log-com-teto` no compose): o backend repete ali cada linha de todo job, e
+  esse log mora no .vhdx do Docker, que no Windows cresce e nao encolhe.
+- **O que o Docker Desktop mostra nao e video**: "Container memory" e RAM (sobe
+  enquanto processa, com o whisper e os quadros na memoria), e o "Disk" do
+  rodape sao as imagens (Python, torch com CUDA, ffmpeg) e o cache de build.
+  `atalhos\abrir-pasta-dos-cortes.bat` abre o `output\`, que e a resposta
+  visivel para "onde estao os videos".
+
+### O painel perguntava a config uma vez so (22-set-2026)
+
+"Esta pedindo chave de API, antes funcionava; apertei F5 e sumiu." O
+`AuthContext` pedia `/api/config` UMA vez, e a falha virava a config padrao --
+sem `localLlm`, entao o painel concluia que nao havia chave de LLM. E o que
+acontece logo depois do `atualizar.bat`: o frontend volta antes do backend.
+
+- **A config e pedida ate responder** (1, 2, 4, 5, 5... s). Enquanto isso o
+  painel mostra "conectando ao servidor" (`EsperandoServidor`), e depois de
+  15 s diz o que conferir. Tela vazia ali seria o painel em preto de novo.
+- **`keysMissing` exige `configCarregada`**: antes da config, `localLlm` nulo
+  quer dizer "ainda nao sei", e nao "nao tem". O servidor continua sendo a
+  autoridade -- o `/api/process` recusa sem LLM de qualquer jeito.
+
 ### O log diz a hora em que cada linha nasceu (22-set-2026)
 
 "A contagem de minutos nao passa": o painel escrevia `new Date()` ao DESENHAR

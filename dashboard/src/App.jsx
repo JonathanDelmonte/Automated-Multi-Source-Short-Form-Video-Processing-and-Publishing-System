@@ -172,6 +172,34 @@ const textoDaLinha = (linha) => (typeof linha === 'string' ? linha : linha.texto
 const horaDaLinha = (linha) =>
   (typeof linha === 'string' || !linha.t ? '' : new Date(linha.t * 1000).toLocaleTimeString());
 
+// Enquanto `/api/config` não responde. Era uma tela vazia -- e, com a config
+// agora esperada até o servidor responder, "vazia" viraria "preta para
+// sempre" se o backend não subir. Diz o que está acontecendo e, se demorar,
+// o que fazer.
+function EsperandoServidor() {
+  const [demorou, setDemorou] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDemorou(true), 15000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="h-screen bg-paper flex items-center justify-center p-6">
+      <div className="max-w-sm text-center space-y-2">
+        <p className="flex items-center justify-center gap-2 text-sm text-ink2">
+          <Loader2 size={15} className="animate-spin text-brass" /> conectando ao servidor…
+        </p>
+        {demorou && (
+          <p className="text-xs text-muted leading-relaxed">
+            Logo depois de atualizar, o servidor leva alguns segundos para subir.
+            Se passar de um minuto, confira se o Docker Desktop está aberto e rode
+            atalhos\subir.bat.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const pollJob = async (jobId) => {
   const res = await apiFetch(`/api/status/${jobId}`);
   if (res.status === 404) throw new JobSumiu('job não existe mais');
@@ -181,7 +209,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, authAtiva, loading: authLoading } = useAuth();
+  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, configCarregada, authAtiva, loading: authLoading } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
   const [showPlanChoice, setShowPlanChoice] = useState(false);
@@ -599,6 +627,14 @@ function App() {
     localStorage.removeItem(SESSION_KEY);
   }, []);
 
+  // Um projeto apagado na aba Projetos pode ser o que está aberto no Clip
+  // Generator. Sem isto a tela continuava mostrando os cortes dele -- a pessoa
+  // apagava, voltava, e o projeto "ainda estava lá". A sessão salva no
+  // localStorage sai junto (o `handleReset` cuida), senão ele voltava no F5.
+  const handleProjetoApagado = useCallback((id) => {
+    if (id === jobId) handleReset();
+  }, [jobId, handleReset]);
+
   // Abre um projeto da lista: carrega o estado dele e entra no modo certo.
   // Um job ainda rodando volta para 'processing', e o efeito de polling faz o
   // resto -- e por isso que reabrir um job em andamento retoma a barra em vez
@@ -723,7 +759,10 @@ function App() {
   // A self-hosted server running the moment picker on a local LLM
   // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
   const geminiOk = !!apiKey || !!localLlm;
-  const keysMissing = !billingEnabled && !geminiOk;
+  // So com a config em mãos: antes dela, `localLlm` nulo quer dizer "ainda não
+  // sei", não "não tem". Confundir os dois era o aviso de chave que aparecia
+  // logo depois do atualizar.bat e sumia no F5.
+  const keysMissing = !billingEnabled && configCarregada && !geminiOk;
   const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
 
   // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
@@ -1118,7 +1157,7 @@ function App() {
   // `/api/config` responder) mostraria a tela de login por um instante para
   // quem já está logado, e pior, para quem nem tem auth ligada.
   if (authLoading) {
-    return <div className="h-screen bg-paper" />;
+    return <EsperandoServidor />;
   }
   if (authAtiva && !isSignedIn) {
     return <Tranca />;
@@ -1425,6 +1464,7 @@ function App() {
               refreshKey={projectsKey}
               onNew={() => { handleReset(); goToTab('dashboard'); }}
               onOpen={(id) => { goToTab('dashboard'); handleOpenProject(id); }}
+              onApagado={handleProjetoApagado}
             />
           )}
 
@@ -1465,7 +1505,7 @@ function App() {
                 {/* Some sozinha na primeira visita (a lista vazia nao renderiza
                     nada), entao a tela de quem nunca rodou um job continua
                     sendo so o formulario. */}
-                <ProjectsList onOpen={handleOpenProject} refreshKey={projectsKey} />
+                <ProjectsList onOpen={handleOpenProject} onApagado={handleProjetoApagado} refreshKey={projectsKey} />
 
                 <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 text-muted text-xs sm:text-sm">
                   <span className="flex items-center gap-2"><Youtube size={16} /> YouTube</span>

@@ -276,6 +276,46 @@ async def registrar_clipes(job_id: str, shorts: list, transcript=None,
         return 0
 
 
+async def apagar_job(job_id: str) -> bool:
+    """Apaga o registro de um projeto que a pessoa apagou: job, cortes e fonte.
+
+    Os cortes saem pelo ON DELETE CASCADE da FK composta (no SQLite, so com o
+    `PRAGMA foreign_keys=ON` que o `db.py` liga por engine), e a fonte sai junto
+    quando nenhum outro job a usa. Devolve True quando apagou.
+
+    **Um corte ja PUBLICADO segura o registro inteiro.** O video dele esta na
+    plataforma, e `publications` e `metrics` sao o historico que a calibracao da
+    Fase 5 le -- a tabela que a secao 7 chama de "a mais valiosa do projeto". O
+    cascade levaria as duas junto. Apagar o projeto tira os ARQUIVOS do disco
+    sempre; o registro do que ja foi ao ar fica.
+    """
+    try:
+        async with db.tenant() as t:
+            job = await t.get(db_models.Job, job_id)
+            if job is None:
+                return False
+            ids = [c.id for c in await t.all(db_models.Clip,
+                                             db_models.Clip.job_id == job_id)]
+            if ids and await t.all(db_models.Publication,
+                                   db_models.Publication.clip_id.in_(ids)):
+                print(f"   ℹ️  Projeto {job_id}: tem corte publicado, entao o "
+                      f"registro fica no banco (os arquivos saem do disco).")
+                return False
+            fonte_id = job.source_id
+            await t.session.delete(job)
+            await t.flush()
+            if fonte_id and not await t.all(db_models.Job,
+                                            db_models.Job.source_id == fonte_id):
+                fonte = await t.get(db_models.Source, fonte_id)
+                if fonte is not None:
+                    await t.session.delete(fonte)
+            await t.commit()
+            return True
+    except Exception as e:
+        _avisar(e, f"apagar job {job_id}")
+        return False
+
+
 def adapter_de(url: Optional[str], caminho: Optional[str] = None) -> str:
     """O id de adapter para a coluna `sources.adapter`.
 

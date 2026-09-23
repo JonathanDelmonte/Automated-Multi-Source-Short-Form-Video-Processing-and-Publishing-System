@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Loader2, Film, AlertTriangle, RotateCcw } from 'lucide-react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, apiJson } from '../lib/api';
 
 // Lista de projetos: o que existe em `output/`, do mais novo para o mais velho.
 //
@@ -40,7 +40,7 @@ const ROTULOS = {
   cancelled: 'cancelado',
 };
 
-export default function ProjectsList({ onOpen, refreshKey = 0 }) {
+export default function ProjectsList({ onOpen, onApagado, refreshKey = 0 }) {
   const [projetos, setProjetos] = useState(null);   // null = ainda carregando
   const [erro, setErro] = useState(null);
   const [apagando, setApagando] = useState(null);
@@ -74,10 +74,14 @@ export default function ProjectsList({ onOpen, refreshKey = 0 }) {
     e.stopPropagation();   // o cartao inteiro abre o projeto; a lixeira nao deve
     setApagando(jobId);
     try {
-      await apiFetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+      // 409 = arquivo preso no disco; o `apiJson` falha nele, o `apiFetch` nao.
+      await apiJson(`/api/jobs/${jobId}`, { method: 'DELETE' });
       setProjetos((atual) => (atual || []).filter((p) => p.job_id !== jobId));
+      setErro(null);
+      if (onApagado) onApagado(jobId);
     } catch (err) {
-      setErro('Não consegui apagar esse projeto.');
+      setErro(err?.detail || 'Não consegui apagar esse projeto.');
+      carregar();
     } finally {
       setApagando(null);
     }

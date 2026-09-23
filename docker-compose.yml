@@ -1,3 +1,16 @@
+# Teto para o log de cada container (22-set-2026). O log fica DENTRO do disco
+# do Docker -- no Windows, um .vhdx que cresce e nao encolhe sozinho --, e o
+# backend repete ali cada linha de todo job (o download inteiro do yt-dlp, a
+# transcricao). Sem teto ele so crescia. Com este, sao no maximo 3 arquivos de
+# 10 MB por container: o bastante para o `ver-log.bat` e para investigar o
+# ultimo job. Os videos nunca passaram por aqui: ficam em output/, no disco da
+# maquina.
+x-log-com-teto: &log-com-teto
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     build: .
@@ -32,6 +45,7 @@ services:
       - /app/__pycache__
       - ./output:/app/output
     restart: unless-stopped
+    logging: *log-com-teto
 
   frontend:
     build:
@@ -56,6 +70,7 @@ services:
       - ./dashboard:/app
       - /app/node_modules
     restart: unless-stopped
+    logging: *log-com-teto
     depends_on:
       - backend
 
@@ -73,5 +88,6 @@ services:
       - OUTPUT_DIR=/output
       - PORT=3100
     restart: unless-stopped
+    logging: *log-com-teto
     depends_on:
       - backend

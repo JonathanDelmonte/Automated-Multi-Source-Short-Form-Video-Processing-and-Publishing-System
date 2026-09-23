@@ -1642,7 +1642,8 @@ Ficou de fora, de proposito:
   download sem poder testar contra o YouTube de verdade e o risco errado para
   5 s.
 - **Mais `CLIP_WORKERS`.** Sem saber se a maquina tem folga, mais workers pode
-  ser so mais disputa. As duas linhas novas por corte respondem isso.
+  ser so mais disputa. As duas linhas novas por corte respondem isso -- e
+  responderam: a rodada 5 tentou 6 e a soma caiu (ver abaixo).
 
 ### Velocidade, rodada 5: o log de 213 s (23-set-2026)
 
@@ -1653,23 +1654,24 @@ o resto: `03_transcribe` 57 s (16 s de carga, 37 s decodificando),
 `04_detect` 26 s (15 s esperando o Groq) e `05_06_render` 87 s, em duas
 rodadas de tres cortes.
 
-- **O whisper decodifica em lotes na placa** (`WHISPER_BATCH_SIZE`, 8 por
-  padrao; 0 ou 1 volta ao modo sequencial). O `BatchedInferencePipeline` do
-  faster-whisper (1.1+, aqui 1.2.1) corta o audio pelo VAD em trechos de ate
-  30 s e decodifica varios de uma vez. A config deste projeto ja era a que ele
-  exige: VAD ligado, sem condicionar no texto anterior.
-  - **`without_timestamps=False` de proposito.** O padrao do modo em lotes
-    junta cada trecho num segmento so, e as janelas da deteccao de momentos
-    (`clip_selection.build_transcript_windows`) se alinham a segmentos: com
-    blocos de 30 s, a janela ficaria grosseira.
-  - **O que muda na qualidade:** o modo em lotes nao refaz com temperatura
-    maior o trecho que saiu repetitivo, e o sequencial refaz. Se a legenda
-    piorar, `WHISPER_BATCH_SIZE=0` no `.env` volta ao de antes.
-  - Qualquer falha nele -- inclusive no meio da iteracao, porque o gerador e
-    lazy -- refaz no sequencial, com uma linha no log.
-  - **Nao foi medido aqui**: o proxy desta maquina bloqueia o Hugging Face,
-    entao nao ha modelo para rodar. A API foi conferida no fonte da 1.2.1, os
-    testes usam modelo falso, e o numero vem do proximo log do autor.
+- **O whisper em lotes na placa foi TENTADO E DESLIGADO** (`WHISPER_BATCH_SIZE`,
+  hoje 0 por padrao; > 1 liga). O `BatchedInferencePipeline` do faster-whisper
+  (1.1+, aqui 1.2.1) corta o audio pelo VAD em trechos de ate 30 s e
+  decodifica varios de uma vez. O log seguinte mediu o preco, e ele nao pagava:
+  a decodificacao caiu so de ~38 s para 33 s, e a transcricao **perdeu fala**
+  -- terminou em 536 s, quando a sequencial ia ate 602 s, com 7% menos
+  palavras e uma frase repetida. O modo em lotes nao refaz com temperatura
+  maior o trecho que saiu ruim, e o que sumiu era o trecho mais dificil do
+  video (falas curtas, varios "Nao!" seguidos); o sequencial refaz.
+  `test_o_padrao_e_o_sequencial` trava a volta.
+  - O codigo ficou, atras da variavel, porque a rede dele esta testada:
+    qualquer falha -- inclusive no meio da iteracao, porque o gerador e lazy
+    -- refaz no sequencial, com uma linha no log. `without_timestamps=False`
+    de proposito: o padrao do modo em lotes junta cada trecho num segmento so,
+    e as janelas da deteccao (`clip_selection.build_transcript_windows`) se
+    alinham a segmentos.
+  - **Nao religar sem comparar as duas transcricoes do mesmo video**: o
+    tempo sai no resumo do job, a fala perdida nao sai em lugar nenhum.
 - **O modelo sai do disco sem perguntar ao Hugging Face**
   (`local_files_only=True` primeiro). O `snapshot_download` ia a rede em todo
   job so para confirmar a revisao do modelo ja baixado. So o "nao esta no
@@ -1682,12 +1684,38 @@ rodadas de tres cortes.
   o Gemini pronto para responder em ~6 s. `run()` avisa cada chamada, por um
   `ContextVar`, se ha quem atenda depois dela; o ULTIMO da fila continua com a
   paciencia de sempre, porque desistir dele derruba a deteccao do job.
-- **Seis cortes em paralelo com placa** (`CLIP_WORKERS` no
-  `docker-compose.gpu.yml`; sem placa continuam 3). Com tres, cada ffmpeg do
-  reenquadramento andava a ~50 quadros/s numa CPU de 16 threads. O teto e o
-  NVENC: 8 sessoes numa GeForce, e cada corte usa uma por vez. **E aposta, nao
-  medicao**: as linhas por corte do proximo log dizem se cada um manteve o
-  ritmo (ganho) ou caiu a metade (a maquina ja estava cheia; volta a 3).
+- **Seis cortes em paralelo com placa foi TENTADO E DESFEITO.** A conta era
+  "sobra CPU e o NVENC abre 8 sessoes"; a medicao disse o contrario. Com 6, o
+  ffmpeg do reenquadramento andou a 14-18 quadros/s por corte, **98 somados**,
+  contra 46-61 por corte e **~155 somados** com 3: mais cortes juntos
+  disputaram a mesma maquina e fizeram menos no total. O overlay de GPU nao
+  poe mais `CLIP_WORKERS` (vale o 3 do `main.py`), e
+  `test_a_placa_nao_sobe_os_cortes_em_paralelo_sem_medicao` so deixa subir
+  junto com uma medicao nova. **A soma e o que conta**, nao o ritmo de um
+  corte: as linhas `⏱️ corte N` do log dao as duas.
+
+**O log de 290 s (o mesmo video, com a rodada 5 inteira) explica os 77 s a
+mais**, e nem tudo e defeito:
+
+| estagio | 213 s | 290 s | por que |
+|---|---|---|---|
+| 01_ingest + 02_probe | 43 s | 47 s | rede e disco; ruido de uma medida so |
+| 03_transcribe | 57 s | 64 s | carga do modelo 23,5 s (~7 s acima da anterior), lotes -5 s |
+| 04_detect | 26 s | 11 s | o Groq pediu 23 s de espera e a vez passou ao Gemini |
+| 05_06_render | 87 s | 168 s | ~45 s dos seis cortes juntos; ~35 s de corte mais LONGO |
+
+- **Os cortes sairam 41% mais longos** (5034 quadros contra 3562, ~28 s cada
+  contra ~20 s), e isso nao e o render: quem marca inicio e fim e a segunda
+  passada do LLM, e desta vez ela foi do Gemini (pelo pulo do Groq), lendo a
+  transcricao em lotes, de segmentos maiores. Qual das duas pesou, um job so
+  nao separa. Duracao de corte e decisao de conteudo (o prompt pede 15-60 s),
+  entao nao se "conserta" por velocidade -- mas comparar dois jobs sem olhar
+  o total de quadros atribui ao codigo o que foi do modelo.
+- Ficam da rodada 5 o pulo do Groq (-15 s), a carga sem rede e a linha do
+  tempo de carga. Esta ultima ja respondeu uma pergunta: 23,5 s no primeiro
+  job depois do `atualizar.bat`, o que torna o `.cache/` num volume do Docker
+  o maior ganho barato que sobra -- e continua sendo decisao do autor, porque
+  sao ~1,6 GB no disco do Docker.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

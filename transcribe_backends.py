@@ -178,13 +178,22 @@ def linha_do_whisper(model_size, device, compute_type):
 def tamanho_do_lote():
     """Quantos trechos de ate 30 s a placa decodifica de uma vez.
 
-    `WHISPER_BATCH_SIZE` manda; 0 ou 1 volta ao modo sequencial de antes. Em
-    CPU o lote nao e usado: la nao ha paralelismo sobrando para ele ganhar.
+    **Desligado por padrao** (0 = sequencial). O modo em lotes foi o padrao
+    por um job, e o log dele (23-set-2026, o video de 10,5 min de sempre) mediu
+    o que custava: a decodificacao caiu so de ~38 s para 33 s, e a transcricao
+    PERDEU FALA -- terminou em 536 s, quando a sequencial ia ate 602 s, com 7%
+    menos palavras e uma frase repetida. O modo em lotes nao refaz com
+    temperatura maior o trecho que saiu ruim; o sequencial refaz, e e isso que
+    salva o trecho barulhento (gritaria, musica por baixo). Cinco segundos nao
+    pagam legenda faltando no fim do video.
+
+    `WHISPER_BATCH_SIZE` > 1 liga, para quem quiser medir de novo. Em CPU o
+    lote nunca e usado: la nao ha paralelismo sobrando para ele ganhar.
     """
     try:
-        return max(0, int(os.environ.get("WHISPER_BATCH_SIZE", "8")))
+        return max(0, int(os.environ.get("WHISPER_BATCH_SIZE", "0")))
     except ValueError:
-        return 8
+        return 0
 
 
 def _pipeline_em_lotes(model):
@@ -221,11 +230,11 @@ def _run_whisper_once(media_path, **params):
     lote = tamanho_do_lote() if device != "cpu" else 0
     with gate:
         if lote > 1:
-            # Em lotes (23-set-2026): o VAD corta o audio em trechos de ate
-            # 30 s e a placa decodifica `lote` deles de uma vez, em vez de um
-            # por um. O `without_timestamps=False` mantem os segmentos do
-            # tamanho de uma frase, como no modo sequencial: as janelas da
-            # deteccao de momentos se alinham a eles.
+            # Em lotes, so quando pedido (ver `tamanho_do_lote`): o VAD corta
+            # o audio em trechos de ate 30 s e a placa decodifica `lote` deles
+            # de uma vez, em vez de um por um. O `without_timestamps=False`
+            # mantem os segmentos do tamanho de uma frase, como no modo
+            # sequencial: as janelas da deteccao de momentos se alinham a eles.
             try:
                 return _transcrever(
                     _pipeline_em_lotes(model), media_path,

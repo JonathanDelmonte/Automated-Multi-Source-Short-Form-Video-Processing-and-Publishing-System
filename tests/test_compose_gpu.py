@@ -57,13 +57,20 @@ def test_o_encoder_e_auto_e_nao_nvenc():
     assert _ambiente_do_backend()["FFMPEG_ENCODER"] == "${FFMPEG_ENCODER:-auto}"
 
 
-def test_com_placa_seis_cortes_em_paralelo_abaixo_do_teto_do_nvenc():
-    """Cada corte usa uma sessao de NVENC por vez, e uma GeForce abre no maximo
-    8. Passar disso nao da erro na hora de configurar: da encode falhando no
-    meio do job, e ai o corte sai sem legenda (o passe falha aberto)."""
-    valor = _ambiente_do_backend()["CLIP_WORKERS"]
+def test_a_placa_nao_sobe_os_cortes_em_paralelo_sem_medicao():
+    """A placa nao muda quantos cortes cabem ao mesmo tempo (23-set-2026).
+
+    O overlay chegou a por `CLIP_WORKERS=6` com a conta "sobra CPU e o NVENC
+    abre 8 sessoes". Medido na maquina do autor, o reenquadramento andou a 98
+    quadros/s SOMADOS com 6 cortes juntos, contra ~155 com 3: mais cortes
+    disputaram a mesma maquina e fizeram menos no total. Voltar a subir exige
+    uma medicao que mostre a soma crescer -- e trocar este teste junto.
+    """
+    valor = _ambiente_do_backend().get("CLIP_WORKERS")
+    if valor is None:
+        return          # vale o padrao do main.py, 3
     padrao = int(re.match(r"\$\{CLIP_WORKERS:-(\d+)\}", valor).group(1))
-    assert 3 < padrao < 8
+    assert padrao <= 3
 
 
 def test_tudo_continua_sobrescrivel_pelo_env():

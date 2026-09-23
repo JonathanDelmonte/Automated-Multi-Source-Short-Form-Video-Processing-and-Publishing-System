@@ -866,6 +866,14 @@ o 429 do Groq deixou de esperar quando o Gemini pode responder, e com placa o re
 passou a fazer seis cortes ao mesmo tempo — esta última, uma aposta que o próximo log
 confirma ou desfaz.
 
+O próximo log desfez duas das quatro: o job levou 290 s. Seis cortes juntos renderizaram
+**menos** no total que três (98 quadros/s somados contra ~155) e custaram ~45 s; a
+transcrição em lotes ganhou 5 s e perdeu o último minuto de fala do vídeo. As duas
+voltaram ao que eram, e os testes travam a volta sem medição nova. Ficaram o pulo do
+Groq (−15 s) e a carga do modelo sem rede. O resto da diferença foi conteúdo, não
+render: os cortes saíram 41% mais longos — desta vez quem marcou início e fim foi o
+Gemini, lendo a transcrição em lotes, e um job só não separa qual das duas pesou.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

@@ -342,12 +342,12 @@ def test_o_whisper_nao_carrega_em_thread_de_fundo():
 
 
 class TestTranscricaoEmLotes:
-    """Na placa o whisper decodifica varios trechos de uma vez (23-set-2026).
+    """O modo em lotes existe, mas so liga quando pedido (23-set-2026).
 
-    No job de 213 s a transcricao eram 37 s de decodificacao, um trecho por
-    vez. O faster-whisper tem o modo em lotes desde a 1.1, e a config deste
-    projeto ja era a que ele exige: VAD ligado e sem condicionar no texto
-    anterior. A rede e o modo antigo, que continua a um passo.
+    Foi o padrao por um job, e o log daquele job mediu o preco: 5 s a menos de
+    decodificacao e a transcricao terminando 66 s antes do fim do video, com
+    7% menos palavras. Por isso o padrao e o sequencial, e os testes abaixo
+    do modo em lotes ligam `WHISPER_BATCH_SIZE` explicitamente.
     """
 
     @pytest.fixture
@@ -391,10 +391,26 @@ class TestTranscricaoEmLotes:
         monkeypatch.setattr(tb, "_whisper_force_cpu", False)
         monkeypatch.setenv("WHISPER_DEVICE", "cuda")
         monkeypatch.setenv("WHISPER_COMPUTE", "float16")
-        monkeypatch.delenv("WHISPER_BATCH_SIZE", raising=False)
+        monkeypatch.setenv("WHISPER_BATCH_SIZE", "8")
         return chamadas, Lotes
 
-    def test_na_placa_decodifica_em_lotes(self, modelos):
+    def test_o_padrao_e_o_sequencial(self, modelos, monkeypatch):
+        # Na placa e sem a variavel: o modo que refaz o trecho ruim com
+        # temperatura maior, e que nao perdeu o fim do video.
+        chamadas, _ = modelos
+        monkeypatch.delenv("WHISPER_BATCH_SIZE", raising=False)
+        tb._run_whisper_once("a.wav", beam_size=5)
+        assert [c[0] for c in chamadas] == ["sequencial"]
+
+    @pytest.mark.parametrize("valor", ["", "oito", "-4"])
+    def test_valor_invalido_cai_no_sequencial(self, modelos, monkeypatch, valor):
+        # Um erro de digitacao no .env nao pode ligar o modo que perde fala.
+        chamadas, _ = modelos
+        monkeypatch.setenv("WHISPER_BATCH_SIZE", valor)
+        tb._run_whisper_once("a.wav", beam_size=5)
+        assert [c[0] for c in chamadas] == ["sequencial"]
+
+    def test_pedido_na_placa_decodifica_em_lotes(self, modelos):
         chamadas, _ = modelos
         segmentos, _info = tb._run_whisper_once("a.wav", beam_size=5, vad_filter=True)
         assert [c[0] for c in chamadas] == ["lotes"]

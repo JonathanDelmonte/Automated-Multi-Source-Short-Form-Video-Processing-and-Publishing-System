@@ -65,19 +65,14 @@ services:
       # (driver velho, VRAM cheia, sessoes simultaneas esgotadas). Com `nvenc`
       # o fallback tambem acontece, mas depois de uma linha de aviso por job.
       FFMPEG_ENCODER: ${FFMPEG_ENCODER:-auto}
-      # **Seis cortes ao mesmo tempo com placa, e nao tres** (23-set-2026). O
-      # log do job de 213 s mostrou o ffmpeg do reenquadramento a ~50 quadros/s
-      # por corte com tres rodando juntos, numa CPU de 16 threads -- sobra
-      # maquina, e o `DETECT_LOCK` e o `_TN2_LOCK` ja serializam o que nao pode
-      # correr em paralelo. Com 6, um video que da 6 cortes faz o render numa
-      # rodada so, em vez de duas.
-      #
-      # O teto e o NVENC: uma GeForce abre no maximo 8 sessoes de encode ao
-      # mesmo tempo, e cada corte usa uma de cada vez (corte, reenquadra,
-      # gancho e legenda sao sequenciais dentro dele). Seis deixa folga para
-      # quem grava a tela com a placa (OBS, ShadowPlay). Nao subir sem
-      # descontar isso; `CLIP_WORKERS=3` no `.env` volta ao de antes.
-      CLIP_WORKERS: ${CLIP_WORKERS:-6}
+      # **Sem `CLIP_WORKERS` aqui, de proposito** (23-set-2026). A placa nao
+      # muda quantos cortes cabem ao mesmo tempo, e isto foi MEDIDO: com 6 no
+      # lugar dos 3 do `main.py`, na maquina do autor (RTX 3060, 16 threads),
+      # o ffmpeg do reenquadramento andou a 98 quadros/s SOMADOS, contra ~155
+      # com 3 -- cada corte a 14-18 q/s, contra 46-61. Mais cortes juntos
+      # disputaram a mesma maquina e fizeram menos no total: o render do job
+      # custou ~45 s a mais. Subir de novo so com uma medicao que mostre a soma
+      # crescer; as linhas `⏱️ corte N` do log sao essa medicao.
     deploy:
       resources:
         reservations:

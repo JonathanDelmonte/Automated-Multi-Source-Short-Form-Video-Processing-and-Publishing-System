@@ -1597,8 +1597,8 @@ def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
                 msg, attempt, esperado, max_attempts)
             if wait is None:
                 print(f"⏭️ {who}: o servidor pede "
-                      f"{llm_cascade.espera_sugerida(msg):.0f}s de espera, mais "
-                      f"que a paciencia com um provedor -- desistindo dele agora.")
+                      f"{llm_cascade.espera_sugerida(msg):.0f}s de espera; nao "
+                      f"compensa esperar -- desistindo dele agora.")
                 raise
             esperado += wait
             print(f"⚠️ {who} transient error (attempt {attempt}/{max_attempts}), retrying in {wait:.3g}s: {msg[:150]}")

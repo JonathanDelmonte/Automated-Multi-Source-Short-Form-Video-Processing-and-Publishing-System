@@ -65,6 +65,19 @@ services:
       # (driver velho, VRAM cheia, sessoes simultaneas esgotadas). Com `nvenc`
       # o fallback tambem acontece, mas depois de uma linha de aviso por job.
       FFMPEG_ENCODER: ${FFMPEG_ENCODER:-auto}
+      # **Seis cortes ao mesmo tempo com placa, e nao tres** (23-set-2026). O
+      # log do job de 213 s mostrou o ffmpeg do reenquadramento a ~50 quadros/s
+      # por corte com tres rodando juntos, numa CPU de 16 threads -- sobra
+      # maquina, e o `DETECT_LOCK` e o `_TN2_LOCK` ja serializam o que nao pode
+      # correr em paralelo. Com 6, um video que da 6 cortes faz o render numa
+      # rodada so, em vez de duas.
+      #
+      # O teto e o NVENC: uma GeForce abre no maximo 8 sessoes de encode ao
+      # mesmo tempo, e cada corte usa uma de cada vez (corte, reenquadra,
+      # gancho e legenda sao sequenciais dentro dele). Seis deixa folga para
+      # quem grava a tela com a placa (OBS, ShadowPlay). Nao subir sem
+      # descontar isso; `CLIP_WORKERS=3` no `.env` volta ao de antes.
+      CLIP_WORKERS: ${CLIP_WORKERS:-6}
     deploy:
       resources:
         reservations:

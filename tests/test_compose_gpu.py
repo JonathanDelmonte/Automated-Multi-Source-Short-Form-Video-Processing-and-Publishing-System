@@ -57,6 +57,15 @@ def test_o_encoder_e_auto_e_nao_nvenc():
     assert _ambiente_do_backend()["FFMPEG_ENCODER"] == "${FFMPEG_ENCODER:-auto}"
 
 
+def test_com_placa_seis_cortes_em_paralelo_abaixo_do_teto_do_nvenc():
+    """Cada corte usa uma sessao de NVENC por vez, e uma GeForce abre no maximo
+    8. Passar disso nao da erro na hora de configurar: da encode falhando no
+    meio do job, e ai o corte sai sem legenda (o passe falha aberto)."""
+    valor = _ambiente_do_backend()["CLIP_WORKERS"]
+    padrao = int(re.match(r"\$\{CLIP_WORKERS:-(\d+)\}", valor).group(1))
+    assert 3 < padrao < 8
+
+
 def test_tudo_continua_sobrescrivel_pelo_env():
     """A forma `${VAR:-padrao}` e o que deixa o `.env` mandar. Fixar o valor
     tiraria do autor a chance de voltar para a CPU sem editar o compose."""

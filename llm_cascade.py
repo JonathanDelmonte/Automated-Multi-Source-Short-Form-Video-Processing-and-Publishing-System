@@ -32,6 +32,7 @@ PROHIBITED_CONTENT.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -313,6 +314,17 @@ def modelo_inexistente(erro) -> bool:
 #: ao milissegundo, e chegar 50 ms antes custa a tentativa inteira.
 FOLGA_DA_DICA_S = 0.5
 
+#: Quanto vale esperar pelo MESMO provedor quando outro pode responder agora.
+#: No job de 213 s (23-set-2026) o Groq pediu 14,4 s, isso cabia na paciencia
+#: de 15 s, e o job esperou -- quando o Gemini responde a mesma pergunta em
+#: ~6 s. Esperar so compensa quando nao ha para onde ir.
+ESPERA_MAXIMA_COM_ALTERNATIVA_S = 3.0
+
+# Ha outro provedor pronto para atender se o desta chamada desistir? `run()`
+# responde antes de cada chamada; fora da cascata (um provedor so) e False.
+_HA_ALTERNATIVA: contextvars.ContextVar = contextvars.ContextVar(
+    "llm_ha_alternativa", default=False)
+
 # "Please try again in 20.4s" (Groq, em duracao do Go: 1m26.4s, 780ms, 2h3m4s)
 # e "Please retry in 44.52s" (Gemini).
 _DICA = re.compile(r"(?:try again|retry) in ((?:\d+(?:\.\d+)?(?:ms|us|µs|ns|h|m|s))+)",
@@ -356,21 +368,32 @@ def espera_antes_de_repetir(mensagem, tentativa: int, ja_esperado: float,
     10 s, levou o mesmo 429 as tres vezes e so entao passou ao Gemini: 15 s
     jogados fora -- e que se repetiriam em todo video desse tamanho.
 
-    A paciencia com um provedor continua a MESMA de antes -- a soma das esperas
-    sem dica. A dica so muda como ela e gasta: se o que o servidor pede cabe no
-    que ainda resta, espera exatamente isso (e volta ao mesmo provedor, que era
-    o primeiro da fila por algum motivo); se nao cabe, desiste ja, em vez de
-    esperar para levar o mesmo "nao" que a dica anunciava. Nunca espera mais do
-    que antes, e nunca desiste de quem a regra antiga ainda alcancaria.
+    Sem outro provedor pronto, a paciencia e a MESMA de antes -- a soma das
+    esperas sem dica --, e a dica so muda como ela e gasta: se o que o servidor
+    pede cabe no que resta, espera exatamente isso; se nao cabe, desiste ja, em
+    vez de esperar para levar o mesmo "nao" que a dica anunciava.
+
+    Com outro provedor pronto (`run()` sabe e avisa), a paciencia cai para
+    `ESPERA_MAXIMA_COM_ALTERNATIVA_S`: esperar 14 s por um provedor enquanto
+    outro responde em 6 s nao e fidelidade a ordem da cascata, e tempo perdido.
+    Nos dois casos nunca espera mais do que a regra antiga esperaria.
     """
     dica = espera_sugerida(mensagem)
     if dica is None:
         return espera_sem_dica(tentativa)
     paciencia = sum(espera_sem_dica(k) for k in range(1, tentativas))
+    if _HA_ALTERNATIVA.get():
+        paciencia = min(paciencia, ESPERA_MAXIMA_COM_ALTERNATIVA_S)
     espera = dica + FOLGA_DA_DICA_S
     if ja_esperado + espera > paciencia:
         return None
     return espera
+
+
+def _pode_atender(p: Provider, need: int) -> bool:
+    """O mesmo filtro que `run()` aplica antes de chamar, sem escrever no log."""
+    return (p.id not in _MODELO_INEXISTENTE and available(p, need)[0]
+            and need <= p.max_context)
 
 
 def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
@@ -397,7 +420,7 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
             "CEREBRAS_API_KEY ou suba um Ollama local (OLLAMA_BASE_URL).")
 
     errors: list[str] = []
-    for p in chain:
+    for i, p in enumerate(chain):
         if p.id in _MODELO_INEXISTENTE:
             # Ja avisado na primeira vez, com o conserto; aqui so pula.
             errors.append(f"{p.id}: modelo {_MODELO_INEXISTENTE[p.id]} nao existe")
@@ -411,6 +434,10 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
             log(f"   ⏭️  {p.label}: prompt de ~{need} tokens nao cabe em {p.max_context}")
             errors.append(f"{p.id}: contexto insuficiente")
             continue
+        # Quem esta na chamada precisa saber se desistir custa o job ou so troca
+        # de provedor: e o que decide quanto vale esperar por um 429.
+        marca = _HA_ALTERNATIVA.set(
+            any(_pode_atender(q, need) for q in chain[i + 1:]))
         try:
             parsed, cost = call(prompt, schema, p)
         except Exception as e:                      # noqa: BLE001 - a cascata existe para isso
@@ -430,6 +457,8 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
             # Uma tentativa que falhou ainda consumiu cota no provedor.
             record(p.id, tokens=need, calls=1)
             continue
+        finally:
+            _HA_ALTERNATIVA.reset(marca)
 
         cost = dict(cost or {})
         spent = int(cost.get("input_tokens") or 0) + int(cost.get("output_tokens") or 0)

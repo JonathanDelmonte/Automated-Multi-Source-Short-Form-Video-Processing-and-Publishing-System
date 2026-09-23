@@ -92,6 +92,9 @@ _whisper_lock = threading.Lock()
 # Set after a CUDA failure (e.g. VRAM exhausted by other models on the GPU)
 # so every later transcription goes straight to CPU instead of re-failing.
 _whisper_force_cpu = False
+# Segundos da ultima carga do modelo, para a linha do log; None quando o
+# modelo desta transcricao ja estava carregado.
+_whisper_carga_s = None
 
 
 def _get_whisper_model():
@@ -112,7 +115,7 @@ def _get_whisper_model():
     Nao voltar a carregar o whisper fora da thread que transcreve sem
     reproduzir na maquina dele antes -- aqui nao ha placa para ver.
     """
-    global _whisper_model, _whisper_key
+    global _whisper_model, _whisper_key, _whisper_carga_s
     cfg = get_whisper_config()
     if _whisper_force_cpu:
         cfg["device"] = "cpu"
@@ -121,9 +124,36 @@ def _get_whisper_model():
     with _whisper_lock:
         if _whisper_model is None or _whisper_key != key:
             from faster_whisper import WhisperModel
-            _whisper_model = WhisperModel(key[0], device=key[1], compute_type=key[2])
+            inicio = time.time()
+            try:
+                # Do disco primeiro. Sem isto o `snapshot_download` pergunta ao
+                # Hugging Face pela revisao do modelo em TODO job, mesmo com os
+                # 1,6 GB ja baixados -- uma ida a rede antes de cada transcricao.
+                _whisper_model = WhisperModel(key[0], device=key[1],
+                                              compute_type=key[2],
+                                              local_files_only=True)
+            except Exception as e:  # noqa: BLE001 - so o "nao esta no disco" segue
+                if not _nao_esta_no_disco(e):
+                    raise
+                _whisper_model = WhisperModel(key[0], device=key[1],
+                                              compute_type=key[2])
             _whisper_key = key
+            _whisper_carga_s = time.time() - inicio
     return _whisper_model, cfg["device"]
+
+
+def _nao_esta_no_disco(erro):
+    """O erro e o `local_files_only` dizendo que o modelo ainda nao foi baixado?
+
+    E o unico caso em que vale tentar de novo pela rede. Um erro de CUDA na
+    mesma chamada (placa sem memoria) tem de subir como antes, para a queda
+    para CPU do `run_whisper_transcription` -- repetir a carga so dobraria a
+    espera ate ela.
+    """
+    return (isinstance(erro, FileNotFoundError)
+            or "LocalEntryNotFound" in type(erro).__name__
+            or "local_files_only" in str(erro)
+            or "outgoing traffic has been disabled" in str(erro))
 
 
 def linha_do_whisper(model_size, device, compute_type):
@@ -145,22 +175,65 @@ def linha_do_whisper(model_size, device, compute_type):
     return f"🎙️ [ASR] whisper {model_size} em {device} ({compute_type})"
 
 
+def tamanho_do_lote():
+    """Quantos trechos de ate 30 s a placa decodifica de uma vez.
+
+    `WHISPER_BATCH_SIZE` manda; 0 ou 1 volta ao modo sequencial de antes. Em
+    CPU o lote nao e usado: la nao ha paralelismo sobrando para ele ganhar.
+    """
+    try:
+        return max(0, int(os.environ.get("WHISPER_BATCH_SIZE", "8")))
+    except ValueError:
+        return 8
+
+
+def _pipeline_em_lotes(model):
+    from faster_whisper import BatchedInferencePipeline
+    return BatchedInferencePipeline(model=model)
+
+
+def _transcrever(motor, media_path, params):
+    """Roda `motor.transcribe` e MATERIALIZA os segmentos (o gerador e lazy:
+    a decodificacao acontece enquanto se itera, entao a falha tambem)."""
+    segments, info = motor.transcribe(media_path, **params)
+    progress = _TranscribeProgress(getattr(info, "duration", 0))
+    materialized = []
+    for segment in segments:
+        materialized.append(segment)
+        progress.update(segment.end)
+    # VAD trims trailing silence, so the last segment can end short of the
+    # media duration — force the 100% line.
+    progress.update(progress.total)
+    return materialized, info
+
+
 def _run_whisper_once(media_path, **params):
+    global _whisper_carga_s
     model, device = _get_whisper_model()
     if _whisper_key:
         print(linha_do_whisper(*_whisper_key), flush=True)
+    if _whisper_carga_s is not None:
+        # Quanto custa subir o modelo: e o numero que decide se vale levar o
+        # `.cache/` do disco do Windows para um volume do Docker.
+        print(f"   ⏱️ [ASR] modelo carregado em {_whisper_carga_s:.1f}s", flush=True)
+        _whisper_carga_s = None
     gate = _ASR_GATE if device != "cpu" else _NULL_GATE
+    lote = tamanho_do_lote() if device != "cpu" else 0
     with gate:
-        segments, info = model.transcribe(media_path, **params)
-        progress = _TranscribeProgress(getattr(info, "duration", 0))
-        materialized = []
-        for segment in segments:
-            materialized.append(segment)
-            progress.update(segment.end)
-        # VAD trims trailing silence, so the last segment can end short of the
-        # media duration — force the 100% line.
-        progress.update(progress.total)
-        return materialized, info
+        if lote > 1:
+            # Em lotes (23-set-2026): o VAD corta o audio em trechos de ate
+            # 30 s e a placa decodifica `lote` deles de uma vez, em vez de um
+            # por um. O `without_timestamps=False` mantem os segmentos do
+            # tamanho de uma frase, como no modo sequencial: as janelas da
+            # deteccao de momentos se alinham a eles.
+            try:
+                return _transcrever(
+                    _pipeline_em_lotes(model), media_path,
+                    dict(params, batch_size=lote, without_timestamps=False))
+            except Exception as e:  # noqa: BLE001 - o modo antigo e a rede
+                print(f"⚠️ [ASR] transcricao em lotes falhou ({type(e).__name__}: "
+                      f"{e}) — refazendo no modo sequencial.", flush=True)
+        return _transcrever(model, media_path, params)
 
 
 def run_whisper_transcription(media_path, **params):

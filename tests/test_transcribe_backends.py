@@ -175,9 +175,10 @@ def fake_faster_whisper(monkeypatch):
     created = []
 
     class FakeModel:
-        def __init__(self, model_size, device=None, compute_type=None):
+        def __init__(self, model_size, device=None, compute_type=None, **kwargs):
             self.model_size = model_size
             self.device = device
+            self.kwargs = kwargs
             created.append(self)
 
         def transcribe(self, path, **params):
@@ -338,3 +339,150 @@ def test_o_whisper_nao_carrega_em_thread_de_fundo():
     do_main = set(chamadas("main.py"))
     assert "pre_carregar_whisper" not in do_main
     assert "_get_whisper_model" not in do_main
+
+
+class TestTranscricaoEmLotes:
+    """Na placa o whisper decodifica varios trechos de uma vez (23-set-2026).
+
+    No job de 213 s a transcricao eram 37 s de decodificacao, um trecho por
+    vez. O faster-whisper tem o modo em lotes desde a 1.1, e a config deste
+    projeto ja era a que ele exige: VAD ligado e sem condicionar no texto
+    anterior. A rede e o modo antigo, que continua a um passo.
+    """
+
+    @pytest.fixture
+    def modelos(self, monkeypatch):
+        chamadas = []
+
+        class Segmentos:
+            def __init__(self, quem, falha_no_meio=False):
+                self.quem, self.falha_no_meio = quem, falha_no_meio
+
+            def __iter__(self):
+                yield SimpleNamespace(start=0.0, end=1.0, text=f" {self.quem}", words=None)
+                if self.falha_no_meio:
+                    raise RuntimeError("batch decode blew up mid-way")
+
+        class Modelo:
+            def __init__(self, model_size, device=None, compute_type=None, **kwargs):
+                self.kwargs = kwargs
+
+            def transcribe(self, path, **params):
+                chamadas.append(("sequencial", params))
+                return Segmentos("seq"), SimpleNamespace(language="pt", duration=1.0)
+
+        class Lotes:
+            falhar = None          # None | "na_chamada" | "no_meio"
+
+            def __init__(self, model):
+                self.model = model
+
+            def transcribe(self, path, **params):
+                chamadas.append(("lotes", params))
+                if Lotes.falhar == "na_chamada":
+                    raise RuntimeError("CUDA failed with error out of memory")
+                return (Segmentos("lote", Lotes.falhar == "no_meio"),
+                        SimpleNamespace(language="pt", duration=1.0))
+
+        monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(
+            WhisperModel=Modelo, BatchedInferencePipeline=Lotes))
+        monkeypatch.setattr(tb, "_whisper_model", None)
+        monkeypatch.setattr(tb, "_whisper_key", None)
+        monkeypatch.setattr(tb, "_whisper_force_cpu", False)
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        monkeypatch.setenv("WHISPER_COMPUTE", "float16")
+        monkeypatch.delenv("WHISPER_BATCH_SIZE", raising=False)
+        return chamadas, Lotes
+
+    def test_na_placa_decodifica_em_lotes(self, modelos):
+        chamadas, _ = modelos
+        segmentos, _info = tb._run_whisper_once("a.wav", beam_size=5, vad_filter=True)
+        assert [c[0] for c in chamadas] == ["lotes"]
+        params = chamadas[0][1]
+        assert params["batch_size"] == 8
+        # Segmentos do tamanho de uma frase, como no sequencial: as janelas
+        # da deteccao de momentos se alinham a eles.
+        assert params["without_timestamps"] is False
+        assert params["beam_size"] == 5 and params["vad_filter"] is True
+        assert segmentos[0].text == " lote"
+
+    def test_em_cpu_continua_sequencial(self, modelos, monkeypatch):
+        chamadas, _ = modelos
+        monkeypatch.setenv("WHISPER_DEVICE", "cpu")
+        tb._run_whisper_once("a.wav", beam_size=5)
+        assert [c[0] for c in chamadas] == ["sequencial"]
+
+    @pytest.mark.parametrize("valor", ["0", "1"])
+    def test_a_variavel_desliga(self, modelos, monkeypatch, valor):
+        chamadas, _ = modelos
+        monkeypatch.setenv("WHISPER_BATCH_SIZE", valor)
+        tb._run_whisper_once("a.wav", beam_size=5)
+        assert [c[0] for c in chamadas] == ["sequencial"]
+
+    @pytest.mark.parametrize("modo", ["na_chamada", "no_meio"])
+    def test_falha_em_lotes_refaz_no_sequencial(self, modelos, capsys, monkeypatch, modo):
+        # "no_meio": o gerador e lazy, entao a falha pode vir durante a
+        # iteracao -- e o que ja tinha saido nao pode sobrar na resposta.
+        chamadas, Lotes = modelos
+        monkeypatch.setattr(Lotes, "falhar", modo)
+        segmentos, _info = tb._run_whisper_once("a.wav", beam_size=5)
+        assert [c[0] for c in chamadas] == ["lotes", "sequencial"]
+        assert [s.text for s in segmentos] == [" seq"]
+        assert "refazendo no modo sequencial" in capsys.readouterr().out
+
+
+class TestCargaDoModelo:
+    """O modelo sai do disco sem perguntar ao Hugging Face (23-set-2026)."""
+
+    @pytest.fixture
+    def criados(self, monkeypatch):
+        tentativas = []
+
+        class Modelo:
+            nao_esta_no_disco = False
+            erro_de_placa = False
+
+            def __init__(self, model_size, device=None, compute_type=None, **kwargs):
+                tentativas.append(kwargs)
+                if Modelo.erro_de_placa:
+                    raise RuntimeError("CUDA failed with error out of memory")
+                if kwargs.get("local_files_only") and Modelo.nao_esta_no_disco:
+                    class LocalEntryNotFoundError(FileNotFoundError):
+                        pass
+                    raise LocalEntryNotFoundError("Cannot find an appropriate cached snapshot")
+
+        monkeypatch.setitem(sys.modules, "faster_whisper",
+                            types.SimpleNamespace(WhisperModel=Modelo))
+        monkeypatch.setattr(tb, "_whisper_model", None)
+        monkeypatch.setattr(tb, "_whisper_key", None)
+        monkeypatch.setattr(tb, "_whisper_carga_s", None)
+        monkeypatch.setattr(tb, "_whisper_force_cpu", False)
+        return tentativas, Modelo
+
+    def test_modelo_ja_baixado_nao_vai_a_rede(self, criados):
+        tentativas, _ = criados
+        tb._get_whisper_model()
+        assert tentativas == [{"local_files_only": True}]
+
+    def test_primeira_vez_baixa(self, criados, monkeypatch):
+        tentativas, Modelo = criados
+        monkeypatch.setattr(Modelo, "nao_esta_no_disco", True)
+        tb._get_whisper_model()
+        assert tentativas == [{"local_files_only": True}, {}]
+
+    def test_erro_de_placa_nao_repete_a_carga(self, criados, monkeypatch):
+        # A queda para CPU mora no `run_whisper_transcription`; carregar de
+        # novo pela rede so dobraria a espera ate ela.
+        tentativas, Modelo = criados
+        monkeypatch.setattr(Modelo, "erro_de_placa", True)
+        with pytest.raises(RuntimeError, match="CUDA"):
+            tb._get_whisper_model()
+        assert len(tentativas) == 1
+
+    def test_o_log_diz_quanto_a_carga_levou_uma_vez_so(self, criados, monkeypatch, capsys):
+        monkeypatch.setenv("WHISPER_DEVICE", "cpu")
+        monkeypatch.setattr(tb, "_transcrever", lambda *a, **k: ([], None))
+        tb._run_whisper_once("a.wav")
+        tb._run_whisper_once("a.wav")
+        saida = capsys.readouterr().out
+        assert saida.count("modelo carregado em") == 1

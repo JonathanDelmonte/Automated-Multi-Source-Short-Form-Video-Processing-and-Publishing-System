@@ -860,6 +860,12 @@ plano aberto e a que ritmo o ffmpeg andou — é daí que sai a rodada 5. Uma te
 mudança, carregar o whisper durante o download, travou a transcrição na máquina do
 autor e foi revertida no mesmo dia (detalhes no `CLAUDE.md`).
 
+O job seguinte levou 213 s (−38%). A rodada 5 atacou o que ele mostrou: o whisper
+passou a decodificar em lotes na placa e a carregar o modelo do disco sem ir à rede,
+o 429 do Groq deixou de esperar quando o Gemini pode responder, e com placa o render
+passou a fazer seis cortes ao mesmo tempo — esta última, uma aposta que o próximo log
+confirma ou desfaz.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

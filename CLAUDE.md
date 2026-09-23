@@ -1644,6 +1644,51 @@ Ficou de fora, de proposito:
 - **Mais `CLIP_WORKERS`.** Sem saber se a maquina tem folga, mais workers pode
   ser so mais disputa. As duas linhas novas por corte respondem isso.
 
+### Velocidade, rodada 5: o log de 213 s (23-set-2026)
+
+Com a rodada 4 o mesmo video de 10,5 min caiu de 343 s para 213 s: o ffmpeg do
+reenquadramento foi de ~20 para ~50 quadros/s por corte, e as linhas novas
+mostraram que 61% a 100% dos quadros deste video sao GENERAL. O resumo apontou
+o resto: `03_transcribe` 57 s (16 s de carga, 37 s decodificando),
+`04_detect` 26 s (15 s esperando o Groq) e `05_06_render` 87 s, em duas
+rodadas de tres cortes.
+
+- **O whisper decodifica em lotes na placa** (`WHISPER_BATCH_SIZE`, 8 por
+  padrao; 0 ou 1 volta ao modo sequencial). O `BatchedInferencePipeline` do
+  faster-whisper (1.1+, aqui 1.2.1) corta o audio pelo VAD em trechos de ate
+  30 s e decodifica varios de uma vez. A config deste projeto ja era a que ele
+  exige: VAD ligado, sem condicionar no texto anterior.
+  - **`without_timestamps=False` de proposito.** O padrao do modo em lotes
+    junta cada trecho num segmento so, e as janelas da deteccao de momentos
+    (`clip_selection.build_transcript_windows`) se alinham a segmentos: com
+    blocos de 30 s, a janela ficaria grosseira.
+  - **O que muda na qualidade:** o modo em lotes nao refaz com temperatura
+    maior o trecho que saiu repetitivo, e o sequencial refaz. Se a legenda
+    piorar, `WHISPER_BATCH_SIZE=0` no `.env` volta ao de antes.
+  - Qualquer falha nele -- inclusive no meio da iteracao, porque o gerador e
+    lazy -- refaz no sequencial, com uma linha no log.
+  - **Nao foi medido aqui**: o proxy desta maquina bloqueia o Hugging Face,
+    entao nao ha modelo para rodar. A API foi conferida no fonte da 1.2.1, os
+    testes usam modelo falso, e o numero vem do proximo log do autor.
+- **O modelo sai do disco sem perguntar ao Hugging Face**
+  (`local_files_only=True` primeiro). O `snapshot_download` ia a rede em todo
+  job so para confirmar a revisao do modelo ja baixado. So o "nao esta no
+  disco" tenta de novo pela rede; erro de placa sobe como antes, para a queda
+  para CPU. E o log ganhou `⏱️ [ASR] modelo carregado em X s` -- o numero
+  que decide se vale levar o `.cache/` para um volume do Docker.
+- **Com outro provedor pronto, o 429 nao espera mais que 3 s**
+  (`llm_cascade.ESPERA_MAXIMA_COM_ALTERNATIVA_S`). A rodada 4 esperava a dica
+  do Groq quando ela cabia na paciencia de 15 s -- e coube: 14,4 s parado com
+  o Gemini pronto para responder em ~6 s. `run()` avisa cada chamada, por um
+  `ContextVar`, se ha quem atenda depois dela; o ULTIMO da fila continua com a
+  paciencia de sempre, porque desistir dele derruba a deteccao do job.
+- **Seis cortes em paralelo com placa** (`CLIP_WORKERS` no
+  `docker-compose.gpu.yml`; sem placa continuam 3). Com tres, cada ffmpeg do
+  reenquadramento andava a ~50 quadros/s numa CPU de 16 threads. O teto e o
+  NVENC: 8 sessoes numa GeForce, e cada corte usa uma por vez. **E aposta, nao
+  medicao**: as linhas por corte do proximo log dizem se cada um manteve o
+  ritmo (ganho) ou caiu a metade (a maquina ja estava cheia; volta a 3).
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

@@ -466,3 +466,66 @@ def test_o_main_pergunta_a_espera_a_cascata():
     fonte = ast.unparse(funcao)
     assert "llm_cascade.espera_antes_de_repetir(" in fonte
     assert "2 ** (attempt - 1)" not in fonte
+
+
+class TestEsperaComOutroProvedor:
+    """Com outro provedor pronto, esperar muito pelo mesmo nao compensa.
+
+    No job de 213 s (23-set-2026) o Groq pediu 14,4 s, isso cabia na paciencia
+    de 15 s, e o job esperou -- quando o Gemini respondia em ~6 s.
+    """
+
+    @pytest.fixture
+    def com_alternativa(self):
+        marca = llm_cascade._HA_ALTERNATIVA.set(True)
+        yield
+        llm_cascade._HA_ALTERNATIVA.reset(marca)
+
+    def test_o_caso_do_log_passa_ao_proximo(self, com_alternativa):
+        assert llm_cascade.espera_antes_de_repetir(
+            "Please try again in 14.4s.", 1, 0.0, 3) is None
+
+    def test_espera_curta_ainda_vale(self, com_alternativa):
+        assert llm_cascade.espera_antes_de_repetir(
+            "Please try again in 2s.", 1, 0.0, 3) == pytest.approx(2.5)
+
+    def test_sem_alternativa_a_paciencia_e_a_de_sempre(self):
+        # O ultimo da fila: desistir aqui derruba a deteccao do job inteiro.
+        assert llm_cascade.espera_antes_de_repetir(
+            "Please try again in 14.4s.", 1, 0.0, 3) == pytest.approx(14.9)
+
+    def test_sem_dica_a_regra_nao_muda(self, com_alternativa):
+        # 503 sem dica: a regra de 5 s / 10 s continua, mesmo com alternativa.
+        assert llm_cascade.espera_antes_de_repetir("503", 1, 0.0, 3) == 5
+
+    def test_run_avisa_cada_chamada_se_ha_para_onde_ir(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "g")
+        monkeypatch.setenv("GEMINI_API_KEY", "m")
+        visto = {}
+
+        def call(prompt, schema, provider):
+            visto[provider.id] = llm_cascade._HA_ALTERNATIVA.get()
+            if provider.id == "groq":
+                raise RuntimeError("LLM server 429: Please try again in 14.4s.")
+            return {"ok": True}, {}
+
+        llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
+                        log=lambda _m: None)
+        # O Groq tinha o Gemini atras; o Gemini era o ultimo.
+        assert visto == {"groq": True, "gemini": False}
+        # E o aviso nao vaza para fora da chamada.
+        assert llm_cascade._HA_ALTERNATIVA.get() is False
+
+    def test_provedor_sem_orcamento_nao_conta_como_alternativa(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "g")
+        monkeypatch.setenv("GEMINI_API_KEY", "m")
+        monkeypatch.setattr(llm_cascade, "_MODELO_INEXISTENTE", {"gemini": "x"})
+        visto = {}
+
+        def call(prompt, schema, provider):
+            visto[provider.id] = llm_cascade._HA_ALTERNATIVA.get()
+            return {"ok": True}, {}
+
+        llm_cascade.run("oi", Resposta, call=call, duration_seconds=60,
+                        log=lambda _m: None)
+        assert visto == {"groq": False}

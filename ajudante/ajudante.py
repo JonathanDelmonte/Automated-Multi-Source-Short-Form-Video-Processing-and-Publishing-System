@@ -17,12 +17,14 @@ A logica (`Ajudante.passo`, `ambiente_do_motor`, `quem_atende`) e stdlib pura
 e roda no CI de sempre; so a bandeja (`pystray`) e o registro (`winreg`) sao do
 Windows, e ficam em funcoes que o teste nao chama.
 
-Uso: pythonw.exe ajudante.py   (o instalador cria o atalho)
+Uso: pythonw.exe iniciar.py   (o instalador cria o atalho; o `iniciar.py`
+acha a versao em uso e roda este arquivo -- ver atualizacao.py)
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -40,17 +42,28 @@ NOME = "Cortes"
 
 NO_WINDOWS = os.name == "nt"
 _SEM_JANELA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+AQUI = Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True)
 class Caminhos:
     """Onde cada coisa mora. O codigo e TROCADO a cada atualizacao; os dados
-    nunca -- por isso vivem em pastas irmas, e nao um dentro do outro."""
+    nunca -- por isso vivem em pastas irmas, e nao um dentro do outro.
+
+    `motor` e a versao que roda ESTE arquivo (`versoes/<versao>/`, que e o
+    que o `iniciar.py` escolheu), e nao uma pasta fixa: e assim que a
+    verificacao de uma versao nova sobe o motor DELA, e nao o da atual.
+    """
     base: Path
+    codigo: Optional[Path] = None
 
     @property
     def motor(self) -> Path:        # o repositorio: app.py, main.py, fonts/...
-        return self.base / "motor"
+        return self.codigo or AQUI.parent
+
+    @property
+    def versoes(self) -> Path:
+        return self.base / "versoes"
 
     @property
     def dados(self) -> Path:        # projetos, banco, modelos, .env da pessoa
@@ -122,8 +135,11 @@ def ler_env_da_pessoa(c: Caminhos) -> dict:
 
 
 def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
-                      da_pessoa: Optional[Mapping[str, str]] = None) -> dict:
-    """As variaveis com que o motor sobe. O `.env` da pessoa vence tudo.
+                      da_pessoa: Optional[Mapping[str, str]] = None,
+                      pastas_em: Optional[Path] = None) -> dict:
+    """As variaveis com que o motor sobe. O `.env` da pessoa vence tudo --
+    menos as pastas de uma verificacao (`pastas_em`), que nunca podem cair nos
+    projetos de verdade.
 
     Com placa mas SEM as DLLs de CUDA (instalado antes de a placa existir, ou
     a instalacao delas falhou), o whisper vai para a CPU de proposito: pedir
@@ -146,8 +162,16 @@ def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
         "WHISPER_MODEL": "large-v3-turbo" if whisper_na_placa else "small",
         # O NVENC so precisa do driver, nao das DLLs de CUDA.
         "FFMPEG_ENCODER": "auto" if placa else "x264",
+        # Os 20 s em que o motor continua servindo depois de pedirem que pare
+        # sao para o proxy do deploy em nuvem tira-lo de rotacao. Aqui nao ha
+        # proxy nenhum -- so a pessoa esperando o motor reiniciar.
+        "PROXY_DRAIN_SECONDS": "0",
     })
     env.update(da_pessoa or {})
+    if pastas_em is not None:
+        env.update({"OUTPUT_DIR": str(pastas_em / "output"),
+                    "UPLOAD_DIR": str(pastas_em / "uploads"),
+                    "DATA_DIR": str(pastas_em / "data")})
     return env
 
 
@@ -191,9 +215,12 @@ def girar_log(caminho: Path) -> None:
 class Motor:
     """O `uvicorn app:app` em 127.0.0.1 -- so nesta maquina, nunca na rede."""
 
-    def __init__(self, c: Caminhos, env_fn: Callable[[], dict]):
+    def __init__(self, c: Caminhos, env_fn: Callable[[], dict], porta: int = PORTA,
+                 log_nome: str = "motor.log"):
         self.c = c
         self.env_fn = env_fn
+        self.porta = porta
+        self.log_nome = log_nome
         self.proc: Optional[subprocess.Popen] = None
 
     def vivo(self) -> bool:
@@ -201,7 +228,7 @@ class Motor:
 
     def iniciar(self) -> None:
         self.c.logs.mkdir(parents=True, exist_ok=True)
-        log_path = self.c.logs / "motor.log"
+        log_path = self.c.logs / self.log_nome
         girar_log(log_path)
         log = open(log_path, "a", encoding="utf-8")
         log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} motor subindo\n")
@@ -217,7 +244,7 @@ class Motor:
             kw = {"startupinfo": si, "creationflags": subprocess.CREATE_NEW_CONSOLE}
         self.proc = subprocess.Popen(
             [str(self.c.python), "-m", "uvicorn", "app:app",
-             "--host", "127.0.0.1", "--port", str(PORTA)],
+             "--host", "127.0.0.1", "--port", str(self.porta)],
             cwd=str(self.c.motor), env=self.env_fn(),
             stdout=log, stderr=subprocess.STDOUT, **kw)
         log.close()  # o filho tem a copia dele
@@ -270,8 +297,16 @@ class Ajudante:
         self.falhas = 0
         self.proxima_tentativa = 0.0
         self._subiu_em: Optional[float] = None
+        self.encerrado = False
+
+    def encerrar(self) -> None:
+        """Sair ou trocar de versao: nenhuma volta seguinte sobe o motor de
+        novo, nem a que ja estava no meio quando o pedido chegou."""
+        self.encerrado = True
 
     def passo(self) -> str:
+        if self.encerrado:
+            return self.estado
         agora = self.relogio()
         if self.motor.vivo():
             if self.quem_atende() == MOTOR:
@@ -335,9 +370,10 @@ def ajudante_rodando() -> bool:
 _CHAVE_RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-def comando_de_inicio() -> str:
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    return f'"{pythonw}" "{Path(__file__).resolve()}"'
+def comando_de_inicio(c: Caminhos) -> str:
+    """O mesmo que o instalador grava: o `iniciar.py`, e nao este arquivo --
+    este muda de pasta a cada versao."""
+    return f'"{c.python.with_name("pythonw.exe")}" "{c.base / "iniciar.py"}"'
 
 
 def inicia_com_o_windows() -> bool:
@@ -350,11 +386,11 @@ def inicia_com_o_windows() -> bool:
         return False
 
 
-def iniciar_com_o_windows(ligar: bool) -> None:
+def iniciar_com_o_windows(ligar: bool, c: Caminhos) -> None:
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _CHAVE_RUN, 0, winreg.KEY_SET_VALUE) as k:
         if ligar:
-            winreg.SetValueEx(k, NOME, 0, winreg.REG_SZ, comando_de_inicio())
+            winreg.SetValueEx(k, NOME, 0, winreg.REG_SZ, comando_de_inicio(c))
         else:
             try:
                 winreg.DeleteValue(k, NOME)
@@ -384,14 +420,29 @@ def imagem_do_icone():
     return img
 
 
-def rodar_bandeja(c: Caminhos) -> None:
+def _atualizacao():
+    """O modulo da atualizacao, com ESTE arquivo registrado como `ajudante`.
+
+    Rodado pelo `iniciar.py`, este arquivo e o `__main__`; sem o registro, o
+    `import ajudante` de la leria o arquivo de novo e criaria um segundo
+    modulo, com outras classes e outro `_MUTEX` -- o mesmo defeito que o
+    CLAUDE.md descreve para o `main.py`."""
+    if __name__ == "__main__":
+        sys.modules.setdefault("ajudante", sys.modules[__name__])
+    import atualizacao
+    return atualizacao
+
+
+def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
     import pystray
 
+    at = _atualizacao()
     placa = tem_placa_nvidia()
     motor = Motor(c, lambda: ambiente_do_motor(c, placa, os.environ, ler_env_da_pessoa(c)))
     ajudante = Ajudante(motor)
     parar = threading.Event()
     primeira_vez = not (c.dados / ".ja_abriu_o_site").exists()
+    versao = at.versao_de(c.motor) or "de desenvolvimento"
 
     def titulo() -> str:
         extra = ""
@@ -399,20 +450,22 @@ def rodar_bandeja(c: Caminhos) -> None:
             extra = " (placa de video)" if placa else " (processador)"
         return f"{NOME}: {TEXTO_DO_ESTADO[ajudante.estado]}{extra}"
 
-    def sair(icone, _item):
+    def sair(icone, _item=None):
         parar.set()
+        ajudante.encerrar()
         motor.parar()
         icone.stop()
 
     menu = pystray.Menu(
         pystray.MenuItem(lambda _i: titulo(), None, enabled=False),
+        pystray.MenuItem(f"versao {versao}", None, enabled=False),
         pystray.MenuItem("Abrir o Cortes", lambda *_: webbrowser.open(SITE), default=True),
         pystray.MenuItem("Abrir a pasta dos cortes",
                          lambda *_: abrir(c.dados / "output")),
         pystray.MenuItem("Ver o log do motor", lambda *_: abrir(c.logs / "motor.log")),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Iniciar com o Windows",
-                         lambda *_: iniciar_com_o_windows(not inicia_com_o_windows()),
+                         lambda *_: iniciar_com_o_windows(not inicia_com_o_windows(), c),
                          checked=lambda _i: inicia_com_o_windows()),
         pystray.MenuItem("Sair", sair),
     )
@@ -423,7 +476,7 @@ def rodar_bandeja(c: Caminhos) -> None:
         while not parar.is_set():
             if pedido_de_parar(c):
                 # O desinstalador (ou um `--parar`) pediu: desliga tudo e sai.
-                sair(icone, None)
+                sair(icone)
                 return
             anterior = ajudante.estado
             ajudante.passo()
@@ -441,8 +494,22 @@ def rodar_bandeja(c: Caminhos) -> None:
                     pass
             parar.wait(3 if ajudante.estado == INICIANDO else 15)
 
+    def vigiar_atualizacoes():
+        at.vigiar(c, lambda: ajudante.estado, parar, at.lancar_aplicacao,
+                  lambda: sair(icone), at.registro(c))
+
+    def ao_abrir(icone_):
+        icone_.visible = True
+        if aviso:
+            try:
+                icone_.notify(aviso, NOME)
+            except Exception:
+                pass
+
     threading.Thread(target=laco, daemon=True).start()
-    icone.run()
+    if os.environ.get("CORTES_ATUALIZAR", "1") != "0":
+        threading.Thread(target=vigiar_atualizacoes, daemon=True).start()
+    icone.run(setup=ao_abrir)
 
 
 # --- modos de linha de comando ---------------------------------------------
@@ -477,39 +544,107 @@ def pedir_para_parar(c: Caminhos, prazo_s: float = 40,
     return 0
 
 
-def fim_do_log(c: Caminhos, linhas: int = 80) -> str:
+def fim_do_log(c: Caminhos, nome: str = "motor.log", linhas: int = 80) -> str:
     try:
-        texto = (c.logs / "motor.log").read_text(encoding="utf-8", errors="replace")
+        texto = (c.logs / nome).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return "(sem log do motor)"
     return "\n".join(texto.splitlines()[-linhas:])
 
 
-def verificar(c: Caminhos, prazo_s: float = 300) -> int:
-    """`--verificar`: sobe o motor como a bandeja subiria, espera ele responder
-    e desliga. E o que o CI roda depois de instalar o .exe de verdade -- prova a
-    instalacao (venv, pastas, ffmpeg no PATH) sem precisar de tela. Na falha,
-    imprime o fim do log: e a unica coisa que o CI guarda sem pedir."""
+def importar_o_pipeline(c: Caminhos, env: dict) -> tuple:
+    """`import main`: o servidor responder prova o `app.py`, e o pipeline mora
+    no `main.py`, que so roda quando um video chega. E ele que carrega torch,
+    mediapipe e o resto -- uma dependencia quebrada so apareceria ali."""
+    try:
+        r = subprocess.run([str(c.python), "-c", "import main"], cwd=str(c.motor), env=env,
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=300, creationflags=_SEM_JANELA)
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, str(e)
+    return r.returncode == 0, (r.stdout + r.stderr)[-3000:]
+
+
+def verificar(c: Caminhos, porta: int = PORTA, temporario: bool = False,
+              prazo_s: float = 300) -> int:
+    """`--verificar`: sobe o motor como a bandeja subiria, espera ele responder,
+    confere que o pipeline importa e desliga. O CI roda isto depois de
+    instalar o .exe de verdade; a atualizacao, antes de trocar de versao.
+
+    `--temporario` poe projetos, uploads e banco numa pasta que e apagada no
+    fim: verificar uma versao nova nao pode retomar a fila nem migrar o banco
+    de verdade. Na falha, imprime o fim do log -- e o que o CI e o registro da
+    atualizacao guardam sem pedir."""
     placa = tem_placa_nvidia()
-    motor = Motor(c, lambda: ambiente_do_motor(c, placa, os.environ, ler_env_da_pessoa(c)))
-    if quem_atende() != LIVRE:
-        print("a porta 8000 ja esta em uso; nada a verificar")
+    pastas = c.dados / "verificacao" / str(os.getpid()) if temporario else None
+    log_nome = "verificacao.log" if temporario else "motor.log"
+
+    def env() -> dict:
+        return ambiente_do_motor(c, placa, os.environ, ler_env_da_pessoa(c), pastas)
+
+    motor = Motor(c, env, porta=porta, log_nome=log_nome)
+    if quem_atende(porta) != LIVRE:
+        print(f"a porta {porta} ja esta em uso; nada a verificar")
         return 2
+    print(f"verificando a versao {c.motor.name} em 127.0.0.1:{porta}", flush=True)
     motor.iniciar()
     fim = time.monotonic() + prazo_s
     try:
         while time.monotonic() < fim:
             if not motor.vivo():
-                print("o motor morreu ao subir:\n" + fim_do_log(c))
+                print("o motor morreu ao subir:\n" + fim_do_log(c, log_nome))
                 return 1
-            if quem_atende() == MOTOR:
-                print(f"motor pronto ({'placa de video' if placa else 'processador'})")
-                return 0
+            if quem_atende(porta) == MOTOR:
+                break
             time.sleep(2)
-        print("o motor nao respondeu a tempo:\n" + fim_do_log(c))
-        return 1
+        else:
+            print("o motor nao respondeu a tempo:\n" + fim_do_log(c, log_nome))
+            return 1
+        ok, saida = importar_o_pipeline(c, env())
+        if not ok:
+            print("o servidor subiu, mas o pipeline (main.py) nao importa:\n" + saida)
+            return 1
+        print(f"motor pronto ({'placa de video' if placa else 'processador'})", flush=True)
+        return 0
     finally:
         motor.parar()
+        if pastas is not None:
+            shutil.rmtree(pastas, ignore_errors=True)
+
+
+def atualizar_agora(c: Caminhos) -> int:
+    """`--atualizar-agora`: confere, prepara e troca, tudo nesta chamada. E o
+    que o CI usa para provar a troca e a volta; a bandeja faz o mesmo sozinha,
+    de 6 em 6 horas."""
+    at = _atualizacao()
+    log = at.registro(c)
+    if ajudante_rodando():
+        print("o ajudante esta aberto: ele se atualiza sozinho quando o motor estiver livre")
+        return 2
+    try:
+        nova = at.preparar_se_houver(c, log)
+    except Exception as e:
+        log(f"conferir atualizacao: {e!r}")
+        return 1
+    if nova is None:
+        log(f"nada a trocar (versao {at.versao_de(c.motor) or 'sem versao'})")
+        return 0
+    return 0 if at.aplicar(c, nova, log) else 1
+
+
+def esperar_o_anterior_sair(prazo_s: float = 60) -> None:
+    """`--reinicio`: a troca de versao abre o ajudante novo logo depois de o
+    antigo sair; sem esperar, o mutex dele ainda poderia estar de pe, e o novo
+    concluiria que ja ha um ajudante e so abriria o site."""
+    fim = time.monotonic() + prazo_s
+    while ajudante_rodando() and time.monotonic() < fim:
+        time.sleep(0.5)
+
+
+def _valor(argv: list, nome: str, padrao=None):
+    if nome in argv and argv.index(nome) + 1 < len(argv):
+        return argv[argv.index(nome) + 1]
+    return padrao
 
 
 def main(argv=None) -> int:
@@ -518,12 +653,23 @@ def main(argv=None) -> int:
     if "--parar" in argv:
         return pedir_para_parar(c)
     if "--verificar" in argv:
-        return verificar(c)
+        return verificar(c, porta=int(_valor(argv, "--porta", PORTA)),
+                         temporario="--temporario" in argv)
+    if "--atualizar-agora" in argv:
+        return atualizar_agora(c)
+    if "--reinicio" in argv:
+        esperar_o_anterior_sair()
     if ja_existe_outro_ajudante():
         webbrowser.open(SITE)
         return 0
     c.dados.mkdir(parents=True, exist_ok=True)
-    rodar_bandeja(c)
+    aviso = None
+    if "--atualizado" in argv:
+        aviso = f"Atualizado para a versao {_valor(argv, '--atualizado', '')}."
+    elif "--atualizacao-falhou" in argv:
+        aviso = (f"A versao {_valor(argv, '--atualizacao-falhou', '')} nao passou na "
+                 "verificacao; o Cortes continua na anterior.")
+    rodar_bandeja(c, aviso)
     return 0
 
 

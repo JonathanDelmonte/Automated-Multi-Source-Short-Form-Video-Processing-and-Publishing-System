@@ -3,7 +3,7 @@ name: Windows
 # O motor fora do Docker, no Windows (ajudante, Fase 6.2, 24-set-2026).
 #
 # O CI de sempre (ci.yml) roda no Linux e, de proposito, sem torch, mediapipe
-# nem whisper. Este roda o motor INTEIRO no Windows, de dois jeitos:
+# nem whisper. Este roda o motor INTEIRO no Windows, e publica o ajudante:
 #
 # - `motor`: as dependencias direto no Python do runner, a suite de testes, e
 #   um video do comeco ao fim (ajudante/ponta_a_ponta.py): fala gerada pelo
@@ -11,16 +11,28 @@ name: Windows
 #   reenquadramento e legenda. Depois cancela um job no meio e apaga o
 #   projeto -- no Windows, um ffmpeg orfao seguraria o arquivo.
 # - `instalador`: monta o Cortes-Ajudante.exe, instala SEM janela como um
-#   amigo instalaria, confere que o motor instalado sobe, processa o mesmo
-#   video por ele, e desinstala conferindo que os projetos ficam.
+#   amigo instalaria, confere que o motor instalado sobe e processa o mesmo
+#   video, testa a atualizacao sozinha (uma versao boa entra; uma quebrada
+#   volta e nao e tentada de novo) e desinstala conferindo que os projetos
+#   ficam.
+# - `publicar`: com os dois verdes, poe o instalador no GitHub Releases --
+#   de onde o site o oferece e de onde os ajudantes instalados se atualizam.
+#   So quando o MOTOR mudou: um commit de documentacao ou do painel nao
+#   obriga ninguem a reiniciar nada.
 #
-# O que nenhum dos dois prova: placa de video, download do YouTube e IA de
-# verdade. Esses ficam para o teste no PC do autor (docs/COMO-EXECUTAR.md).
+# O que nenhum prova: placa de video, download do YouTube e IA de verdade.
+# Esses ficam para o teste no PC do autor (docs/COMO-EXECUTAR.md).
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+# Uma volta por vez, na ordem dos envios: duas publicando juntas poderiam
+# deixar como "a mais nova" a versao mais velha.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   motor:
@@ -66,14 +78,28 @@ jobs:
 
   instalador:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       PYTHONUTF8: "1"
+    outputs:
+      versao: ${{ steps.versao.outputs.versao }}
     steps:
+      # O historico inteiro (so os commits, sem os arquivos antigos): a versao
+      # e a contagem de commits da main.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Versao
+        id: versao
+        run: |
+          $v = (git rev-list --count HEAD).Trim()
+          "versao=$v" >> $env:GITHUB_OUTPUT
+          "VERSAO=$v" >> $env:GITHUB_ENV
+          "versao $v"
       - name: O que o instalador leva
         run: |
           choco install ffmpeg innosetup -y --no-progress
@@ -87,10 +113,11 @@ jobs:
           Expand-Archive deno.zip -DestinationPath binarios
           Get-ChildItem binarios | Format-Table Name, Length
       - name: Empacotar
-        run: python ajudante/empacotar.py --versao "0.${{ github.run_number }}.0" --bin binarios --commit "${{ github.sha }}"
+        run: python ajudante/empacotar.py --versao $env:VERSAO --bin binarios --commit "${{ github.sha }}"
       - name: Compilar o instalador
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=0.${{ github.run_number }}.0" ajudante\instalador.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=$env:VERSAO" ajudante\instalador.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem ajudante\saida | Format-Table Name, Length
       - name: Instalar sem janela
         run: |
@@ -100,33 +127,102 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\Cortes\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { exit 1 }
       # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
-      # pythonw.exe do venv; se ele nao existir, o icone nao faz nada.
+      # pythonw.exe do venv com o iniciar.py; se um dos dois faltar, o icone
+      # nao faz nada.
       - name: Atalhos e inicio com o Windows
         run: |
           $base = "$env:LOCALAPPDATA\Cortes"
-          foreach ($f in "venv\Scripts\python.exe", "venv\Scripts\pythonw.exe", "bin\ffmpeg.exe", "bin\deno.exe", "motor\VERSAO", "cortes.ico") {
+          foreach ($f in "venv\Scripts\python.exe", "venv\Scripts\pythonw.exe", "iniciar.py", "atual.txt", "bin\ffmpeg.exe", "bin\deno.exe", "versoes\$env:VERSAO\VERSAO", "versoes\$env:VERSAO\.completo", "cortes.ico") {
             if (-not (Test-Path (Join-Path $base $f))) { "faltou $f"; exit 1 }
           }
+          $atual = (Get-Content "$base\atual.txt").Trim()
+          if ($atual -ne $env:VERSAO) { "atual.txt diz $atual, e nao $env:VERSAO"; exit 1 }
           $run = (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes).Cortes
           "inicia com o Windows: $run"
-          if ($run -notmatch "pythonw\.exe") { exit 1 }
+          if ($run -notmatch "pythonw\.exe" -or $run -notmatch "iniciar\.py") { exit 1 }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cortes.lnk")) { "faltou o atalho do menu Iniciar"; exit 1 }
-          "versao instalada: $(Get-Content $base\motor\VERSAO)"
+          "versao instalada: $atual"
       - name: O motor instalado sobe
         run: |
-          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\motor\ajudante\ajudante.py" --verificar
+          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\iniciar.py" --verificar
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: O motor instalado processa um video
         run: |
           $env:PATH = "$env:LOCALAPPDATA\Cortes\bin;" + $env:PATH
-          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\motor\ajudante\ponta_a_ponta.py" --pasta "$env:RUNNER_TEMP\e2e"
+          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\versoes\$env:VERSAO\ajudante\ponta_a_ponta.py" --pasta "$env:RUNNER_TEMP\e2e"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      # A atualizacao sozinha, contra um servidor local com o formato das URLs
+      # do GitHub Releases. Duas versoes: uma boa, que muda as dependencias
+      # (para o `instalar.ps1 -SoDependencias` rodar de verdade), e uma com o
+      # app.py quebrado, que tem de VOLTAR -- e nao ser tentada de novo.
+      - name: A atualizacao troca a versao boa e devolve a quebrada
+        run: |
+          $base = "$env:LOCALAPPDATA\Cortes"
+          $py = "$base\venv\Scripts\python.exe"
+          $srv = "$env:RUNNER_TEMP\releases"
+          function Publicar($versao) {
+            python ajudante/empacotar.py --versao $versao --bin binarios --sem-icone `
+              --pacote "$env:RUNNER_TEMP\pacote-$versao" --saida "$env:RUNNER_TEMP\saida-$versao" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "empacotar $versao" }
+            New-Item -ItemType Directory -Force "$srv\latest\download", "$srv\download\ajudante-$versao" | Out-Null
+            Copy-Item "$env:RUNNER_TEMP\saida-$versao\motor.zip" "$srv\download\ajudante-$versao\"
+            Copy-Item "$env:RUNNER_TEMP\saida-$versao\versao.json" "$srv\latest\download\" -Force
+          }
+          # `| Out-Host`: sem ele, a saida do python viraria parte do valor
+          # que a funcao devolve, e o `-ne 0` compararia uma lista de linhas.
+          function Atualizar {
+            & $py "$base\iniciar.py" --atualizar-agora | Out-Host
+            return $LASTEXITCODE
+          }
+          $boa, $quebrada = "$env:VERSAO.1", "$env:VERSAO.2"
+          Add-Content ajudante\requirements-windows.txt "# muda a assinatura das dependencias"
+          Publicar $boa
+          git checkout -- ajudante/requirements-windows.txt
+          Set-Content app.py 'raise SystemExit("app.py quebrado de proposito pelo CI")'
+          Publicar $quebrada
+          git checkout -- app.py
+          New-Item -ItemType Directory -Force "$srv\latest\download" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\saida-$boa\versao.json" "$srv\latest\download\" -Force
+          $servidor = Start-Process python -ArgumentList "-m", "http.server", "8131", "--bind", "127.0.0.1", "--directory", $srv -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          $env:CORTES_ATUALIZACAO_URL = "http://127.0.0.1:8131"
+          try {
+            "== versao boa ($boa)"
+            if ((Atualizar) -ne 0) { "a versao boa nao entrou"; exit 1 }
+            $atual = (Get-Content "$base\atual.txt").Trim()
+            if ($atual -ne $boa) { "atual.txt diz $atual depois da troca"; exit 1 }
+            if (-not (Test-Path "$base\versoes\$env:VERSAO")) { "a versao anterior tinha de ficar"; exit 1 }
+
+            "== versao quebrada ($quebrada)"
+            Copy-Item "$env:RUNNER_TEMP\saida-$quebrada\versao.json" "$srv\latest\download\" -Force
+            if ((Atualizar) -eq 0) { "a versao quebrada foi aceita"; exit 1 }
+            $atual = (Get-Content "$base\atual.txt").Trim()
+            if ($atual -ne $boa) { "a versao quebrada virou a atual ($atual)"; exit 1 }
+            if (Test-Path "$base\versoes\$quebrada") { "a pasta da versao quebrada ficou"; exit 1 }
+            $estado = Get-Content "$base\dados\atualizacao.json" | ConvertFrom-Json
+            if ($estado.falhou -notcontains $quebrada) { "a falha nao foi registrada"; exit 1 }
+
+            "== a quebrada nao e tentada de novo"
+            if ((Atualizar) -ne 0) { exit 1 }
+            if (-not (Select-String -Path "$base\dados\logs\atualizacao.log" -Pattern "ja falhou" -Quiet)) { "tentou de novo"; exit 1 }
+
+            "== o motor da versao nova sobe pelo iniciar.py"
+            & $py "$base\iniciar.py" --verificar
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          } finally {
+            Stop-Process -Id $servidor.Id -Force -ErrorAction SilentlyContinue
+            "---- dados\logs\atualizacao.log"
+            Get-Content "$base\dados\logs\atualizacao.log" -Tail 80 -ErrorAction SilentlyContinue
+          }
       - name: Desinstalar leva o programa e deixa os projetos
         run: |
           & "$env:LOCALAPPDATA\Cortes\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           # O desinstalador se copia para o temporario e segue de la: espera
           # pelo efeito, nao pelo processo.
           $fim = (Get-Date).AddSeconds(120)
-          while ((Test-Path "$env:LOCALAPPDATA\Cortes\motor") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
-          if (Test-Path "$env:LOCALAPPDATA\Cortes\motor") { "o motor ficou para tras"; exit 1 }
+          while ((Test-Path "$env:LOCALAPPDATA\Cortes\versoes") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes\versoes") { "o motor ficou para tras"; exit 1 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes\venv") { "o venv ficou para tras"; exit 1 }
           if (-not (Test-Path "$env:LOCALAPPDATA\Cortes\dados")) { "os projetos sumiram"; exit 1 }
           if (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes -ErrorAction SilentlyContinue) { "o inicio com o Windows ficou"; exit 1 }
           "desinstalado; os projetos ficaram em $env:LOCALAPPDATA\Cortes\dados"
@@ -150,3 +246,49 @@ jobs:
             ${{ runner.temp }}/e2e/motor.log
             ~/AppData/Local/Cortes/dados/logs/*.log
           if-no-files-found: ignore
+
+  publicar:
+    needs: [motor, instalador]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITULO_DO_COMMIT: ${{ github.event.head_commit.message }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cortes-Ajudante
+          path: novo
+      - name: Publicar se o motor mudou
+        run: |
+          set -euo pipefail
+          ls -l novo
+          versao=$(jq -r .versao novo/versao.json)
+          conteudo=$(jq -r .conteudo novo/versao.json)
+          if gh release download --pattern versao.json --dir anterior 2>/dev/null; then
+            anterior=$(jq -r .versao anterior/versao.json)
+            if [ "$(jq -r .conteudo anterior/versao.json)" = "$conteudo" ]; then
+              echo "o motor e o mesmo da versao $anterior: nada a publicar"
+              exit 0
+            fi
+            if [ "$anterior" -ge "$versao" ]; then
+              echo "a versao $anterior ja publicada e mais nova que a $versao: nada a publicar"
+              exit 0
+            fi
+          fi
+          titulo=$(printf '%s\n' "$TITULO_DO_COMMIT" | head -n 1)
+          notas=$(printf 'Motor do commit %s: %s\n\nBaixe o **Cortes-Ajudante.exe** e abra; ele instala o motor (sem Docker, sem administrador) e abre o site. Quem ja tem o ajudante recebe esta versao sozinho.\n' "${GITHUB_SHA::7}" "$titulo")
+          gh release create "ajudante-$versao" novo/Cortes-Ajudante.exe novo/motor.zip novo/versao.json \
+            --title "Cortes $versao" --notes "$notas" --target "$GITHUB_SHA" --latest
+          echo "publicada: ajudante-$versao"
+      - name: Guardar so as 5 mais novas
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ajudante-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+          while read -r tag; do
+            echo "apagando $tag"
+            gh release delete "$tag" --cleanup-tag --yes
+          done

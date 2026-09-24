@@ -26,7 +26,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $uv = Join-Path $Base "bin\uv.exe"
-$motor = Join-Path $Base "motor"
+# A versao a que este script pertence (versoes\<versao>\ajudante\instalar.ps1):
+# a atualizacao roda o da versao NOVA para instalar as dependencias dela, e o
+# da anterior para devolve-las se a nova nao passar.
+$motor = Split-Path -Parent $PSScriptRoot
 $venv = Join-Path $Base "venv"
 $python = Join-Path $venv "Scripts\python.exe"
 $log = Join-Path $Base "dados\logs\instalacao.log"

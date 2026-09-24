@@ -155,7 +155,7 @@ def test_o_instalador_nao_pede_administrador_e_guarda_os_projetos():
     assert "PrivilegesRequired=lowest" in iss
     assert "{localappdata}\\Cortes" in iss
     apagados = re.findall(r'Type: filesandordirs; Name: "\{app\}\\([^"]+)"', iss)
-    assert "dados" not in apagados and {"motor", "venv", "python", "bin"} <= set(apagados)
+    assert "dados" not in apagados and {"versoes", "venv", "python", "bin"} <= set(apagados)
     # No /VERYSILENT uma caixa comum esperaria um clique para sempre.
     assert "SuppressibleMsgBox(" in iss and "  MsgBox(" not in iss
 
@@ -193,3 +193,25 @@ def test_o_progresso_do_uv_no_stderr_nao_derruba_o_script():
     assert '$ErrorActionPreference = "Continue"' in rodar
     assert "2>&1" in rodar and "Write-Host" in rodar
     assert "$LASTEXITCODE" in rodar
+
+
+def test_nenhuma_linha_do_iss_comeca_com_cerquilha_fora_das_diretivas():
+    """O pre-processador do Inno le como diretiva toda linha que COMECA com
+    `#`, e no Pascal do [Code] `#13#10` e a quebra de linha. Uma continuacao
+    comecando por ela derrubou a compilacao no CI (24-set-2026)."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    diretivas = ("#ifndef", "#ifdef", "#if ", "#else", "#endif", "#define", "#include")
+    ruins = [n for n, linha in enumerate(iss.splitlines(), 1)
+             if linha.lstrip().startswith("#") and not linha.lstrip().startswith(diretivas)]
+    assert not ruins, f"linhas {ruins} comecam com # e nao sao diretiva"
+
+
+def test_atalhos_e_inicio_chamam_o_iniciar_que_a_atualizacao_nao_troca():
+    """O codigo muda de pasta a cada versao; o que o Windows guarda (atalho,
+    menu Iniciar, inicio com o Windows, desinstalador) tem de apontar para o
+    `iniciar.py`, que fica fixo."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert "motor\\ajudante\\ajudante.py" not in iss
+    for secao in ("[Icons]", "[Registry]", "[Run]", "[UninstallRun]"):
+        trecho = iss.split(secao, 1)[1].split("\n[", 1)[0]
+        assert "{app}\\iniciar.py" in trecho, secao

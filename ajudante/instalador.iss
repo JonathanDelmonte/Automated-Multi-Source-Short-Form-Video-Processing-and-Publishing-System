@@ -9,6 +9,10 @@
 ; ffmpeg e o deno); o `instalar.ps1` baixa o que depende (Python, bibliotecas,
 ; e as de CUDA so onde ha placa NVIDIA).
 ;
+; O codigo mora em `versoes\<versao>\`, e o `atual.txt` diz qual vale: e o
+; formato da atualizacao sozinha (atualizacao.py). Os atalhos chamam o
+; `iniciar.py`, que a atualizacao nunca troca.
+;
 ; Sem assinatura digital, que e paga: o Windows mostra "O Windows protegeu o
 ; computador" na primeira vez. "Mais informacoes" -> "Executar assim mesmo".
 
@@ -45,17 +49,23 @@ CloseApplications=force
 [Languages]
 Name: "pt"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
+[InstallDelete]
+; Reinstalar (ou instalar uma versao nova por cima) comeca de uma pasta de
+; versoes limpa. O ajudante ja foi desligado no PrepareToInstall.
+Type: filesandordirs; Name: "{app}\versoes"
+
 [Files]
-Source: "pacote\motor\*"; DestDir: "{app}\motor"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "pacote\motor\*"; DestDir: "{app}\versoes\{#Versao}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "iniciar.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "pacote\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "cortes.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{userprograms}\Cortes"; Filename: "{app}\venv\Scripts\pythonw.exe"; \
-  Parameters: """{app}\motor\ajudante\ajudante.py"""; WorkingDir: "{app}"; \
+  Parameters: """{app}\iniciar.py"""; WorkingDir: "{app}"; \
   IconFilename: "{app}\cortes.ico"; Comment: "Abre o Cortes e liga o motor"
 Name: "{userdesktop}\Cortes"; Filename: "{app}\venv\Scripts\pythonw.exe"; \
-  Parameters: """{app}\motor\ajudante\ajudante.py"""; WorkingDir: "{app}"; \
+  Parameters: """{app}\iniciar.py"""; WorkingDir: "{app}"; \
   IconFilename: "{app}\cortes.ico"; Tasks: atalho
 
 [Tasks]
@@ -65,23 +75,24 @@ Name: "atalho"; Description: "Criar um atalho na area de trabalho"
 ; Liga com o Windows. O proprio ajudante deixa desligar pelo menu.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "Cortes"; \
-  ValueData: """{app}\venv\Scripts\pythonw.exe"" ""{app}\motor\ajudante\ajudante.py"""; \
+  ValueData: """{app}\venv\Scripts\pythonw.exe"" ""{app}\iniciar.py"""; \
   Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\venv\Scripts\pythonw.exe"; \
-  Parameters: """{app}\motor\ajudante\ajudante.py"""; WorkingDir: "{app}"; \
+  Parameters: """{app}\iniciar.py"""; WorkingDir: "{app}"; \
   Description: "Abrir o Cortes agora"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Desliga o ajudante (e o motor) antes de apagar os arquivos dele.
 Filename: "{app}\venv\Scripts\python.exe"; \
-  Parameters: """{app}\motor\ajudante\ajudante.py"" --parar"; \
+  Parameters: """{app}\iniciar.py"" --parar"; \
   WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "PararAjudante"
 
 [UninstallDelete]
 ; Os PROJETOS ficam (dados\): sao os cortes da pessoa. O resto sai.
-Type: filesandordirs; Name: "{app}\motor"
+Type: filesandordirs; Name: "{app}\versoes"
+Type: files; Name: "{app}\atual.txt"
 Type: filesandordirs; Name: "{app}\venv"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\bin"
@@ -90,6 +101,20 @@ Type: filesandordirs; Name: "{app}\cache-uv"
 [Code]
 var
   MotorFalhou: Boolean;
+
+// Instalar por cima de um Cortes aberto: desliga o ajudante e o motor antes
+// de a pasta de versoes ser apagada. Sem ajudante rodando, volta na hora.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Codigo: Integer;
+begin
+  Result := '';
+  if FileExists(ExpandConstant('{app}\iniciar.py')) and
+     FileExists(ExpandConstant('{app}\venv\Scripts\python.exe')) then
+    Exec(ExpandConstant('{app}\venv\Scripts\python.exe'),
+         '"' + ExpandConstant('{app}\iniciar.py') + '" --parar',
+         ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Codigo);
+end;
 
 // O `instalar.ps1` num console visivel: a pessoa ve o que esta baixando, e a
 // instalacao so se declara pronta se o script terminou bem.
@@ -100,10 +125,12 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
+    // A versao que o `iniciar.py` roda.
+    SaveStringToFile(ExpandConstant('{app}\atual.txt'), '{#Versao}' + #13#10, False);
     WizardForm.StatusLabel.Caption :=
       'Baixando o motor (algumas centenas de MB). Pode levar alguns minutos...';
     Parametros := '-NoProfile -ExecutionPolicy Bypass -File "' +
-      ExpandConstant('{app}\motor\ajudante\instalar.ps1') + '" -Base "' +
+      ExpandConstant('{app}\versoes\{#Versao}\ajudante\instalar.ps1') + '" -Base "' +
       ExpandConstant('{app}') + '"';
     if WizardSilent then
       Parametros := Parametros + ' -SemPausa';
@@ -113,9 +140,11 @@ begin
       MotorFalhou := True;
       // Suprimivel: no /VERYSILENT do CI uma caixa comum esperaria um clique
       // para sempre.
+      // Nenhuma linha pode COMECAR com `#`: o pre-processador do Inno a le
+      // como diretiva (`#13#10` virava "Unknown preprocessor directive").
       SuppressibleMsgBox('A instalacao do motor nao terminou.' + #13#10 + #13#10 +
-             'O registro esta em ' + ExpandConstant('{app}\dados\logs\instalacao.log') +
-             #13#10 + 'Confira a internet e rode o instalador de novo.',
+             'O registro esta em ' + ExpandConstant('{app}\dados\logs\instalacao.log') + #13#10 +
+             'Confira a internet e rode o instalador de novo.',
              mbError, MB_OK, IDOK);
     end;
   end;

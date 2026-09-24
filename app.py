@@ -2303,10 +2303,36 @@ async def run_job(job_id, job_data):
         # faria o proximo cancelamento mirar num processo que ja nao existe.
         _job_processes.pop(job_id, None)
 
+#: Pedidos que nao querem dizer "alguem esta usando": o proprio `/health`, o
+#: `/api/config` que o ajudante pergunta para saber quem atende a porta, e o
+#: aviso que o painel ABERTO manda a cada 2 min para segurar o whisper na
+#: placa -- um painel esquecido numa aba nao e alguem trabalhando.
+_SEM_ATIVIDADE = ("/health", "/api/config", "/api/asr/aquecer")
+_ultima_atividade = time.monotonic()
+
+
+def _marcar_atividade(caminho: str) -> None:
+    global _ultima_atividade
+    if not caminho.startswith(_SEM_ATIVIDADE):
+        _ultima_atividade = time.monotonic()
+
+
+def _jobs_ativos() -> int:
+    return sum(1 for j in list(jobs.values())
+               if j.get('status') in ('queued', 'processing'))
+
+
 @app.get("/health")
 async def health():
-    """Lightweight liveness probe for uptime monitoring."""
-    return {"status": "ok"}
+    """Lightweight liveness probe for uptime monitoring.
+
+    Diz tambem se da para reiniciar o motor agora (ajudante, Fase 6.2): a
+    atualizacao sozinha so troca o codigo com nenhum job na fila e ninguem
+    mexendo no painel ha alguns minutos -- um legenda sendo queimada e um
+    pedido sincrono, que nao aparece como job.
+    """
+    return {"status": "ok", "jobs_ativos": _jobs_ativos(),
+            "ocioso_s": round(time.monotonic() - _ultima_atividade)}
 
 
 @app.get("/health/ready")
@@ -5922,6 +5948,7 @@ async def tranca_da_api(request: Request, call_next):
     continuam servidos como sempre foram, e o `COMO-EXECUTAR.md` diz isso.
     """
     caminho = request.url.path
+    _marcar_atividade(caminho)
     # Os BYTES dos clipes (bloco 4.3). Ficam fora do ramo de `/api/` porque a
     # prova e outra: o player nao manda cabecalho, entao vale tambem o token
     # curto da query. Com a auth desligada nada muda -- e o comportamento que

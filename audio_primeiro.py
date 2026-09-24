@@ -137,8 +137,6 @@ class DownloadEmParalelo:
         self.titulo = titulo
         self.t_audio = time.monotonic()
         self.audio = destino
-        print(f"   🎧 Audio pronto em {self.t_audio - self.t_inicio:.1f}s: a "
-              f"transcricao comeca enquanto o video termina de baixar.", flush=True)
         self._mudou.set()
 
     # -- quem espera ----------------------------------------------------------
@@ -151,6 +149,13 @@ class DownloadEmParalelo:
         """
         self._mudou.wait()
         if self.audio is not None:
+            # O aviso sai daqui, na thread de quem espera, e nao do `_ao_audio`.
+            # Aquele roda na thread do download, onde a linha de progresso do
+            # yt-dlp ainda esta pela metade (ele reescreve com `\r` e so poe o
+            # `\n` depois): impresso de la, o aviso saia grudado nela --
+            # "[download] 100% of 9.73MiB ...  🎧 Audio pronto", no log de 165 s.
+            print(f"   🎧 Audio pronto em {self.t_audio - self.t_inicio:.1f}s: a "
+                  f"transcricao comeca enquanto o video termina de baixar.", flush=True)
             return self.audio
         if self.erro is not None:
             raise self.erro

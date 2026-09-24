@@ -35,13 +35,27 @@ _TN2_W, _TN2_H = 48, 27
 # inference is serialized like the other detectors in main.py.
 _TN2_LOCK = threading.Lock()
 _tn2_model = None
+# A CARGA tem trava propria (24-set-2026). Sem ela, os tres cortes da primeira
+# rodada chegavam juntos, viam `_tn2_model is None` e cada um carregava o seu
+# -- tres modelos para jogar dois fora, disputando a subida da placa. Trava
+# separada da inferencia porque o aquecimento (`aquecer`) segura esta enquanto
+# um corte ja pode estar esperando a outra.
+_TN2_CARGA = threading.Lock()
+
+# Uma janela do modelo tem 100 quadros, com 25 de enchimento de cada lado:
+# 50 quadros de mentira dao exatamente uma janela, a mesma forma do uso real.
+_QUADROS_DE_AQUECIMENTO = 50
+
+
+def _engine():
+    return os.environ.get("SCENE_ENGINE", "transnetv2").strip().lower()
 
 
 def detect_scenes(video_path):
     """Detect scenes. Returns (scene_list, fps) where scene_list is a list of
     (FrameTimecode, FrameTimecode) pairs — the same contract PySceneDetect's
     SceneManager.get_scene_list() has always given callers."""
-    engine = os.environ.get("SCENE_ENGINE", "transnetv2").strip().lower()
+    engine = _engine()
     if engine != "pyscenedetect":
         try:
             return _detect_transnetv2(video_path)
@@ -68,12 +82,37 @@ def _detect_pyscenedetect(video_path):
 def _get_tn2_model():
     global _tn2_model
     if _tn2_model is None:
-        from transnetv2_pytorch import TransNetV2
-        device = os.environ.get("TRANSNETV2_DEVICE", "auto")
-        model = TransNetV2(device=device)
-        model.eval()
-        _tn2_model = model
+        with _TN2_CARGA:
+            if _tn2_model is None:
+                from transnetv2_pytorch import TransNetV2
+                device = os.environ.get("TRANSNETV2_DEVICE", "auto")
+                model = TransNetV2(device=device)
+                model.eval()
+                _tn2_model = model
     return _tn2_model
+
+
+def aquecer():
+    """Carrega o modelo e roda uma janela de quadros pretos. True se aqueceu.
+
+    Chamado pelo `aquecimento.py` enquanto a deteccao espera o LLM, para que o
+    primeiro corte nao pague a subida da placa neste processo (~5 s no log do
+    autor, WSL 2) nem o carregamento preguicoso dos kernels na primeira
+    inferencia. O resultado da janela e descartado: o modelo esta em `eval` e
+    sem gradiente, entao nada do que ele guarda muda.
+
+    Levanta o que der errado; quem chama decide o que fazer com isso.
+    """
+    if _engine() == "pyscenedetect":
+        return False
+    import torch
+
+    model = _get_tn2_model()
+    with _TN2_LOCK, torch.no_grad():
+        pretos = torch.zeros((_QUADROS_DE_AQUECIMENTO, _TN2_H, _TN2_W, 3),
+                             dtype=torch.uint8, device=model.device)
+        model.predict_frames(pretos, quiet=True)
+    return True
 
 
 def _extract_frames_small(video_path):

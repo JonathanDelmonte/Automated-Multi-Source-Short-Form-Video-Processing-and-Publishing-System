@@ -406,6 +406,40 @@ cascata também manda fonte longa para ele, porque o contexto de 1M token é o
 > UE/UK/EEA, e o Brasil está incluído. Para conteúdo seu, costuma ser
 > aceitável. Para conteúdo de cliente, não é.
 
+### 1b+. Mais IAs gratuitas, para quando uma delas falhar (opcional)
+
+As duas chaves acima já bastam. As de baixo servem de **reserva**: quando o Groq e
+o Gemini falham na mesma chamada (fila cheia, fora do ar, cota do dia — como o
+`503 ... high demand` do Google), o programa passa na hora para a próxima que
+tiver chave, em vez de esperar. Todas são **gratuitas e sem cartão** (conferido em
+24-set-2026; o porquê de cada uma está no ADR-011 de `docs/DECISOES.md`).
+
+**Você já ganhou três sem fazer nada:** a mesma chave do Groq agora também usa o
+**Qwen** e o gpt-oss-20b (o Groq dá uma cota separada para cada modelo), e a mesma
+do Google usa um segundo modelo Gemini.
+
+Para cada uma que quiser, crie a chave no site e cole a linha no fim do `.env`,
+como no passo 2:
+
+| IA | Onde criar a chave | Linha para o `.env` |
+|---|---|---|
+| **Nemotron** (NVIDIA) | build.nvidia.com → entrar → "Get API Key" | `NVIDIA_API_KEY=...` |
+| **Mistral** (pede telefone) | console.mistral.ai/api-keys | `MISTRAL_API_KEY=...` |
+| **Ollama Cloud** | ollama.com/settings/keys | `OLLAMA_CLOUD_API_KEY=...` |
+| **OpenRouter** (50 por dia) | openrouter.ai/keys | `OPENROUTER_API_KEY=...` |
+| **Cloudflare** (duas linhas) | dash.cloudflare.com/profile/api-tokens (permissão "Workers AI") | `CLOUDFLARE_API_TOKEN=...` e `CLOUDFLARE_ACCOUNT_ID=...` |
+| **GLM** (Z.ai, servidor na China) | z.ai/manage-apikey/apikey-list | `ZAI_API_KEY=...` |
+
+Depois de colar, rode `atalhos\atualizar.bat` (ou `subir.bat`) para o servidor
+ler o `.env` de novo. O log do próximo vídeo lista, na linha `Analyzing with a
+cascata`, todas as IAs que entraram.
+
+> ⚠️ **Várias delas usam o conteúdo para treino** — o log do job diz quais (Gemini,
+> NVIDIA, Mistral, OpenRouter e Z.ai). Na Mistral dá para desligar em Settings →
+> Privacy. Para vídeo seu, costuma ser aceitável; para vídeo de cliente, não.
+>
+> O **Cerebras** não entra nesta lista: deixou de ser gratuito em julho de 2026.
+
 ### 1c. Uma regra sobre as chaves
 
 **Chave de API é senha.** Não cole em chat, em issue, em print ou em commit —

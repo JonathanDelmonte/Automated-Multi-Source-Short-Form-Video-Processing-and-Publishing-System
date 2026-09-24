@@ -52,7 +52,11 @@ class Provider:
     `base_url` None marca o Gemini, cuja chamada e injetada pelo chamador.
     Os tetos sao os do free tier e existem para o `available()` local; nao
     sao contrato, mudam sem aviso, e por isso cada um e sobrescrevivel por
-    variavel de ambiente (`LLM_<ID>_TPD` e afins).
+    variavel de ambiente (`LLM_<ID>_TPD` e afins, com `-` virando `_`).
+
+    Um id por (provedor, MODELO), e nao por provedor: o Groq conta a cota de
+    cada modelo em separado, entao `groq` e `groq-qwen` sao dois baldes de
+    8.000 tokens/minuto com a mesma chave (24-set-2026).
     """
     id: str
     label: str
@@ -64,14 +68,22 @@ class Provider:
     calls_per_day: Optional[int] = None
     calls_per_minute: Optional[int] = None
     trains_on_data: bool = False      # free tier que usa o conteudo para treino
+    model_env: str = ""               # a variavel que troca o modelo, para o aviso
+    # Campos a mais no corpo do pedido, como pares (chave, valor) -- tupla e
+    # nao dict porque o dataclass e congelado (e hashable). Hoje so o
+    # `max_tokens` de quem corta a resposta curta demais sem ele.
+    extra: tuple = ()
 
     def api_key(self) -> str:
         return (os.environ.get(self.key_env) or "").strip()
 
     def configured(self) -> bool:
-        """Ollama nao pede chave, mas pede endereco; os demais pedem chave."""
+        """Ollama nao pede chave, mas pede endereco; o Cloudflare pede chave E
+        conta; os demais pedem chave."""
         if self.id == "ollama":
             return bool(_ollama_base())
+        if self.id == "cloudflare":
+            return bool(self.api_key()) and bool(_cloudflare_conta())
         return bool(self.api_key())
 
 
@@ -89,9 +101,22 @@ def _ollama_base() -> str:
     return (os.environ.get("OLLAMA_BASE_URL") or "").strip().rstrip("/")
 
 
+def _cloudflare_conta() -> str:
+    """O id da conta do Cloudflare: o endereco do Workers AI e POR CONTA."""
+    return (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip()
+
+
+def _modelo(env: str, padrao: str) -> str:
+    return (os.environ.get(env) or "").strip() or padrao
+
+
 # Limites divulgados em setembro de 2026. O Plano Tecnico manda reconfirmar
 # antes de codar porque isso muda toda hora, e a auditoria ja encontrou uma
-# tabela incompleta (o teto de tokens/dia do Groq estava ausente).
+# tabela incompleta (o teto de tokens/dia do Groq estava ausente). A fonte de
+# cada numero esta no ADR-011.
+#
+# So entra na cascata quem tem chave (ou endereco): cadastrar um provedor aqui
+# nao custa nada a quem nao o usa.
 _CATALOG = (
     Provider(
         id="groq", label="Groq", base_url="https://api.groq.com/openai/v1",
@@ -101,36 +126,174 @@ _CATALOG = (
         # Gemini gratis -- mais lento e que treina com o conteudo. Visto no
         # log do autor em 22-set-2026, tres vezes por job. O `gpt-oss-120b` e
         # o modelo grande vivo do Groq, com 131k de contexto e saida em
-        # json_schema. O teto de 100k tokens/dia fica como estava: e o do
-        # modelo antigo, provavelmente CONSERVADOR para este, e um teto baixo
-        # demais so faz o pre-filtro cortar um pouco mais cedo -- sobrescreva
-        # com LLM_GROQ_TPD quando o numero publicado for conferido.
-        model=os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b",
+        # json_schema. Teto de 200k tokens/dia: o publicado para ele em agosto
+        # de 2026 (era 100k, herdado do modelo antigo).
+        model=_modelo("GROQ_MODEL", "openai/gpt-oss-120b"), model_env="GROQ_MODEL",
         key_env="GROQ_API_KEY", max_context=128_000,
-        tokens_per_day=100_000, calls_per_day=1_000, calls_per_minute=30,
+        tokens_per_day=200_000, calls_per_day=1_000, calls_per_minute=30,
     ),
     Provider(
         id="gemini", label="Gemini Flash", base_url=None,
-        model=os.environ.get("GEMINI_MODEL") or "gemini-3.1-flash-lite",
+        model=_modelo("GEMINI_MODEL", "gemini-3.1-flash-lite"), model_env="GEMINI_MODEL",
         key_env="GEMINI_API_KEY", max_context=1_000_000,
         # O free tier do Google nao publica RPD estavel; medicoes independentes
         # acharam de 20 a 1.500. Sem teto local: quem manda e o 429 dele.
         trains_on_data=True,
     ),
+    # --- modelos a mais nas chaves que ja existem (24-set-2026) ------------
+    # O Groq conta a cota POR MODELO: quando as duas chamadas de pontuacao
+    # esgotam os 8.000 tokens/min do gpt-oss-120b, o Qwen tem os dele
+    # intactos. Mesma chave, nada a configurar. Groq aposentou o qwen3-32b em
+    # 17-jul-2026; o 3.8 e o sucessor, e ali nasce sem raciocinio
+    # (`reasoning_effort` padrao "none").
     Provider(
-        id="cerebras", label="Cerebras", base_url="https://api.cerebras.ai/v1",
-        model=os.environ.get("CEREBRAS_MODEL") or "llama-3.3-70b",
+        id="groq-qwen", label="Qwen (Groq)", base_url="https://api.groq.com/openai/v1",
+        model=_modelo("GROQ_QWEN_MODEL", "qwen/qwen3.8-27b"), model_env="GROQ_QWEN_MODEL",
+        key_env="GROQ_API_KEY", max_context=128_000,
+        tokens_per_day=200_000, calls_per_day=1_000, calls_per_minute=30,
+    ),
+    # Outro modelo, outra fila no Google: o 503 "high demand" do log de 165 s
+    # era do flash-lite 3.1. O 3.5 e o sucessor dele (o 3.1 sai em maio de
+    # 2027) e tem a propria cota do free tier.
+    Provider(
+        id="gemini-lite", label="Gemini 3.5 Flash-Lite", base_url=None,
+        model=_modelo("GEMINI_LITE_MODEL", "gemini-3.5-flash-lite"),
+        model_env="GEMINI_LITE_MODEL",
+        key_env="GEMINI_API_KEY", max_context=1_000_000, trains_on_data=True,
+    ),
+    # --- provedores gratuitos com cadastro, sem cartao ----------------------
+    # NVIDIA: gratis com o NVIDIA Developer Program; 40/min e 10.000/dia por
+    # modelo. O endpoint gratuito registra o uso "para melhorar produtos
+    # NVIDIA", entao conta como quem treina com o conteudo.
+    Provider(
+        id="nvidia", label="Nemotron (NVIDIA)",
+        base_url="https://integrate.api.nvidia.com/v1",
+        model=_modelo("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b"),
+        model_env="NVIDIA_MODEL",
+        key_env="NVIDIA_API_KEY", max_context=128_000,
+        calls_per_day=10_000, calls_per_minute=40, trains_on_data=True,
+        # O padrao de saida do NIM nao e documentado, e os exemplos dele
+        # passam 1024: pouco para os detalhes de 6 cortes, ainda mais com o
+        # raciocinio do Nemotron contando junto. JSON cortado no meio nao
+        # parseia, e seriam tres tentativas iguais antes do proximo.
+        extra=(("max_tokens", 8192),),
+    ),
+    # Mistral: modo gratuito por padrao, sem cartao (pede telefone); ~1
+    # chamada/s. Treina com o conteudo a menos que se desligue no painel.
+    Provider(
+        id="mistral", label="Mistral", base_url="https://api.mistral.ai/v1",
+        model=_modelo("MISTRAL_MODEL", "mistral-small-latest"), model_env="MISTRAL_MODEL",
+        key_env="MISTRAL_API_KEY", max_context=128_000,
+        calls_per_minute=60, trains_on_data=True,
+    ),
+    # Ollama Cloud: os modelos grandes da biblioteca do Ollama, hospedados;
+    # gratis com limite por sessao (5 h) e por semana, sem numero publicado.
+    # Chave PROPRIA: o `OLLAMA_API_KEY` e do Ollama local.
+    Provider(
+        id="ollama-cloud", label="Ollama Cloud", base_url="https://ollama.com/v1",
+        model=_modelo("OLLAMA_CLOUD_MODEL", "gpt-oss:120b"), model_env="OLLAMA_CLOUD_MODEL",
+        key_env="OLLAMA_CLOUD_API_KEY", max_context=128_000,
+    ),
+    # OpenRouter: o roteador `openrouter/free` sorteia um modelo gratuito que
+    # aceite saida estruturada -- a lista de modelos gratis dele muda toda
+    # semana, e um id fixo aqui apodreceria. 20/min, 50/dia sem credito
+    # comprado (1.000/dia depois de US$ 10 uma vez: LLM_OPENROUTER_RPD=1000).
+    Provider(
+        id="openrouter", label="OpenRouter (gratis)",
+        base_url="https://openrouter.ai/api/v1",
+        model=_modelo("OPENROUTER_MODEL", "openrouter/free"), model_env="OPENROUTER_MODEL",
+        key_env="OPENROUTER_API_KEY", max_context=128_000,
+        calls_per_day=50, calls_per_minute=20, trains_on_data=True,
+    ),
+    # Cloudflare Workers AI: 10.000 "neurons"/dia gratis, divididos entre
+    # todos os modelos -- algumas centenas de milhares de tokens. O endereco
+    # leva o id da conta (CLOUDFLARE_ACCOUNT_ID). Nao treina com o conteudo.
+    Provider(
+        id="cloudflare", label="Cloudflare Workers AI", base_url=None,
+        model=_modelo("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-120b"),
+        model_env="CLOUDFLARE_MODEL",
+        key_env="CLOUDFLARE_API_TOKEN", max_context=128_000,
+        # O Workers AI corta a saida em 256 tokens se o pedido nao disser.
+        extra=(("max_tokens", 8192),),
+    ),
+    # Z.ai (Zhipu): GLM-4.7-Flash e gratis e permanente, uma chamada por vez.
+    # Servidor na China; sem politica clara de treino, entao conta como quem
+    # treina.
+    Provider(
+        id="zai", label="GLM (Z.ai)", base_url="https://api.z.ai/api/paas/v4",
+        model=_modelo("ZAI_MODEL", "glm-4.7-flash"), model_env="ZAI_MODEL",
+        key_env="ZAI_API_KEY", max_context=128_000, trains_on_data=True,
+    ),
+    # O gpt-oss-20b e o terceiro balde do Groq: menor, e por isso quase no fim.
+    Provider(
+        id="groq-20b", label="gpt-oss-20b (Groq)", base_url="https://api.groq.com/openai/v1",
+        model=_modelo("GROQ_20B_MODEL", "openai/gpt-oss-20b"), model_env="GROQ_20B_MODEL",
+        key_env="GROQ_API_KEY", max_context=128_000,
+        tokens_per_day=200_000, calls_per_day=1_000, calls_per_minute=30,
+    ),
+    # --- pago, e local -------------------------------------------------------
+    # Cerebras DEIXOU DE SER GRATIS: desde 21-jul-2026 conta nova ganha US$ 5
+    # de credito unico, com cartao, que vence em 30 dias (as antigas migraram
+    # em 17-ago-2026). E o `llama-3.3-70b`, que era o padrao aqui, foi
+    # aposentado. Fica na lista para quem pagar; os tetos sao os do teste.
+    Provider(
+        id="cerebras", label="Cerebras (pago)", base_url="https://api.cerebras.ai/v1",
+        model=_modelo("CEREBRAS_MODEL", "gpt-oss-120b"), model_env="CEREBRAS_MODEL",
         key_env="CEREBRAS_API_KEY", max_context=128_000,
-        tokens_per_day=1_000_000, calls_per_minute=30,
+        tokens_per_day=1_000_000, calls_per_minute=5,
     ),
     Provider(
         id="ollama", label="Ollama local", base_url=None,
-        model=os.environ.get("OLLAMA_MODEL") or "llama3.1:8b",
+        model=_modelo("OLLAMA_MODEL", "llama3.1:8b"), model_env="OLLAMA_MODEL",
         key_env="OLLAMA_API_KEY", max_context=8_192,
     ),
 )
 
 _BY_ID = {p.id: p for p in _CATALOG}
+
+#: A ordem de cada caso (ADR-005 e ADR-011). Os dois primeiros de cada lista
+#: sao os de sempre, e so eles atendem enquanto funcionam: tudo o que veio
+#: depois so e chamado quando os dois falharem naquela chamada.
+ORDEM_CURTA = ("groq", "gemini", "groq-qwen", "gemini-lite", "nvidia", "mistral",
+               "ollama-cloud", "openrouter", "cloudflare", "zai", "groq-20b",
+               "cerebras", "ollama")
+ORDEM_LONGA = ("gemini", "gemini-lite", "groq", "groq-qwen", "nvidia", "mistral",
+               "ollama-cloud", "openrouter", "cloudflare", "zai", "groq-20b",
+               "cerebras", "ollama")
+
+
+#: Quanto esperar a resposta de um provedor NA NUVEM antes de passar ao
+#: proximo. O `LLM_TIMEOUT` de 600 s e do modelo local em CPU; herdado aqui,
+#: um endpoint gratuito que aceita a conexao e nao responde prenderia o job
+#: dez minutos com outros provedores prontos. O Groq responde em segundos e
+#: um modelo que raciocina antes (Nemotron) em menos de um minuto.
+TIMEOUT_NUVEM_S = 180.0
+
+
+def timeout_para(p: Provider) -> Optional[float]:
+    """O tempo maximo de uma chamada a `p`; None e o padrao do `llm_backend`."""
+    if p.id == "ollama":
+        return None
+    raw = (os.environ.get("LLM_TIMEOUT_NUVEM") or "").strip()
+    try:
+        return float(raw) if raw else TIMEOUT_NUVEM_S
+    except ValueError:
+        return TIMEOUT_NUVEM_S
+
+
+def _env_id(p: Provider) -> str:
+    """O id do provedor como pedaco de nome de variavel: `groq-qwen` -> `GROQ_QWEN`."""
+    return p.id.upper().replace("-", "_")
+
+
+def _base_url(p: Provider) -> Optional[str]:
+    if p.id == "ollama":
+        return _ollama_base()
+    if p.id == "cloudflare":
+        conta = _cloudflare_conta()
+        return (f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/v1"
+                if conta else None)
+    return p.base_url
 
 
 def _with_env_overrides(p: Provider) -> Provider:
@@ -145,15 +308,14 @@ def _with_env_overrides(p: Provider) -> Provider:
             return cur
         return None if v <= 0 else v      # 0 ou negativo desliga o teto
 
-    up = p.id.upper()
-    base = _ollama_base() if p.id == "ollama" else p.base_url
+    up = _env_id(p)
     return Provider(
-        id=p.id, label=p.label, base_url=base, model=p.model, key_env=p.key_env,
+        id=p.id, label=p.label, base_url=_base_url(p), model=p.model, key_env=p.key_env,
         max_context=_int(f"LLM_{up}_CONTEXT", p.max_context) or p.max_context,
         tokens_per_day=_int(f"LLM_{up}_TPD", p.tokens_per_day),
         calls_per_day=_int(f"LLM_{up}_RPD", p.calls_per_day),
         calls_per_minute=_int(f"LLM_{up}_RPM", p.calls_per_minute),
-        trains_on_data=p.trains_on_data,
+        trains_on_data=p.trains_on_data, model_env=p.model_env, extra=p.extra,
     )
 
 
@@ -179,7 +341,8 @@ def cascade(duration_seconds: Optional[float] = None) -> list[Provider]:
     `LLM_CASCADE` sobrescreve a ordem inteira (lista separada por virgula de
     ids). Sem ela, a ordem vem da duracao: fonte longa comeca no Gemini pelo
     contexto de 1M e pelo orcamento maior; fonte curta comeca no Groq, que e
-    rapido e cujo teto de tokens aguenta bem video curto. O Ollama e sempre o
+    rapido e cujo teto de tokens aguenta bem video curto. Depois dos dois vem
+    todo provedor gratuito que tiver chave (ADR-011). O Ollama e sempre o
     ultimo: nao tem limite e custa GPU, mas entra so quando
     `OLLAMA_BASE_URL` diz onde ele esta.
     """
@@ -188,8 +351,7 @@ def cascade(duration_seconds: Optional[float] = None) -> list[Provider]:
         order = [_BY_ID[i] for i in explicit if i in _BY_ID]
     else:
         is_long = duration_seconds is not None and duration_seconds >= _long_threshold()
-        order = ([_BY_ID["gemini"], _BY_ID["groq"], _BY_ID["cerebras"], _BY_ID["ollama"]] if is_long
-                 else [_BY_ID["groq"], _BY_ID["gemini"], _BY_ID["cerebras"], _BY_ID["ollama"]])
+        order = [_BY_ID[i] for i in (ORDEM_LONGA if is_long else ORDEM_CURTA)]
     return [q for q in (_with_env_overrides(p) for p in order) if q.configured()]
 
 
@@ -293,6 +455,30 @@ class AllProvidersFailed(RuntimeError):
 #: a mais em cada uma. "O modelo nao existe" nao melhora em 5 segundos.
 _MODELO_INEXISTENTE: dict = {}
 
+#: Chaves que o provedor RECUSOU (401), por nome de variavel, neste processo.
+#: Por variavel e nao por provedor: `groq`, `groq-qwen` e `groq-20b` usam a
+#: mesma `GROQ_API_KEY`, e uma chave colada errada levaria tres 401 por
+#: chamada -- um por modelo -- para dizer a mesma coisa.
+_CHAVE_RECUSADA: dict = {}
+
+
+def chave_recusada(erro) -> bool:
+    """O provedor disse que a CHAVE nao vale (e nao que esta ocupado)?
+
+    O 401 do caminho compativel com OpenAI, e o "API key not valid" do Gemini
+    (que volta como 400). Um 403 fica de fora de proposito: ele tambem e
+    "regiao nao atendida" ou "modelo sem acesso", e isso nao e a chave."""
+    texto = str(erro).lower()
+    if "api key not valid" in texto or "api_key_invalid" in texto:
+        return True
+    # O status do caminho compativel com OpenAI (`llm_backend`): um 401 ali e
+    # autenticacao, diga o corpo o que disser ("User not found.", no OpenRouter).
+    if re.search(r"llm server 401\b", texto):
+        return True
+    return bool(re.search(r"\b401\b", texto)) and any(
+        t in texto for t in ("unauthorized", "invalid", "api key", "api_key",
+                             "authentication", "incorrect"))
+
 
 def modelo_inexistente(erro) -> bool:
     """O erro e o provedor dizendo que o MODELO pedido nao existe (ou que
@@ -357,6 +543,29 @@ def espera_sem_dica(tentativa: int) -> float:
     return 5.0 * 2 ** (tentativa - 1)
 
 
+#: O provedor esta OCUPADO (ou fora do ar), e nao errou a resposta. Repetir
+#: um desses daqui a 5 s e apostar que a fila dele andou; ir ao proximo e ter
+#: a resposta agora.
+_CAPACIDADE = ("unavailable", "overloaded", "high demand", "resource_exhausted",
+               "rate limit", "connecterror", "connecttimeout", "readtimeout",
+               "remoteprotocolerror", "deadline", "timed out")
+# Os codigos so como palavra inteira: "Requested 4535" ou um "1500" dentro de
+# um erro de validacao nao sao um 500.
+_CODIGO_DE_CAPACIDADE = re.compile(r"\b(?:429|500|502|503|504)\b")
+
+
+def erro_de_capacidade(mensagem) -> bool:
+    """O erro e de CAPACIDADE (fila cheia, fora do ar, rede)?
+
+    O resto do que o `main.py` repete -- corpo vazio, JSON que nao parseia,
+    campo faltando -- e o modelo errando a resposta, e ai repetir o MESMO
+    provedor e o que recupera (o corpo vazio do Gemini voltou certo na segunda
+    tentativa em todos os casos vistos em producao, 22-jul-2026)."""
+    texto = str(mensagem).lower()
+    return (any(t in texto for t in _CAPACIDADE)
+            or bool(_CODIGO_DE_CAPACIDADE.search(texto)))
+
+
 def espera_antes_de_repetir(mensagem, tentativa: int, ja_esperado: float,
                             tentativas: int) -> Optional[float]:
     """Quanto esperar antes de repetir o MESMO provedor, ou None para desistir
@@ -377,10 +586,20 @@ def espera_antes_de_repetir(mensagem, tentativa: int, ja_esperado: float,
     `ESPERA_MAXIMA_COM_ALTERNATIVA_S`: esperar 14 s por um provedor enquanto
     outro responde em 6 s nao e fidelidade a ordem da cascata, e tempo perdido.
     Nos dois casos nunca espera mais do que a regra antiga esperaria.
+
+    **Sem dica, com outro pronto, erro de capacidade passa ao proximo ja**
+    (24-set-2026). No log de 165 s o Gemini respondeu "503 ... high demand",
+    o job esperou 5 s, e a deteccao levou 21,6 s em vez de ~12. Um erro que o
+    modelo cometeu (corpo vazio, JSON quebrado) continua com a regra de
+    sempre: ali repetir o mesmo e o que funciona.
     """
     dica = espera_sugerida(mensagem)
     if dica is None:
-        return espera_sem_dica(tentativa)
+        espera = espera_sem_dica(tentativa)
+        if (_HA_ALTERNATIVA.get() and erro_de_capacidade(mensagem)
+                and ja_esperado + espera > ESPERA_MAXIMA_COM_ALTERNATIVA_S):
+            return None
+        return espera
     paciencia = sum(espera_sem_dica(k) for k in range(1, tentativas))
     if _HA_ALTERNATIVA.get():
         paciencia = min(paciencia, ESPERA_MAXIMA_COM_ALTERNATIVA_S)
@@ -392,8 +611,8 @@ def espera_antes_de_repetir(mensagem, tentativa: int, ja_esperado: float,
 
 def _pode_atender(p: Provider, need: int) -> bool:
     """O mesmo filtro que `run()` aplica antes de chamar, sem escrever no log."""
-    return (p.id not in _MODELO_INEXISTENTE and available(p, need)[0]
-            and need <= p.max_context)
+    return (p.id not in _MODELO_INEXISTENTE and p.key_env not in _CHAVE_RECUSADA
+            and available(p, need)[0] and need <= p.max_context)
 
 
 def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
@@ -416,14 +635,19 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
     chain = cascade(duration_seconds)
     if not chain:
         raise AllProvidersFailed(
-            "Nenhum provedor de LLM configurado. Defina GROQ_API_KEY, GEMINI_API_KEY, "
-            "CEREBRAS_API_KEY ou suba um Ollama local (OLLAMA_BASE_URL).")
+            "Nenhum provedor de LLM configurado. Defina ao menos uma chave gratuita "
+            "(GROQ_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, MISTRAL_API_KEY, "
+            "OPENROUTER_API_KEY -- a lista inteira esta no .env.example) ou suba "
+            "um Ollama local (OLLAMA_BASE_URL).")
 
     errors: list[str] = []
     for i, p in enumerate(chain):
         if p.id in _MODELO_INEXISTENTE:
             # Ja avisado na primeira vez, com o conserto; aqui so pula.
             errors.append(f"{p.id}: modelo {_MODELO_INEXISTENTE[p.id]} nao existe")
+            continue
+        if p.key_env in _CHAVE_RECUSADA:
+            errors.append(f"{p.id}: {p.key_env} recusada")
             continue
         ok, why = available(p, need)
         if not ok:
@@ -441,12 +665,19 @@ def run(prompt: str, schema, *, call: Callable[[str, object, Provider], tuple],
         try:
             parsed, cost = call(prompt, schema, p)
         except Exception as e:                      # noqa: BLE001 - a cascata existe para isso
+            if chave_recusada(e):
+                _CHAVE_RECUSADA[p.key_env] = p.label
+                log(f"   ⚠️  {p.label}: a chave {p.key_env} foi recusada. Pulando "
+                    f"quem usa essa chave no resto deste job -- confira o valor "
+                    f"no .env.")
+                errors.append(f"{p.id}: {p.key_env} recusada")
+                continue
             if modelo_inexistente(e):
                 _MODELO_INEXISTENTE[p.id] = p.model
                 log(f"   ⚠️  {p.label}: o modelo `{p.model}` nao existe (ou esta "
                     f"chave nao tem acesso a ele). Pulando o {p.label} no resto "
-                    f"deste job -- para volta-lo, ponha {p.id.upper()}_MODEL="
-                    f"<modelo atual> no .env.")
+                    f"deste job -- para volta-lo, ponha "
+                    f"{p.model_env or _env_id(p) + '_MODEL'}=<modelo atual> no .env.")
                 errors.append(f"{p.id}: modelo {p.model} nao existe")
                 # Sem `record`: um 404 de modelo nao gasta cota nenhuma, e
                 # somar tokens fantasmas encheria o teto diario de um

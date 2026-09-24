@@ -11,9 +11,11 @@ Tres camadas, cada uma com sua classe:
 """
 import ast
 import http.server
+import io
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -21,6 +23,7 @@ from pathlib import Path
 import pytest
 
 import audio_primeiro as ap
+import linhas_inteiras
 import sources
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -172,6 +175,37 @@ class TestThread:
             str(tmp_path)).iniciar()
         d.esperar_terminar()
         d.levantar_se_falhou()
+
+    def test_o_aviso_do_audio_nao_gruda_na_barra_do_ytdlp(self, tmp_path, monkeypatch):
+        """No log de 165 s: `[download] 100% of 9.73MiB ...  🎧 Audio pronto`.
+
+        O yt-dlp reescreve a barra com `\\r` e so poe o `\\n` depois, entao a
+        linha dele ainda esta pela metade quando o aviso do audio chega. Com o
+        escritor de linhas inteiras do `main.py`, o que decide e a THREAD que
+        imprime: da thread do download, o aviso completava a linha dela.
+        """
+        destino = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", linhas_inteiras.LinhasInteiras(destino))
+        pedaco = tmp_path / "t.f140.m4a"
+        liberar = threading.Event()
+
+        def baixar(ao_audio):
+            pedaco.write_bytes(b"a")
+            sys.stdout.write("\r[download] 100% of    9.73MiB in 00:00:01 at 5.70MiB/s")
+            ao_audio(_aviso(pedaco), "t")
+            liberar.wait(5)
+            sys.stdout.write("\n")
+            return sources.Fetched(path="t.mp4", title="t", kind="youtube")
+
+        d = ap.DownloadEmParalelo(baixar, str(tmp_path)).iniciar()
+        d.aguardar_audio()
+        liberar.set()
+        d.aguardar_video()
+        linhas = destino.getvalue().split("\n")
+        aviso = [linha for linha in linhas if "Audio pronto" in linha]
+        assert len(aviso) == 1
+        assert "[download]" not in aviso[0], f"grudou: {aviso[0]!r}"
+        assert any(linha.strip().startswith("[download] 100%") for linha in linhas)
 
     def test_nao_conseguir_copiar_cai_no_caminho_de_antes(self, tmp_path, capsys):
         def baixar(ao_audio):

@@ -228,6 +228,13 @@ longas. O substituto precisa estar mapeado antes da virada, não durante.
 
 **Revisão se:** os limites mudarem. Reconfirmar antes da Fase 0.
 
+> **Nota de 24-set-2026 — os limites mudaram, e a revisão está no ADR-011.** O
+> Cerebras deixou de ser gratuito (crédito único de US$ 5, com cartão, desde
+> 21-jul-2026) e o modelo dele aqui (`llama-3.3-70b`) foi aposentado; o Groq
+> publicou 200k tokens/dia para o `gpt-oss-120b`. A regra desta ADR — a ordem
+> depende da duração — continua de pé: os dois primeiros de cada ordem são os
+> mesmos, e tudo o que o ADR-011 acrescenta vem depois deles.
+
 ### Implementada na Fase 0.4 — `llm_cascade.py`
 
 **Status: implementada.** O módulo decide **ordem e orçamento**, e nada mais: não
@@ -594,3 +601,76 @@ adicionaria uma camada em volta de trabalho bloqueante.
 verdade **e** o autor decidir aceitar o risco de conta. Aí o `browser` deixa de
 ser stub — e continua fora da cascata automática, porque a decisão acima é sobre
 automação, não sobre existir.
+
+---
+
+## ADR-011 — Todo provedor gratuito com chave entra na cascata, depois dos dois de sempre
+
+**Data:** 2026-09-24 · **Status:** aceita
+
+**Contexto.** No log de 165 s, a detecção levou 21,6 s em vez de ~12: o Groq
+estourou os 8.000 tokens/minuto (as duas chamadas de pontuação gastam ~6 mil, e a
+de detalhe pede ~4,5 mil), a vez passou ao Gemini, e o Gemini respondeu `503 ...
+high demand`. O programa esperou 5 s e tentou de novo. Com só dois provedores, não
+havia terceiro. O autor pediu "o máximo de IA gratuita possível", porque quer o
+projeto 100% gratuito — e porque quanto mais provedores, mais tokens por dia.
+
+**Levantamento (24-set-2026).** Fonte principal: a lista mantida em
+`mnfst/awesome-free-llm-apis` (atualizada em setembro, com links para a
+documentação de cada provedor), conferida por busca nos pontos que mudaram:
+
+| Provedor | Custo | Limite | Treina com o conteúdo? |
+|---|---|---|---|
+| Groq (`gpt-oss-120b`, `gpt-oss-20b`, `qwen3.8-27b`) | grátis, sem cartão | **por modelo**: 30/min, 1.000/dia, 8k tokens/min, 200k/dia | não |
+| Google Gemini (3.1 e 3.5 Flash-Lite) | grátis | ~1.500/dia por modelo, sem número estável | sim (fora da UE) |
+| NVIDIA NIM (Nemotron, Qwen, gpt-oss...) | grátis (Developer Program) | 40/min, 10.000/dia por modelo | registra "para melhorar produtos NVIDIA" |
+| Mistral | modo gratuito, sem cartão, pede telefone | ~1/s | sim, com opt-out |
+| Ollama Cloud | grátis | por sessão (5 h) e semana, sem número | — |
+| OpenRouter (`openrouter/free`) | grátis | 20/min, 50/dia (1.000/dia após US$ 10 uma vez) | provedores gratuitos podem registrar |
+| Cloudflare Workers AI | grátis | 10.000 neurons/dia, divididos entre modelos | não |
+| Z.ai (GLM-4.7-Flash) | grátis | 1 chamada por vez; servidor na China | sem política clara |
+
+Ficaram de fora: **Cerebras** como gratuito (virou crédito único de US$ 5 com
+cartão; continua aceito para quem pagar), **GitHub Models** (aposentado em
+30-jul-2026), **Hugging Face** (US$ 0,10/mês), **ModelScope** e **SiliconFlow**
+(exigem verificação de identidade chinesa), e os **gateways sem chave** (Kilo,
+LLM7, OVHcloud anônimo): catálogo que muda sem aviso, e mandar a transcrição a um
+terceiro que registra, sem a pessoa ter pedido, não é o tipo de coisa que entra
+por padrão.
+
+**Decisão.**
+
+1. **Os dois primeiros de cada ordem não mudam** (ADR-005): Groq e Gemini numa
+   fonte curta, Gemini e o segundo Gemini numa longa. Todo o resto vem DEPOIS e só
+   atende quando os anteriores falharam naquela chamada — o caminho normal, e a
+   qualidade que ele entrega, ficam como estavam.
+2. **Um id por modelo, não por provedor.** O Groq conta a cota por modelo: a mesma
+   `GROQ_API_KEY` vira três filas de 8k tokens/min (`groq`, `groq-qwen`,
+   `groq-20b`), e a `GEMINI_API_KEY`, duas (`gemini`, `gemini-lite`). É o ganho
+   sem cadastro nenhum: quem já tinha as duas chaves ganhou três provedores.
+3. **Só entra quem tem chave.** Cadastrar um provedor no catálogo não custa nada a
+   quem não o usa.
+4. **Com outro provedor pronto, "ocupado" passa ao próximo na hora**
+   (`llm_cascade.erro_de_capacidade`). É a extensão natural da regra do 429 da
+   rodada 5: esperar 5 s por quem disse que está cheio, com outro respondendo em
+   2 s, é tempo perdido. Resposta ERRADA (corpo vazio, JSON quebrado) continua com
+   a regra de sempre, porque ali repetir o mesmo é o que recupera. O último da
+   fila espera como sempre esperou.
+5. **Chave recusada (401) desliga, no resto do job, todo mundo que a usa**, e o
+   log diz qual variável conferir — o mesmo tratamento do modelo inexistente.
+6. **Provedor na nuvem tem 3 min para responder** (`LLM_TIMEOUT_NUVEM`), e não os
+   10 min do modelo local.
+7. **O pré-filtro não aperta.** Ele usa o menor teto de tokens/dia publicado da
+   cadeia; os provedores novos publicam teto de chamadas (ou nenhum), e os modelos
+   extras do Groq têm o mesmo teto do principal. Há teste.
+
+**Consequências.** A lista de quem treina com o conteúdo cresce (o log do job
+lista cada um). Cada padrão de modelo é uma aposta que apodrece — o
+`qwen3-32b` saiu do Groq em julho, o `llama-3.3-70b` do Cerebras também —, e o
+tratamento do 404 de modelo existe para que isso vire uma linha no log dizendo
+qual variável trocar, e não um job parado.
+
+**Revisão se:** um provedor mudar os termos (o Cerebras mudou em julho); ou se a
+medição da Fase 5 mostrar que um dos fallbacks escolhe cortes piores que o Gemini —
+aí ele desce na ordem, não sai.
+

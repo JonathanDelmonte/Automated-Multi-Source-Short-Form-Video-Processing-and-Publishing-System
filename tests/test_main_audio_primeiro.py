@@ -24,6 +24,7 @@ from unittest import mock
 
 import pytest
 
+import aquecimento
 import audio_probe
 import layout_picker
 import linhas_inteiras
@@ -101,6 +102,10 @@ def cenario(tmp_path, monkeypatch):
     monkeypatch.setattr(layout_picker, "ENABLED", True)
     monkeypatch.setattr(layout_picker, "pick_and_apply", lambda v, d: eventos.append(
         ("layout", Path(v).exists())))
+    # O aquecimento de verdade abriria uma thread que sobrevive ao teste; aqui
+    # basta saber QUANDO ele e chamado e se recebeu a espera do download.
+    monkeypatch.setattr(aquecimento, "iniciar", lambda esperar=None: eventos.append(
+        ("aquecer", esperar is not None)))
 
     base, principal = _partes_do_main()
     g = {"__name__": "main_teste", "__file__": str(RAIZ / "main.py"),
@@ -126,7 +131,7 @@ def cenario(tmp_path, monkeypatch):
     g.update(
         transcribe_video=transcribe_video,
         speech_is_sparse=lambda t, d: False,
-        get_viral_clips=lambda t, d, audio_path=None: {
+        get_viral_clips=lambda t, d, audio_path=None: eventos.append(("deteccao",)) or {
             "shorts": [{"start": 1.0, "end": 10.0, "viral_hook_text": "h",
                         "video_title_for_youtube_short": "t"}],
             "cost_analysis": {}},
@@ -160,6 +165,10 @@ def test_transcreve_enquanto_o_video_baixa(cenario, capsys):
     assert meta["source_video"] == "Titulo.mp4"
     assert not (cenario.job / ".audio_primeiro.m4a").exists(), "a copia do audio sobrou"
 
+    # O render se aquece DURANTE a deteccao, esperando o download terminar.
+    i_transcricao = next(i for i, e in enumerate(ev) if e[0] == "transcricao")
+    assert i_transcricao < ev.index(("aquecer", True)) < ev.index(("deteccao",))
+
     out = capsys.readouterr().out
     assert "Audio pronto em" in out
     assert "Video pronto" in out and "1920x1080" in out
@@ -186,6 +195,8 @@ def test_sem_audio_primeiro_e_o_caminho_de_antes(cenario, monkeypatch, capsys):
     assert ev.index(("layout", True)) < next(
         i for i, e in enumerate(ev) if e[0] == "transcricao")
     assert transcribe_backends.antes_de_carregar_na_placa is None
+    # O video ja esta em disco: o aquecimento nao tem download a esperar.
+    assert ev.index(("aquecer", False)) < ev.index(("deteccao",))
     assert "Audio pronto" not in capsys.readouterr().out
 
 

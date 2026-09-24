@@ -32,6 +32,7 @@ import llm_cascade
 import job_metrics
 import linhas_inteiras
 import audio_primeiro
+import aquecimento
 import sources
 import audio_probe
 import prefilter
@@ -897,10 +898,44 @@ def download_youtube_video(url, output_dir=".", ao_audio=None):
             if ao_audio is not None:
                 ao_audio(d, _tentativa["titulo"])
 
+    def _baixar_pela_extracao(ydl, info):
+        """Baixa pelo que a extracao ja respondeu, sem perguntar ao site de novo.
+
+        Ate 24-set-2026 a segunda instancia fazia `ydl.download([url])`, que
+        EXTRAI TUDO OUTRA VEZ: pagina, cliente do player, provedores de PO
+        token. No log de 165 s foram ~3,5 s entre o titulo e o primeiro byte do
+        audio -- e, com o audio primeiro, e esse o tempo que a transcricao
+        espera para comecar.
+
+        E o caminho do `--load-info-json` do proprio yt-dlp
+        (`YoutubeDL.download_with_info_file`): `sanitize_info` tira do dict o
+        que a primeira escolha de formato deixou nele (`requested_formats`
+        velho faria baixar a escolha ERRADA se a nova caisse num formato
+        unico), e `process_ie_result` escolhe e baixa a partir da lista de
+        formatos. As URLs de midia ja sairam prontas da extracao.
+
+        Qualquer falha aqui extrai de novo -- o caminho de antes, que e tambem
+        o que o `download_with_info_file` faz quando o reaproveitamento cai.
+        """
+        try:
+            ydl.process_ie_result(ydl.sanitize_info(info, remove_private_keys=True),
+                                  download=True)
+            return
+        except Exception as e:
+            print(f"   ⚠️ Baixar pela extracao ja feita falhou ({str(e)[:160]}); "
+                  f"extraindo de novo.")
+        # O que a tentativa que caiu ja puxou pelo proxy esta pago.
+        _dl_bytes["total"] += _dl_bytes["partial"]
+        _dl_bytes["partial"] = 0
+        ydl.download([url])
+
     def _attempt(extractor_args, fmt, proxy, cookies=True):
         _dl_bytes["total"] = 0
         _dl_bytes["partial"] = 0
-        with yt_dlp.YoutubeDL(_base_opts(extractor_args, proxy, cookies)) as ydl:
+        # O mesmo seletor ja na extracao: a escolha que ela deixa no `info` e a
+        # que o download vai refazer, entao nao sobra campo de outra escolha.
+        with yt_dlp.YoutubeDL({**_base_opts(extractor_args, proxy, cookies),
+                               'format': fmt}) as ydl:
             info = ydl.extract_info(url, download=False)
         sanitized = sanitize_filename(info.get('title', 'youtube_video'))
         _tentativa["titulo"] = sanitized
@@ -915,7 +950,7 @@ def download_youtube_video(url, output_dir=".", ao_audio=None):
             'progress_hooks': [_progress_hook],
         }
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
-            ydl.download([url])
+            _baixar_pela_extracao(ydl, info)
         return sanitized
 
     # DIRECT_FIRST=1: try the server's own IP before spending proxy bandwidth.
@@ -1570,7 +1605,9 @@ def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
                 if provider is not None:
                     return llm_backend.generate_json(
                         prompt, schema, model=model_name,
-                        base_url_override=provider.base_url, api_key=provider.api_key())
+                        base_url_override=provider.base_url, api_key=provider.api_key(),
+                        timeout=llm_cascade.timeout_para(provider),
+                        extra_body=dict(provider.extra) or None)
                 return llm_backend.generate_json(prompt, schema, model=model_name)
             response = client.models.generate_content(model=model_name, contents=prompt, config=config)
             # Policy blocks are deterministic — retrying only burns quota and
@@ -1612,9 +1649,16 @@ def _run_gemini_stage(client, model_name, prompt, schema, provider=None):
             wait = llm_cascade.espera_antes_de_repetir(
                 msg, attempt, esperado, max_attempts)
             if wait is None:
-                print(f"⏭️ {who}: o servidor pede "
-                      f"{llm_cascade.espera_sugerida(msg):.0f}s de espera; nao "
-                      f"compensa esperar -- desistindo dele agora.")
+                dica = llm_cascade.espera_sugerida(msg)
+                if dica is None:
+                    # Ocupado sem dizer ate quando (o 503 "high demand" do
+                    # Gemini), com outro provedor pronto: ver
+                    # llm_cascade.erro_de_capacidade.
+                    print(f"⏭️ {who} ocupado ({msg[:80]}); outro provedor "
+                          f"atende agora.")
+                else:
+                    print(f"⏭️ {who}: o servidor pede {dica:.0f}s de espera; nao "
+                          f"compensa esperar -- desistindo dele agora.")
                 raise
             esperado += wait
             print(f"⚠️ {who} transient error (attempt {attempt}/{max_attempts}), retrying in {wait:.3g}s: {msg[:150]}")
@@ -1733,9 +1777,11 @@ def get_viral_clips(transcript_result, video_duration, audio_path=None):
         print("\U0001f916  Analyzing with Gemini (2-pass: score → detail)...")
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            print("❌ Error: nenhum provedor de LLM configurado. Defina GEMINI_API_KEY, "
-                  "GROQ_API_KEY ou CEREBRAS_API_KEY, suba um Ollama local, ou aponte "
-                  "LLM_BASE_URL para um servidor compativel com OpenAI.")
+            print("❌ Error: nenhum provedor de LLM configurado. Defina ao menos uma "
+                  "chave gratuita (GROQ_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, "
+                  "MISTRAL_API_KEY, OPENROUTER_API_KEY... -- a lista esta no "
+                  ".env.example), suba um Ollama local, ou aponte LLM_BASE_URL "
+                  "para um servidor compativel com OpenAI.")
             return None
         client = genai.Client(api_key=api_key)
         model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
@@ -2285,6 +2331,10 @@ if __name__ == '__main__':
         # calibrar o pre-filtro.
         job_metrics.fact("source_seconds", round(float(duration or 0), 1))
         job_metrics.fact("spoken_seconds", job_metrics.spoken_seconds_from(transcript))
+        # Enquanto a deteccao espera o LLM, o render se aquece: a sonda do NVENC
+        # e o detector de cenas deixam de cair no primeiro corte (~7 s no log
+        # de 165 s). A placa so sobe depois do download -- ver `aquecimento.py`.
+        aquecimento.iniciar(baixando.esperar_terminar if baixando is not None else None)
         with job_metrics.stage("04_detect"):
             if transcript is not None:
                 clips_data = get_viral_clips(transcript, duration, audio_path=audio_path)

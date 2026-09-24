@@ -95,6 +95,83 @@ def test_falls_back_to_json_object_when_schema_mode_is_rejected(local, monkeypat
     assert parsed == {"windows": []}
 
 
+def test_qualquer_400_ao_formato_tenta_o_mais_simples(local, monkeypatch):
+    """Cada provedor da cascata ampliada recusa o json_schema com palavras
+    proprias (o Z.ai com um codigo e mensagem em chines); exigir "format" no
+    corpo derrubava o provedor inteiro em vez de tentar o json_object."""
+    formatos = []
+
+    def handler(request):
+        fmt = (json.loads(request.content).get("response_format") or {}).get("type")
+        formatos.append(fmt)
+        if fmt == "json_schema":
+            return httpx.Response(400, json={"error": {"code": "1210",
+                                                       "message": "API 调用参数有误"}})
+        return _completion({"windows": []})
+
+    _serve(handler, monkeypatch)
+    assert llm_backend.generate_json("prompt", gemini_worker.ScoreResponse)[0] == {"windows": []}
+    assert formatos == ["json_schema", "json_object"]
+
+
+def test_400_que_nao_e_do_formato_sai_com_o_motivo_de_verdade(local, monkeypatch):
+    formatos = []
+
+    def handler(request):
+        formatos.append((json.loads(request.content).get("response_format") or {}).get("type"))
+        return httpx.Response(400, json={"error": {"message": "context length exceeded"}})
+
+    _serve(handler, monkeypatch)
+    with pytest.raises(RuntimeError, match="context length exceeded"):
+        llm_backend.generate_json("prompt", gemini_worker.ScoreResponse)
+    assert formatos == ["json_schema", "json_object", None]
+
+
+def test_raciocinio_antes_do_json_e_descartado(local, monkeypatch):
+    """Qwen, GLM e Nemotron podem escrever o raciocinio antes da resposta,
+    e ele pode ter chaves soltas que enganariam quem procura o primeiro "{"."""
+    texto = ("<think>O corte bom e {o do meio}, acho.</think>\n"
+             + json.dumps({"windows": []}))
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": texto}}],
+                                         "usage": {}})
+
+    _serve(handler, monkeypatch)
+    assert llm_backend.generate_json("prompt", gemini_worker.ScoreResponse)[0] == {"windows": []}
+
+
+def test_campos_extras_vao_em_toda_tentativa(local, monkeypatch):
+    """O `max_tokens` da NVIDIA e do Cloudflare (que cortam a resposta curta
+    sem ele) tem de ir tambem na volta sem json_schema."""
+    corpos = []
+
+    def handler(request):
+        corpo = json.loads(request.content)
+        corpos.append(corpo)
+        if (corpo.get("response_format") or {}).get("type") == "json_schema":
+            return httpx.Response(400, json={"error": {"message": "nao"}})
+        return _completion({"windows": []})
+
+    _serve(handler, monkeypatch)
+    llm_backend.generate_json("prompt", gemini_worker.ScoreResponse,
+                              extra_body={"max_tokens": 8192})
+    assert [c.get("max_tokens") for c in corpos] == [8192, 8192]
+
+
+def test_o_timeout_da_cascata_chega_ao_cliente(local, monkeypatch):
+    visto = {}
+    transport = httpx.MockTransport(lambda r: _completion({"windows": []}))
+
+    def cliente(**kw):
+        visto["timeout"] = kw.get("timeout")
+        return httpx.Client(transport=transport, **kw)
+
+    monkeypatch.setattr(llm_backend, "_client", cliente)
+    llm_backend.generate_json("prompt", gemini_worker.ScoreResponse, timeout=45.0)
+    assert visto["timeout"] == 45.0
+
+
 def test_code_fenced_json_is_accepted(local, monkeypatch):
     """Small models wrap the object in ```json fences even when told not to."""
     def handler(request):

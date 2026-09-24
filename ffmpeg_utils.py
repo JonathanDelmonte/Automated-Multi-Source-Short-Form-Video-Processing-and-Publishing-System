@@ -197,13 +197,23 @@ def reset_encoder_cache():
         _announced = False
 
 
+def modo_do_encoder():
+    """O FFMPEG_ENCODER pedido: `x264` (padrao), `nvenc` ou `auto`.
+
+    Uma definicao so, porque o `aquecimento.py` tambem precisa saber se a sonda
+    do NVENC vai rodar -- com `x264` ela nunca roda, e aquecer seria gastar um
+    processo com placa numa escolha que ninguem fez.
+    """
+    return os.environ.get("FFMPEG_ENCODER", "x264").strip().lower()
+
+
 def video_encode_args(tier=QUALITY):
     """Return the codec/quality args for one encode, honoring FFMPEG_ENCODER."""
     global _announced
     if tier not in _X264_ARGS:
         raise ValueError(f"Unknown encode tier: {tier!r}")
 
-    mode = os.environ.get("FFMPEG_ENCODER", "x264").strip().lower()
+    mode = modo_do_encoder()
     use_nvenc = False
     if mode in ("nvenc", "auto"):
         use_nvenc = nvenc_available()

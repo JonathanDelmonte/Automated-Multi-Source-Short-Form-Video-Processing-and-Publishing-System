@@ -2304,7 +2304,8 @@ def _cascade_config() -> Optional[dict]:
 
     O painel usa `config.localLlm` para decidir se ainda precisa pedir a chave
     do Gemini (`geminiOk` em App.jsx). Com a cascata configurada por
-    GROQ_API_KEY ou CEREBRAS_API_KEY, ele nao precisa.
+    qualquer chave de provedor de texto (GROQ_API_KEY, NVIDIA_API_KEY...), ele
+    nao precisa.
     """
     try:
         d = llm_cascade.describe()
@@ -2588,8 +2589,9 @@ async def process_endpoint(
         # Google key for the core pipeline: the moment picker runs there and
         # the frame-based stages degrade on their own (layout_picker returns
         # "none", silent videos fail with a message that says why).
-        # Vale igual para a cascata (llm_cascade): com GROQ_API_KEY ou
-        # CEREBRAS_API_KEY o detector roda sem chave do Google.
+        # Vale igual para a cascata (llm_cascade): com qualquer chave de
+        # provedor de texto (GROQ_API_KEY, NVIDIA_API_KEY...) o detector roda
+        # sem chave do Google.
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")

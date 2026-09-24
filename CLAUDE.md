@@ -89,7 +89,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 010 |
+| `docs/DECISOES.md` | ADR-001 a 011 |
 | `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
@@ -150,13 +150,16 @@ parecem arbitrarias no codigo estao justificadas la.
     `face_tracker.avisar_desligado()` imprime uma linha por job. Nao silenciar.
   - Os pesos so sao pre-baixados com `--build-arg YOLO=1`, mesmo padrao do
     `GPU=1`.
-- **Cascata de LLM gratuita** (`llm_cascade.py`, Fase 0.4 concluida, ADR-004 e
-  ADR-005). O detector de momentos atravessa Groq / Gemini / Cerebras / Ollama
-  em ordem que depende da duracao falada da fonte, com orcamento diario em
+- **Cascata de LLM gratuita** (`llm_cascade.py`, Fase 0.4 concluida, ADR-004,
+  ADR-005 e ADR-011). O detector de momentos atravessa Groq / Gemini e, quando
+  os dois falham numa chamada, todo provedor gratuito que tiver chave (Qwen e
+  gpt-oss-20b na mesma chave do Groq, outro Gemini na mesma chave do Google,
+  NVIDIA/Nemotron, Mistral, Ollama Cloud, OpenRouter, Cloudflare, Z.ai), em
+  ordem que depende da duracao falada da fonte, com orcamento diario em
   `output/.llm_budget.json` (em disco porque o `main.py` e subprocesso novo a
   cada job). Provedor entra so com sua chave presente; o Ollama e opt-in via
   `OLLAMA_BASE_URL`. Sem nenhuma chave, o comportamento e o antigo. Variaveis
-  documentadas no `.env.example`.
+  documentadas no `.env.example`. Ver a secao "A cascata ampliada" abaixo.
 - **Custo por job instrumentado** (`job_metrics.py`, bloco 0.5 concluido). Um
   coletor por job mede tempo de parede e tokens por estagio, credita a chamada
   de LLM ao estagio aberto pela pilha (por isso o LLM e instrumentado num lugar
@@ -1785,6 +1788,13 @@ a confirmar no proximo log.
   caminho de todo video do YouTube, e um nome errado ali so apareceria na
   maquina do autor.
 
+**Medido no log seguinte: 165 s** (era 192). `01_ingest` 12,5 s (o audio
+chegou; o video baixou 28 s depois, durante a transcricao), `02_probe` 2 s,
+`03_transcribe` 43,8 s **sem carga nenhuma** ("modelo ja na placa"),
+`04_detect` 21,6 s -- 10 s perdidos num `503 ... high demand` do Gemini, que
+virou o ADR-011 --, `05_06_render` 84,8 s. O primeiro corte apareceu 2 min 16 s
+depois de colar o link.
+
 **As linhas do log nao grudam mais** (`linhas_inteiras.py`):
 
 - Um `print` sao duas escritas; com varias threads, o marcador caia no meio da
@@ -1796,6 +1806,92 @@ a confirmar no proximo log.
   emite linha inteira, por thread, sob uma trava comum (o `app.py` junta os
   dois no mesmo cano). **Sem atributo `buffer`**: o `write_string` do yt-dlp
   escreveria direto nele, por fora da trava.
+
+### Velocidade, rodada 7: o que o log de 165 s ainda mostrava (24-set-2026)
+
+Tres coisas, todas de TEMPO: nenhuma toca modelo, parametro de encode ou arquivo
+entregue. Estimativa, a confirmar no proximo log: ~10 s a menos no total e no
+primeiro corte.
+
+**O render se aquece durante a deteccao** (`aquecimento.py`):
+
+- A primeira rodada de cortes levou 49 s e a segunda 36 s. A diferenca era custo
+  de uma vez por processo pago no primeiro corte: a sonda do NVENC (~2 s) e a
+  subida da placa para o TransNetV2 (~5 s: contexto de CUDA, pesos, kernels da
+  primeira inferencia). Durante o `04_detect` o processo so espera o LLM; a
+  thread de aquecimento faz tudo isso ali, com uma janela de quadros pretos do
+  mesmo tamanho da real.
+- **A placa so sobe depois do download terminar**: a pre-carga do whisper que
+  travou em 23-set subia o CUDA com o yt-dlp fazendo fork. Dali em diante a
+  thread faz o que o primeiro corte ja fazia, numa thread nao-principal, com
+  outras abrindo ffmpeg -- so que mais cedo.
+- **E havia um defeito**: `scene_detection._get_tn2_model` nao tinha trava, e os
+  tres cortes da rodada carregavam cada um o seu modelo, ao mesmo tempo.
+  `_TN2_CARGA` resolve; quem chega no meio do aquecimento espera por ele.
+- Nunca levanta e nunca prende o job; `AQUECER_RENDER=0` desliga.
+  `ffmpeg_utils.modo_do_encoder()` e a definicao unica de "vai sondar o NVENC?".
+
+**O download baixa pela extracao que ja fez** (`main._baixar_pela_extracao`):
+
+- Cada tentativa abria duas instancias do yt-dlp, e a segunda
+  (`ydl.download([url])`) extraia tudo de novo -- pagina, player, provedores de
+  PO token: ~3,5 s entre o titulo e o primeiro byte do audio, que com o audio
+  primeiro e o que a transcricao espera.
+- Agora e `process_ie_result(sanitize_info(info, remove_private_keys=True))`, o
+  caminho do `--load-info-json` do proprio yt-dlp
+  (`YoutubeDL.download_with_info_file`). O `sanitize_info` tira o
+  `requested_formats` da primeira escolha, que faria baixar a escolha ERRADA se
+  a nova caisse num formato unico -- e a extracao ja escolhe com o mesmo seletor.
+- **Qualquer falha extrai de novo** (o caminho de antes, que e tambem o que o
+  `download_with_info_file` faz), somando na conta de bytes o que a tentativa
+  que caiu ja tinha puxado pelo proxy.
+- Na rodada 4 isso ficou de fora "pelo risco de mexer no download sem testar
+  contra o YouTube". Mudou o peso (esses segundos agora atrasam o inicio da
+  transcricao) e mudou o teste: `tests/test_download_extracao_unica.py` roda o
+  `download_youtube_video` de verdade, com o yt-dlp de verdade, contra um
+  servidor local que conta os pedidos -- 3 com o codigo antigo, 2 com o novo.
+  Contra o YouTube em si continua sem teste daqui.
+
+**"Audio pronto" em linha propria**: o aviso saia da thread do download, onde a
+barra de progresso do yt-dlp ainda estava pela metade (`\r` sem `\n`), e grudava
+nela. Agora sai do `aguardar_audio`, na thread de quem espera. O teste reproduz a
+linha grudada do log com o codigo antigo.
+
+### A cascata ampliada: todo provedor gratuito com chave (ADR-011, 24-set-2026)
+
+O autor pediu, depois do 503 do Gemini: "o maximo de IA gratuita possivel",
+porque o projeto tem de ser 100% gratuito. O levantamento e as escolhas estao no
+ADR-011; o que importa ao mexer no codigo:
+
+- **Os dois primeiros de cada ordem sao os de sempre** (`ORDEM_CURTA`,
+  `ORDEM_LONGA`). Tudo o que veio depois so atende quando eles falham naquela
+  chamada: a qualidade do caminho normal nao mudou.
+- **Um id por MODELO**: `groq`, `groq-qwen` e `groq-20b` usam a mesma
+  `GROQ_API_KEY` e tem cotas separadas (o Groq conta por modelo); `gemini` e
+  `gemini-lite` idem com a `GEMINI_API_KEY`. Nos nomes de variavel o hifen vira
+  `_` (`LLM_GROQ_QWEN_TPD`, `GROQ_QWEN_MODEL`).
+- **Com outro pronto, "ocupado" passa ao proximo na hora**
+  (`erro_de_capacidade`): 503, 429 sem dica, 5xx, timeout. Resposta errada
+  (corpo vazio, JSON quebrado) continua repetindo o mesmo -- ali e o que
+  recupera. Os codigos so contam como palavra inteira: um "1500" num erro de
+  validacao nao e um 500.
+- **Chave recusada (401) desliga todo mundo que usa aquela variavel**, no resto
+  do job, sem gastar cota (`_CHAVE_RECUSADA`, como o `_MODELO_INEXISTENTE`).
+- **Provedor na nuvem tem 3 min** (`timeout_para`, `LLM_TIMEOUT_NUVEM`); os 600 s
+  do `LLM_TIMEOUT` sao do modelo local em CPU.
+- **O `llm_backend` passou a tentar o formato mais simples em QUALQUER 400/422**
+  de um pedido com `response_format` (cada provedor recusa com palavras
+  proprias), e tira o `<think>...</think>` que Qwen, GLM e Nemotron podem
+  escrever antes do JSON.
+- **O pre-filtro nao aperta**: os novos publicam teto de chamadas, nao de tokens;
+  ha teste.
+- **Cerebras nao e mais gratis** (credito unico de US$ 5 com cartao desde
+  21-jul-2026) e o `llama-3.3-70b` dele foi aposentado: o padrao virou
+  `gpt-oss-120b`, o rotulo diz "pago" e ele foi para o fim da fila.
+- **Os padroes de modelo apodrecem** -- o `qwen3-32b` do Groq saiu em julho. O
+  aviso de modelo inexistente nomeia a variavel certa de cada provedor
+  (`model_env`); `tests/test_llm_cascade_gratis.py` falha se um provedor novo
+  nascer sem ela.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

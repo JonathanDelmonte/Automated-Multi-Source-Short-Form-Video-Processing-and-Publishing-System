@@ -25,7 +25,9 @@ def ambiente_limpo(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     os.makedirs("output", exist_ok=True)
     for var in list(os.environ):
-        if var.startswith(("LLM_", "GROQ_", "CEREBRAS_", "GEMINI_", "OLLAMA_")):
+        if var.startswith(("LLM_", "GROQ_", "CEREBRAS_", "GEMINI_", "OLLAMA_",
+                           "NVIDIA_", "MISTRAL_", "OPENROUTER_", "CLOUDFLARE_",
+                           "ZAI_")):
             monkeypatch.delenv(var, raising=False)
     # Sem OLLAMA_BASE_URL o default aponta para localhost e o Ollama entraria
     # em toda cascata; os testes que o querem ligam de proposito.
@@ -33,6 +35,7 @@ def ambiente_limpo(tmp_path, monkeypatch):
     # A lista de modelos inexistentes vale por processo (um job); entre testes
     # ela tem de voltar vazia, ou um teste desligaria o Groq do seguinte.
     monkeypatch.setattr(llm_cascade, "_MODELO_INEXISTENTE", {})
+    monkeypatch.setattr(llm_cascade, "_CHAVE_RECUSADA", {})
     return tmp_path
 
 
@@ -71,8 +74,10 @@ class TestOrdem:
         assert [p.id for p in llm_cascade.cascade(10)] == ["cerebras", "groq"]
 
     def test_so_entra_provedor_configurado(self, monkeypatch):
+        # A chave do Groq traz os tres modelos dele, cada um com a propria
+        # cota (ADR-011); nenhum provedor sem chave entra.
         monkeypatch.setenv("GROQ_API_KEY", "g")
-        assert [p.id for p in llm_cascade.cascade(10)] == ["groq"]
+        assert [p.id for p in llm_cascade.cascade(10)] == ["groq", "groq-qwen", "groq-20b"]
 
     def test_sem_nada_configurado_a_cascata_e_vazia(self):
         assert llm_cascade.cascade(10) == []
@@ -86,7 +91,7 @@ class TestOrcamento:
     def test_tokens_por_dia_bloqueiam_antes_de_chamar(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "g")
         groq = llm_cascade.cascade(10)[0]
-        llm_cascade.record("groq", tokens=99_000)
+        llm_cascade.record("groq", tokens=199_000)
         ok, motivo = llm_cascade.available(groq, need_tokens=5_000)
         assert not ok and "tokens/dia" in motivo
 
@@ -193,7 +198,7 @@ class TestExecucao:
 
     def test_orcamento_esgotado_pula_sem_ir_na_rede(self, monkeypatch):
         _todos(monkeypatch)
-        llm_cascade.record("groq", tokens=100_000)
+        llm_cascade.record("groq", tokens=200_000)
         vistos = []
 
         def call(prompt, schema, provider):
@@ -280,7 +285,7 @@ class TestDescribe:
         assert d["batch_size"] == 6
         groq = next(p for p in d["providers"] if p["id"] == "groq")
         assert groq["tokens_today"] == 2_000
-        assert groq["tokens_per_day"] == 100_000
+        assert groq["tokens_per_day"] == 200_000
         assert groq["ready"] is True
 
     def test_marca_o_provedor_que_treina_com_os_dados(self, monkeypatch):
@@ -494,13 +499,26 @@ class TestEsperaComOutroProvedor:
         assert llm_cascade.espera_antes_de_repetir(
             "Please try again in 14.4s.", 1, 0.0, 3) == pytest.approx(14.9)
 
-    def test_sem_dica_a_regra_nao_muda(self, com_alternativa):
-        # 503 sem dica: a regra de 5 s / 10 s continua, mesmo com alternativa.
-        assert llm_cascade.espera_antes_de_repetir("503", 1, 0.0, 3) == 5
+    def test_ocupado_sem_dica_passa_ao_proximo(self, com_alternativa):
+        # O 503 "high demand" do Gemini no log de 165 s: com outro pronto,
+        # esperar 5 s pelo mesmo nao compensa (24-set-2026).
+        assert llm_cascade.espera_antes_de_repetir(
+            "503 UNAVAILABLE. This model is currently experiencing high demand",
+            1, 0.0, 3) is None
+
+    def test_resposta_errada_sem_dica_repete_o_mesmo(self, com_alternativa):
+        # Corpo vazio e o modelo errando, nao a fila: repetir o mesmo e o que
+        # recupera, entao a regra de 5 s / 10 s continua.
+        assert llm_cascade.espera_antes_de_repetir(
+            "Gemini returned an empty response body.", 1, 0.0, 3) == 5
+
+    def test_ocupado_sem_alternativa_espera_como_sempre(self):
+        assert llm_cascade.espera_antes_de_repetir("503 UNAVAILABLE", 1, 0.0, 3) == 5
 
     def test_run_avisa_cada_chamada_se_ha_para_onde_ir(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "g")
         monkeypatch.setenv("GEMINI_API_KEY", "m")
+        monkeypatch.setenv("LLM_CASCADE", "groq,gemini")
         visto = {}
 
         def call(prompt, schema, provider):
@@ -519,6 +537,7 @@ class TestEsperaComOutroProvedor:
     def test_provedor_sem_orcamento_nao_conta_como_alternativa(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "g")
         monkeypatch.setenv("GEMINI_API_KEY", "m")
+        monkeypatch.setenv("LLM_CASCADE", "groq,gemini")
         monkeypatch.setattr(llm_cascade, "_MODELO_INEXISTENTE", {"gemini": "x"})
         visto = {}
 

@@ -883,6 +883,16 @@ de grudar quando várias partes do programa escrevem ao mesmo tempo — o que j�
 marcador da barra de progresso se perder. Estimativa: ~24 s a menos no mesmo vídeo, a
 confirmar no próximo log.
 
+**Confirmado: 165 s**, com o modelo já na placa e o vídeo baixado durante a
+transcrição; o primeiro corte apareceu 2 min 16 s depois de colar o link. A rodada 7
+(mesmo dia) tira mais ~10 s sem tocar na qualidade: o render se aquece enquanto a
+detecção espera a IA (e o detector de cenas deixou de ser carregado três vezes), o
+download deixou de perguntar ao YouTube duas vezes pelo mesmo vídeo, e o aviso do
+áudio parou de grudar na barra do download. No mesmo log, 10 s se perderam num `503`
+do Gemini — e daí saiu o **ADR-011**: quando Groq e Gemini falham, a cascata segue por
+todo provedor gratuito com chave (Qwen e Nemotron incluídos), e "ocupado" passa ao
+próximo na hora. O Cerebras saiu da conta de gratuitos: virou crédito único com cartão.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

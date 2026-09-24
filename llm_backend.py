@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Optional, Tuple, Type
 
 import httpx
@@ -78,9 +79,9 @@ def _headers(api_key: Optional[str] = None) -> dict:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
-def _client(**kwargs) -> httpx.Client:
+def _client(timeout: Optional[float] = None, **kwargs) -> httpx.Client:
     """Factory so tests can swap in ``httpx.MockTransport``."""
-    return httpx.Client(timeout=_timeout(), **kwargs)
+    return httpx.Client(timeout=timeout or _timeout(), **kwargs)
 
 
 def _response_formats(schema: Type[BaseModel]):
@@ -92,16 +93,33 @@ def _response_formats(schema: Type[BaseModel]):
 
 
 def _is_format_rejection(resp: httpx.Response) -> bool:
-    if resp.status_code not in (400, 422):
-        return False
-    body = resp.text.lower()
-    return "response_format" in body or "json_schema" in body or "json_object" in body \
-        or "format" in body
+    """Um 400/422 a um pedido COM `response_format` passa ao formato seguinte.
+
+    Ate 24-set-2026 so contava se o corpo falasse em "format". Com a cascata
+    ampliada (ADR-011) cada provedor recusa com palavras proprias -- o
+    Cloudflare fala em "JSON Mode", o Z.ai devolve um codigo com mensagem em
+    chines --, e ai o provedor inteiro falhava em vez de tentar o formato mais
+    simples. Se o motivo era outro (contexto estourado, parametro invalido), a
+    ultima volta vai sem `response_format` e devolve o erro de verdade.
+    """
+    return resp.status_code in (400, 422)
+
+
+# O raciocinio que alguns modelos escrevem ANTES da resposta (Qwen, GLM,
+# Nemotron em modo de pensar). O JSON vem depois; e dentro do raciocinio pode
+# haver chaves soltas, que confundiriam quem procura o primeiro "{".
+_RACIOCINIO = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _sem_raciocinio(texto: str) -> str:
+    return _RACIOCINIO.sub("", texto)
 
 
 def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = None,
                   base_url_override: Optional[str] = None,
                   api_key: Optional[str] = None,
+                  timeout: Optional[float] = None,
+                  extra_body: Optional[dict] = None,
                   ) -> Tuple[dict, Optional[dict]]:
     """One chat completion that must come back as JSON matching ``schema``.
 
@@ -113,7 +131,11 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
     ``base_url_override`` e ``api_key`` existem para a cascata
     (``llm_cascade``), que precisa falar com um provedor por chamada em vez do
     unico endpoint global de ``LLM_BASE_URL``. Sem eles o comportamento e o
-    de antes: le o env.
+    de antes: le o env. ``timeout`` tambem: os 600 s do ``LLM_TIMEOUT`` sao
+    para modelo local em CPU, e um provedor na nuvem que trava nao pode
+    prender o job dez minutos com outros na fila (``llm_cascade.timeout_para``).
+    ``extra_body`` entra no corpo de cada tentativa (``Provider.extra``: o
+    ``max_tokens`` de quem corta a resposta curta demais sem ele).
     """
     import gemini_worker  # local import: keeps this module free of the google SDK
 
@@ -127,9 +149,10 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
         {"role": "user", "content": prompt},
     ]
     last_rejection: Optional[str] = None
-    with _client() as client:
+    with _client(timeout=timeout) as client:
         for fmt in _response_formats(schema):
-            body = {"model": model, "messages": messages, "temperature": 0.2, "stream": False}
+            body = {"model": model, "messages": messages, "temperature": 0.2, "stream": False,
+                    **(extra_body or {})}
             if fmt is not None:
                 body["response_format"] = fmt
             resp = client.post(url, json=body, headers=_headers(api_key))
@@ -154,7 +177,7 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
         text = msg.get("content") or ""
         if isinstance(text, list):  # some servers return content parts
             text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
-    parsed = gemini_worker._parse_json_response_text(text)
+    parsed = gemini_worker._parse_json_response_text(_sem_raciocinio(text))
     # Validate against the same schema Gemini enforces server-side, so a
     # local model that drops a field fails here with a readable error
     # (retried by the caller) instead of deep inside the clip pipeline.

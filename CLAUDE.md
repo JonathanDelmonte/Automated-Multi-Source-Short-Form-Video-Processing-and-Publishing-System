@@ -1927,11 +1927,29 @@ download, transcricao e render continuam no computador de quem abre o site.
 - **O `robots.txt` recusa todo rastreador.** O herdado convidava todos e
   apontava para o sitemap do produto do upstream -- inofensivo em localhost,
   errado com endereco publico (ADR-009).
-- **Pendente, e vem com o ajudante (Fase 6.2):** o servidor aceita qualquer
-  origem (o CORS reflete a que chegar) e o compose publica a porta em todas as
-  interfaces. A permissao do Chrome ja impede outro site de falar com ele sem a
-  pessoa deixar; a tranca de verdade e lista de origens, pareamento e
-  127.0.0.1.
+- **O endereco e `https://virtu-clips.zirtuno.workers.dev`** (no ar desde
+  24-set-2026; `zirtuno` e o subdominio da conta do autor). O `workers_dev:
+  true` explicito existe porque o painel do Cloudflare mostrou o workers.dev
+  "Disabled" logo depois do primeiro deploy.
+- **O servidor so entrega resposta ao site e a propria maquina**
+  (`origens.py`): o site oficial, as URLs de versao dele e qualquer pagina de
+  `localhost`. Ate aqui o CORS refletia QUALQUER origem com credenciais --
+  qualquer site aberto no mesmo navegador lia os projetos, os logs e os videos.
+  O painel do Docker nao depende disto: o proxy do Vite o faz mesma origem,
+  inclusive aberto de outro aparelho da rede. `ORIGENS_DO_PAINEL` troca a
+  lista; em branco vale o site oficial, porque lista vazia trancaria o painel
+  sem erro nenhum.
+  - **`allow_private_network` so e passado se o Starlette o conhece**: a imagem
+    de quem ja instalou pode ter um anterior, e ali o argumento derrubaria a
+    API no boot.
+  - **Renomear o projeto no Cloudflare exige trocar `SITE_OFICIAL`**; ha teste
+    comparando com o `name` do `wrangler.jsonc`.
+- **Pendente, e vem com o ajudante (Fase 6.2):** CORS decide quem LE a
+  resposta, nao quem MANDA o pedido. Um formulario de outro site ainda dispara
+  um POST simples, sem preflight -- o `/api/process` recebe `Form` --, e o job
+  roda sem que ninguem leia a resposta. A permissao do Chrome ja barra isso
+  para quem a nega; a tranca inteira e pareamento e 127.0.0.1 (o compose ainda
+  publica a porta em todas as interfaces).
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

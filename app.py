@@ -1920,11 +1920,26 @@ if BILLING_ENABLED:
 import mcp_server as _mcp_server
 app.include_router(_mcp_server.router)
 
-# Enable CORS for frontend. Cloud mode locks this down to the configured origins;
-# self-host keeps the permissive wildcard it has always used.
+# Enable CORS for frontend. Cloud mode locks this down to the configured origins.
+#
+# O self-host refletia QUALQUER origem, com credenciais, ate o painel ganhar
+# endereco publico (Fase 6, 24-set-2026): agora so o site oficial e as paginas
+# da propria maquina. A regra e as razoes estao em `origens.py`.
+import inspect
+import origens as _origens
+_cors_extra = {}
+# O navegador que ainda faz a pergunta de rede privada por preflight precisa
+# ouvir o "pode" -- sem isso o preflight do site volta 400. E o argumento so
+# existe no Starlette mais novo: a imagem de quem ja instalou pode ter um
+# anterior, e ali ele derrubaria a API no boot, com o painel preso em
+# "conectando ao servidor".
+if "allow_private_network" in inspect.signature(CORSMiddleware.__init__).parameters:
+    _cors_extra["allow_private_network"] = True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cloud.settings.allowed_origins if BILLING_ENABLED else ["*"],
+    allow_origins=cloud.settings.allowed_origins if BILLING_ENABLED else [],
+    allow_origin_regex=(None if BILLING_ENABLED
+                        else _origens.regex_das_origens(_origens.origens_do_painel())),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1932,6 +1947,7 @@ app.add_middleware(
     # no total to measure against and could not show progress. Safelisted or not,
     # they only become readable to JS once they are named here.
     expose_headers=["Content-Length", "Content-Range", "Accept-Ranges"],
+    **_cors_extra,
 )
 
 # Mount static files for serving videos. A miss under /videos/<job_id>/ first

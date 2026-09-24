@@ -17,6 +17,11 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "virtu-clips",
   "compatibility_date": "2026-09-01",
+  // O endereco fixo (virtu-clips.zirtuno.workers.dev) e o que o servidor
+  // aceita (`origens.py`). O wrangler ja o liga por padrao, mas o painel do
+  // Cloudflare o mostrou "Disabled" logo depois do primeiro deploy; explicito,
+  // todo deploy o deixa ligado.
+  "workers_dev": true,
   "assets": {
     "directory": "./dist",
     // O painel navega por hash (#/account...), entao isto quase nunca atua;

@@ -317,8 +317,15 @@ jobs:
             exit 1
           fi
           echo "publicada: ajudante-$versao"
-      - name: Guardar so as 5 mais novas
+      # E nenhum rascunho: um `gh release create` que cai no meio do upload
+      # deixa um para tras (o diagnostico de 24-set-2026 tambem deixou). As
+      # voltas sao uma por vez, entao nenhum rascunho aqui e de outra em curso.
+      - name: Guardar so as 5 mais novas, e nenhum rascunho
         run: |
+          for id in $(gh api "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft) | .id'); do
+            echo "apagando o rascunho $id"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done
           gh release list --limit 100 --json tagName,createdAt \
             --jq '[.[] | select(.tagName | startswith("ajudante-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
           while read -r tag; do

@@ -215,3 +215,14 @@ def test_atalhos_e_inicio_chamam_o_iniciar_que_a_atualizacao_nao_troca():
     for secao in ("[Icons]", "[Registry]", "[Run]", "[UninstallRun]"):
         trecho = iss.split(secao, 1)[1].split("\n[", 1)[0]
         assert "{app}\\iniciar.py" in trecho, secao
+
+
+@pytest.mark.parametrize("nome", ["instalar.ps1", "instalador.iss"])
+def test_o_que_o_windows_le_sem_bom_fica_em_ascii(nome):
+    """O Windows PowerShell 5.1 le um .ps1 sem BOM como ANSI, e o ISCC um .iss
+    idem: um acento ali vira lixo na tela de quem instala -- ou um erro de
+    sintaxe numa string. O que a pessoa le no icone mora no ajudante.py, que
+    e Python e UTF-8."""
+    texto = (AJUDANTE / nome).read_bytes()
+    fora = sorted({chr(b) for b in texto if b > 127})
+    assert not fora, f"{nome} tem caracteres fora do ASCII: {fora}"

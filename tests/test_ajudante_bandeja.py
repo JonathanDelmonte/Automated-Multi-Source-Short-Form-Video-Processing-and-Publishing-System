@@ -338,3 +338,25 @@ def test_parar_quando_o_ajudante_some_sem_consumir(tmp_path):
     c = aj.Caminhos(tmp_path)
     assert aj.pedir_para_parar(c, prazo_s=0.2, rodando=lambda: True) == 0
     assert not (c.dados / ".parar").exists()
+
+
+def test_sem_console_os_erros_vao_para_um_arquivo(tmp_path, monkeypatch):
+    """Sob o pythonw, stdout e stderr sao None: um erro numa thread da bandeja
+    sumiria sem rastro."""
+    c = aj.Caminhos(tmp_path)
+    monkeypatch.setattr(aj.sys, "stdout", None)
+    monkeypatch.setattr(aj.sys, "stderr", None)
+    aj.registrar_saida_sem_console(c)
+    try:
+        print("erro de teste", file=aj.sys.stderr)
+        aj.sys.stderr.flush()
+    finally:
+        aj.sys.stderr.close()
+    assert "erro de teste" in (c.logs / "ajudante.log").read_text(encoding="utf-8")
+
+
+def test_com_console_nada_muda(tmp_path):
+    antes = (aj.sys.stdout, aj.sys.stderr)
+    aj.registrar_saida_sem_console(aj.Caminhos(tmp_path))
+    assert (aj.sys.stdout, aj.sys.stderr) == antes
+    assert not (tmp_path / "dados").exists()

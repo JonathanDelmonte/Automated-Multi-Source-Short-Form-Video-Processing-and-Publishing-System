@@ -286,12 +286,14 @@ class Motor:
 INICIANDO, PRONTO, DOCKER, OCUPADA, ERRO = (
     "iniciando", "pronto", "docker", "porta-ocupada", "erro")
 
+# O que a pessoa le no icone: com acento (este arquivo e UTF-8, e a bandeja
+# fala com o Windows por texto largo).
 TEXTO_DO_ESTADO = {
-    INICIANDO: "iniciando o motor...",
+    INICIANDO: "iniciando o motor…",
     PRONTO: "pronto",
-    DOCKER: "outro motor do Cortes (o Docker) ja esta atendendo",
-    OCUPADA: f"a porta {PORTA} esta ocupada por outro programa",
-    ERRO: "o motor nao subiu -- veja o log",
+    DOCKER: "outro motor do Cortes (o Docker) já está atendendo",
+    OCUPADA: f"a porta {PORTA} está ocupada por outro programa",
+    ERRO: "o motor não subiu — veja o log",
 }
 
 ESPERAS_APOS_FALHA_S = (5, 15, 60, 300)
@@ -483,7 +485,7 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
     def titulo() -> str:
         extra = ""
         if ajudante.estado == PRONTO:
-            extra = " (placa de video)" if placa else " (processador)"
+            extra = " (placa de vídeo)" if placa else " (processador)"
         return f"{NOME}: {TEXTO_DO_ESTADO[ajudante.estado]}{extra}"
 
     def sair(icone, _item=None):
@@ -494,7 +496,7 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
 
     menu = pystray.Menu(
         pystray.MenuItem(lambda _i: titulo(), None, enabled=False),
-        pystray.MenuItem(f"versao {versao}", None, enabled=False),
+        pystray.MenuItem(f"versão {versao}", None, enabled=False),
         pystray.MenuItem("Abrir o Cortes", lambda *_: webbrowser.open(SITE), default=True),
         pystray.MenuItem("Abrir a pasta dos cortes",
                          lambda *_: abrir(c.dados / "output")),
@@ -677,6 +679,23 @@ def esperar_o_anterior_sair(prazo_s: float = 60) -> None:
         time.sleep(0.5)
 
 
+def registrar_saida_sem_console(c: Caminhos) -> None:
+    """Sob o `pythonw` nao ha console: `sys.stdout` e `sys.stderr` sao None, e
+    um erro numa thread da bandeja sumiria sem rastro -- justamente o que a
+    pessoa teria de mandar para alguem entender o que houve."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        c.logs.mkdir(parents=True, exist_ok=True)
+        caminho = c.logs / "ajudante.log"
+        girar_log(caminho)
+        arquivo = open(caminho, "a", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    sys.stdout = sys.stdout or arquivo
+    sys.stderr = sys.stderr or arquivo
+
+
 def _valor(argv: list, nome: str, padrao=None):
     if nome in argv and argv.index(nome) + 1 < len(argv):
         return argv[argv.index(nome) + 1]
@@ -699,12 +718,15 @@ def main(argv=None) -> int:
         webbrowser.open(SITE)
         return 0
     c.dados.mkdir(parents=True, exist_ok=True)
+    registrar_saida_sem_console(c)
+    print(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} ajudante subindo "
+          f"(versao {c.motor.name}, porta {PORTA})", flush=True)
     aviso = None
     if "--atualizado" in argv:
-        aviso = f"Atualizado para a versao {_valor(argv, '--atualizado', '')}."
+        aviso = f"Atualizado para a versão {_valor(argv, '--atualizado', '')}."
     elif "--atualizacao-falhou" in argv:
-        aviso = (f"A versao {_valor(argv, '--atualizacao-falhou', '')} nao passou na "
-                 "verificacao; o Cortes continua na anterior.")
+        aviso = (f"A versão {_valor(argv, '--atualizacao-falhou', '')} não passou na "
+                 "verificação; o Cortes continua na anterior.")
     rodar_bandeja(c, aviso)
     return 0
 

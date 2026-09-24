@@ -288,7 +288,9 @@ jobs:
               exit 0
             fi
           fi
-          titulo=$(printf '%s\n' "$TITULO_DO_COMMIT" | head -n 1)
+          # A primeira linha sem pipe: com pipefail, o `head` fechando o cano
+          # cedo mataria o printf de uma mensagem longa (SIGPIPE).
+          titulo="${TITULO_DO_COMMIT%%$'\n'*}"
           notas=$(printf 'Motor do commit %s: %s\n\nBaixe o **Cortes-Ajudante.exe** e abra; ele instala o motor (sem Docker, sem administrador) e abre o site. Quem ja tem o ajudante recebe esta versao sozinho.\n' "${GITHUB_SHA::7}" "$titulo")
           gh release create "ajudante-$versao" novo/Cortes-Ajudante.exe novo/motor.zip novo/versao.json \
             --title "Cortes $versao" --notes "$notas" --target "$GITHUB_SHA" --latest

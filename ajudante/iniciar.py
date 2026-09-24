@@ -60,7 +60,7 @@ def main() -> int:
     base = Path(__file__).resolve().parent
     pasta = versao_em_uso(base)
     if pasta is None:
-        _avisar("O motor do Cortes nao foi encontrado nesta pasta.\n\n"
+        _avisar("O motor do Cortes não foi encontrado nesta pasta.\n\n"
                 "Instale de novo pelo site: o instalador guarda os seus projetos.")
         return 1
     script = pasta / "ajudante" / "ajudante.py"

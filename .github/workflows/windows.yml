@@ -10,11 +10,12 @@ name: Windows
 #   proprio Windows, whisper em CPU, deteccao por um LLM falso, corte,
 #   reenquadramento e legenda. Depois cancela um job no meio e apaga o
 #   projeto -- no Windows, um ffmpeg orfao seguraria o arquivo.
-# - `instalador`: monta o Cortes-Ajudante.exe, instala SEM janela como um
-#   amigo instalaria, confere que o motor instalado sobe e processa o mesmo
+# - `instalador`: monta o Instalar-Virtu-Clips.exe, instala SEM janela como
+#   um amigo instalaria, confere que o motor instalado sobe e processa o mesmo
 #   video, testa a atualizacao sozinha (uma versao boa entra; uma quebrada
-#   volta e nao e tentada de novo) e desinstala conferindo que os projetos
-#   ficam.
+#   volta e nao e tentada de novo), desinstala conferindo que os projetos
+#   ficam -- e instala de novo como USUARIO COMUM, o caso que falhou no PC do
+#   autor e que o runner, administrador, nunca via.
 # - `publicar`: com os dois verdes, poe o instalador no GitHub Releases --
 #   de onde o site o oferece e de onde os ajudantes instalados se atualizam.
 #   So quando o MOTOR mudou: um commit de documentacao ou do painel nao
@@ -111,45 +112,72 @@ jobs:
           Copy-Item (python -c "import uv; print(uv.find_uv_bin())") binarios\uv.exe
           Invoke-WebRequest https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip -OutFile deno.zip
           Expand-Archive deno.zip -DestinationPath binarios
+          # O Python do motor vai DENTRO do instalador (ver instalar.ps1): o
+          # CPython standalone que o uv instalaria, copiado da pasta concreta
+          # -- e nao do atalho de versao menor que o uv cria ao lado dela.
+          $env:UV_PYTHON_INSTALL_DIR = "$env:RUNNER_TEMP\py"
+          python -m uv python install 3.11
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $py = Get-ChildItem $env:UV_PYTHON_INSTALL_DIR -Directory -Filter "cpython-3.11.*-windows-x86_64-none" |
+                Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | Select-Object -First 1
+          if (-not $py) { "o uv nao deixou um Python 3.11 em $env:UV_PYTHON_INSTALL_DIR"; exit 1 }
+          Copy-Item $py.FullName binarios\python -Recurse
+          & binarios\python\python.exe -c "import sys, ssl, sqlite3, ctypes, venv; print(sys.version)"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem binarios | Format-Table Name, Length
       - name: Empacotar
-        run: python ajudante/empacotar.py --versao $env:VERSAO --bin binarios --commit "${{ github.sha }}"
+        run: python ajudante/empacotar.py --versao $env:VERSAO --bin binarios --python binarios\python --commit "${{ github.sha }}"
       - name: Compilar o instalador
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=$env:VERSAO" ajudante\instalador.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem ajudante\saida | Format-Table Name, Length
+      # Antes, uma instalacao do tempo em que o programa se chamava Cortes
+      # (%LOCALAPPDATA%\Cortes): o instalador novo tem de trazer os projetos
+      # para a pasta nova e levar o resto -- programa e atalho.
       - name: Instalar sem janela
         run: |
-          $p = Start-Process ajudante\saida\Cortes-Ajudante.exe -Wait -PassThru `
+          $antiga = "$env:LOCALAPPDATA\Cortes"
+          New-Item -ItemType Directory -Force "$antiga\versoes\527\ajudante", "$antiga\dados\output\projeto" | Out-Null
+          Set-Content "$antiga\iniciar.py" "# o iniciar.py de uma instalacao antiga"
+          Set-Content "$antiga\dados\output\projeto\corte.txt" "um corte de antes da marca nova"
+          New-Item -ItemType File -Force "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cortes.lnk" | Out-Null
+          $p = Start-Process ajudante\saida\Instalar-Virtu-Clips.exe -Wait -PassThru `
                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
           "codigo do instalador: $($p.ExitCode)"
-          Get-Content "$env:LOCALAPPDATA\Cortes\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
+          Get-Content "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
+          Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "RedirectionGuard|Cortes" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { exit 1 }
       # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
       # pythonw.exe do venv com o iniciar.py; se um dos dois faltar, o icone
       # nao faz nada.
-      - name: Atalhos e inicio com o Windows
+      - name: Atalhos, inicio com o Windows e a pasta antiga
         run: |
-          $base = "$env:LOCALAPPDATA\Cortes"
-          foreach ($f in "venv\Scripts\python.exe", "venv\Scripts\pythonw.exe", "iniciar.py", "atual.txt", "bin\ffmpeg.exe", "bin\deno.exe", "versoes\$env:VERSAO\VERSAO", "versoes\$env:VERSAO\.completo", "cortes.ico") {
+          $base = "$env:LOCALAPPDATA\VirtuClips"
+          foreach ($f in "venv\Scripts\python.exe", "venv\Scripts\pythonw.exe", "python\python.exe", "iniciar.py", "atual.txt", "bin\ffmpeg.exe", "bin\deno.exe", "versoes\$env:VERSAO\VERSAO", "versoes\$env:VERSAO\.completo", "virtu-clips.ico") {
             if (-not (Test-Path (Join-Path $base $f))) { "faltou $f"; exit 1 }
           }
           $atual = (Get-Content "$base\atual.txt").Trim()
           if ($atual -ne $env:VERSAO) { "atual.txt diz $atual, e nao $env:VERSAO"; exit 1 }
+          # O valor manteve o nome de antes da marca (ajudante.VALOR_NO_INICIO).
           $run = (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes).Cortes
           "inicia com o Windows: $run"
-          if ($run -notmatch "pythonw\.exe" -or $run -notmatch "iniciar\.py") { exit 1 }
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cortes.lnk")) { "faltou o atalho do menu Iniciar"; exit 1 }
+          if ($run -notmatch "VirtuClips\\venv\\Scripts\\pythonw\.exe" -or $run -notmatch "iniciar\.py") { exit 1 }
+          $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+          if (-not (Test-Path "$menu\Virtu Clips.lnk")) { "faltou o atalho do menu Iniciar"; exit 1 }
+          # A instalacao antiga: os projetos vieram, o resto saiu.
+          if (-not (Test-Path "$base\dados\output\projeto\corte.txt")) { "os projetos da pasta Cortes nao vieram"; exit 1 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes") { "a pasta Cortes ficou:"; Get-ChildItem -Recurse "$env:LOCALAPPDATA\Cortes"; exit 1 }
+          if (Test-Path "$menu\Cortes.lnk") { "o atalho antigo ficou"; exit 1 }
           "versao instalada: $atual"
       - name: O motor instalado sobe
         run: |
-          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\iniciar.py" --verificar
+          & "$env:LOCALAPPDATA\VirtuClips\venv\Scripts\python.exe" "$env:LOCALAPPDATA\VirtuClips\iniciar.py" --verificar
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: O motor instalado processa um video
         run: |
-          $env:PATH = "$env:LOCALAPPDATA\Cortes\bin;" + $env:PATH
-          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\versoes\$env:VERSAO\ajudante\ponta_a_ponta.py" --pasta "$env:RUNNER_TEMP\e2e"
+          $env:PATH = "$env:LOCALAPPDATA\VirtuClips\bin;" + $env:PATH
+          & "$env:LOCALAPPDATA\VirtuClips\venv\Scripts\python.exe" "$env:LOCALAPPDATA\VirtuClips\versoes\$env:VERSAO\ajudante\ponta_a_ponta.py" --pasta "$env:RUNNER_TEMP\e2e"
           if ($LASTEXITCODE -ne 0) { exit 1 }
       # A atualizacao sozinha, contra um servidor local com o formato das URLs
       # do GitHub Releases. Duas versoes: uma boa, que muda as dependencias
@@ -157,7 +185,7 @@ jobs:
       # app.py quebrado, que tem de VOLTAR -- e nao ser tentada de novo.
       - name: A atualizacao troca a versao boa e devolve a quebrada
         run: |
-          $base = "$env:LOCALAPPDATA\Cortes"
+          $base = "$env:LOCALAPPDATA\VirtuClips"
           $py = "$base\venv\Scripts\python.exe"
           $srv = "$env:RUNNER_TEMP\releases"
           function Publicar($versao) {
@@ -216,26 +244,63 @@ jobs:
           }
       - name: Desinstalar leva o programa e deixa os projetos
         run: |
-          & "$env:LOCALAPPDATA\Cortes\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          $base = "$env:LOCALAPPDATA\VirtuClips"
+          & "$base\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           # O desinstalador se copia para o temporario e segue de la: espera
           # pelo efeito, nao pelo processo. E pelo ULTIMO efeito -- ele apaga
           # a si mesmo no fim; o venv, com milhares de arquivos, ainda estava
           # sendo apagado quando a pasta das versoes ja tinha sumido.
           $fim = (Get-Date).AddSeconds(300)
-          while ((Test-Path "$env:LOCALAPPDATA\Cortes\unins000.exe") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
-          if (Test-Path "$env:LOCALAPPDATA\Cortes\unins000.exe") { "o desinstalador nao terminou"; exit 1 }
-          if (Test-Path "$env:LOCALAPPDATA\Cortes\versoes") { "o motor ficou para tras"; exit 1 }
-          if (Test-Path "$env:LOCALAPPDATA\Cortes\venv") { "o venv ficou para tras"; exit 1 }
-          if (-not (Test-Path "$env:LOCALAPPDATA\Cortes\dados")) { "os projetos sumiram"; exit 1 }
+          while ((Test-Path "$base\unins000.exe") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
+          if (Test-Path "$base\unins000.exe") { "o desinstalador nao terminou"; exit 1 }
+          if (Test-Path "$base\versoes") { "o motor ficou para tras"; exit 1 }
+          if (Test-Path "$base\venv") { "o venv ficou para tras"; exit 1 }
+          if (Test-Path "$base\python") { "o Python ficou para tras"; exit 1 }
+          if (-not (Test-Path "$base\dados")) { "os projetos sumiram"; exit 1 }
           if (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes -ErrorAction SilentlyContinue) { "o inicio com o Windows ficou"; exit 1 }
-          "desinstalado; os projetos ficaram em $env:LOCALAPPDATA\Cortes\dados"
+          "desinstalado; os projetos ficaram em $base\dados"
+      # O caso que falhou no PC do autor (24-set-2026): uma pessoa COMUM, sem
+      # administrador, instalando. O runner do GitHub e administrador, e atalho
+      # de pasta criado por administrador e "confiavel" para a RedirectionGuard
+      # -- por isso a volta de cima nunca viu o erro 448. Aqui o instalador roda
+      # como um usuario comum, e com a RedirectionGuard FORCADA
+      # (/REDIRECTIONGUARD): o motor tem de instalar mesmo com ela ligada. A
+      # linha "protecao de redirecionamento" do registro diz se ela chegou ao
+      # powershell -- e a resposta que o autor precisava.
+      - name: Um usuario comum instala
+        run: |
+          # 14 caracteres, nao mais: acima disso o `net user` pergunta se pode
+          # continuar, e esperaria um "S" para sempre.
+          $senha = "Vc-" + [guid]::NewGuid().ToString("N").Substring(0, 8) + "-a1"
+          net user amigo $senha /add | Out-Null
+          if ($LASTEXITCODE -ne 0) { "nao criou o usuario"; exit 1 }
+          $cred = New-Object System.Management.Automation.PSCredential("amigo", (ConvertTo-SecureString $senha -AsPlainText -Force))
+          Set-Service seclogon -StartupType Manual
+          Start-Service seclogon
+          $pub = "C:\Users\Public\vc"
+          New-Item -ItemType Directory -Force $pub | Out-Null
+          icacls $pub /grant "amigo:(OI)(CI)M" | Out-Null
+          Copy-Item ajudante\saida\Instalar-Virtu-Clips.exe $pub
+          $p = Start-Process "$pub\Instalar-Virtu-Clips.exe" -Credential $cred -LoadUserProfile -Wait -PassThru `
+               -WorkingDirectory $pub `
+               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/REDIRECTIONGUARD", "/LOG=$pub\inno-amigo.log"
+          "codigo do instalador (usuario comum): $($p.ExitCode)"
+          $base = "C:\Users\amigo\AppData\Local\VirtuClips"
+          Get-Content "$base\dados\logs\instalacao.log" -Tail 40 -ErrorAction SilentlyContinue
+          Select-String -Path "$pub\inno-amigo.log" -Pattern "RedirectionGuard" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { exit 1 }
+          $v = Start-Process "$base\venv\Scripts\python.exe" -Credential $cred -LoadUserProfile -Wait -PassThru `
+               -WorkingDirectory $base -ArgumentList "$base\iniciar.py", "--verificar" `
+               -RedirectStandardOutput "$pub\verificar.txt" -RedirectStandardError "$pub\verificar-erro.txt"
+          Get-Content "$pub\verificar.txt", "$pub\verificar-erro.txt" -ErrorAction SilentlyContinue
+          if ($v.ExitCode -ne 0) { "o motor do usuario comum nao subiu"; exit 1 }
       - name: Guardar o instalador
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: Cortes-Ajudante
+          name: Instalar-Virtu-Clips
           path: |
-            ajudante/saida/Cortes-Ajudante.exe
+            ajudante/saida/Instalar-Virtu-Clips.exe
             ajudante/saida/motor.zip
             ajudante/saida/versao.json
           if-no-files-found: ignore
@@ -246,7 +311,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\registros" | Out-Null
           Copy-Item "$env:RUNNER_TEMP\inno.log", "$env:RUNNER_TEMP\e2e\motor.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
-          Copy-Item "$env:LOCALAPPDATA\Cortes\dados\logs\*.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\VirtuClips\dados\logs\*.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\Users\Public\vc\*.log", "C:\Users\Public\vc\*.txt" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\registros\amigo" | Out-Null
+          Copy-Item "C:\Users\amigo\AppData\Local\VirtuClips\dados\logs\*.log" "$env:RUNNER_TEMP\registros\amigo\" -ErrorAction SilentlyContinue
           Get-ChildItem "$env:RUNNER_TEMP\registros"
       - name: Guardar o que falhou
         if: ${{ failure() }}
@@ -269,7 +337,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Cortes-Ajudante
+          name: Instalar-Virtu-Clips
           path: novo
       # So a PONTA da main publica. A release cria a tag no commit desta
       # volta, e o GitHub trata uma tag num commit cujo .github/workflows
@@ -303,9 +371,9 @@ jobs:
           # A primeira linha sem pipe: com pipefail, o `head` fechando o cano
           # cedo mataria o printf de uma mensagem longa (SIGPIPE).
           titulo="${TITULO_DO_COMMIT%%$'\n'*}"
-          notas=$(printf 'Motor do commit %s: %s\n\nBaixe o **Cortes-Ajudante.exe** e abra; ele instala o motor (sem Docker, sem administrador) e abre o site. Quem ja tem o ajudante recebe esta versao sozinho.\n' "${GITHUB_SHA::7}" "$titulo")
-          if ! gh release create "ajudante-$versao" novo/Cortes-Ajudante.exe novo/motor.zip novo/versao.json \
-               --title "Cortes $versao" --notes "$notas" --target "$GITHUB_SHA" --latest; then
+          notas=$(printf 'Motor do commit %s: %s\n\nBaixe o **Instalar-Virtu-Clips.exe** e abra; ele instala o motor (sem Docker, sem administrador) e abre o site. Quem ja tem o Virtu Clips recebe esta versao sozinho.\n' "${GITHUB_SHA::7}" "$titulo")
+          if ! gh release create "ajudante-$versao" novo/Instalar-Virtu-Clips.exe novo/motor.zip novo/versao.json \
+               --title "Virtu Clips $versao" --notes "$notas" --target "$GITHUB_SHA" --latest; then
             # Um envio chegou entre a conferencia e a criacao: a volta dele
             # publica. Qualquer outro motivo e erro de verdade.
             ponta=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)

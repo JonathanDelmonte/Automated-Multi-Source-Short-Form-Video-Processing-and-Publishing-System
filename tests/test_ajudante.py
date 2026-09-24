@@ -170,17 +170,75 @@ def test_a_assinatura_muda_com_as_dependencias(tmp_path):
 def test_o_instalador_nao_pede_administrador_e_guarda_os_projetos():
     iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
     assert "PrivilegesRequired=lowest" in iss
-    assert "{localappdata}\\Cortes" in iss
+    assert "DefaultDirName={localappdata}\\VirtuClips" in iss
     apagados = re.findall(r'Type: filesandordirs; Name: "\{app\}\\([^"]+)"', iss)
     assert "dados" not in apagados and {"versoes", "venv", "python", "bin"} <= set(apagados)
     # No /VERYSILENT uma caixa comum esperaria um clique para sempre.
     assert "SuppressibleMsgBox(" in iss and "  MsgBox(" not in iss
 
 
-def test_o_python_do_motor_e_o_do_proprio_cortes():
+def test_o_python_vem_no_instalador_e_o_uv_nao_baixa_outro():
+    """O erro 448 do PC do autor (24-set-2026): o `uv python install` cria um
+    atalho de pasta (junction) por versao, e o Windows recusou atravessar o
+    que um usuario comum criou. O Python agora vem no .exe, e o uv so o usa
+    -- nunca baixa outro, que e o que criaria o atalho de novo."""
     ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
-    assert '"--python-preference", "only-managed"' in ps1
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert '"python", "install"' not in ps1
+    assert '$env:UV_PYTHON_DOWNLOADS = "never"' in ps1
+    assert 'Rodar $uv @("venv", $venv, "--python", $pythonBase' in ps1
+    assert 'Source: "pacote\\python\\*"; DestDir: "{app}\\python"' in iss
     assert "requirements-windows-gpu.txt" in ps1 and "TemPlacaNvidia" in ps1
+    # A atualizacao tambem instala com o uv: la tambem, nada de baixar Python.
+    fonte = (AJUDANTE / "atualizacao.py").read_text(encoding="utf-8")
+    assert 'UV_PYTHON_DOWNLOADS="never"' in fonte and "UV_PYTHON_INSTALL_DIR" not in fonte
+
+
+def test_a_redirectionguard_do_inno_fica_desligada():
+    """O Inno Setup 6.7 liga a RedirectionGuard por padrao, e ela chegou ao
+    uv, neto do instalador. Ela protege instalador ADMINISTRADOR mexendo em
+    pasta que qualquer um escreve; este roda como a pessoa, na pasta dela."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert re.search(r"^RedirectionGuard=no$", iss, re.M)
+    # O registro da instalacao diz se ela chegou ao powershell: e a primeira
+    # pergunta se o erro 448 voltar.
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    assert "GetProcessMitigationPolicy" in ps1 and "ProtecaoDeRedirecionamento" in ps1
+
+
+def test_a_instalacao_do_tempo_do_cortes_vem_para_a_pasta_nova():
+    """Mesmo AppId (uma entrada so em Aplicativos), pasta nova: sem
+    `UsePreviousAppDir=no` o Inno instalaria de novo na pasta antiga. E os
+    projetos da antiga vem junto, antes de o resto dela ser apagado."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert "AppId={{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}" in iss
+    assert re.search(r"^UsePreviousAppDir=no$", iss, re.M)
+    preparar = iss.split("function PrepareToInstall", 1)[1].split("\nend;", 1)[0]
+    assert "MigrarDoCortes" in preparar
+    migrar = iss.split("procedure MigrarDoCortes", 1)[1].split("\nend;", 1)[0]
+    assert migrar.index("PararAjudante(Antiga)") < migrar.index("RenameFile(Antiga + '\\dados'")
+    assert migrar.index("RenameFile(") < migrar.index("DelTree(")
+    assert "DelTree(Antiga + '\\dados'" not in migrar, "os projetos nunca sao apagados"
+
+
+def test_o_inicio_com_o_windows_e_o_mesmo_valor_que_o_ajudante_liga():
+    """O .iss grava o valor do registro, e o menu do ajudante o liga e
+    desliga. Com nomes diferentes, desligar pelo menu deixaria o do
+    instalador -- e o ajudante continuaria subindo no login."""
+    import ajudante
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    registro = iss.split("[Registry]", 1)[1].split("\n[", 1)[0]
+    assert f'ValueName: "{ajudante.VALOR_NO_INICIO}"' in registro
+
+
+def test_o_ci_instala_como_usuario_comum_com_a_protecao_ligada():
+    """O runner do GitHub e administrador, e atalho criado por administrador e
+    confiavel: foi assim que o erro 448 passou pelo CI. A volta que prova o
+    conserto instala como usuario comum, com a RedirectionGuard forcada."""
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    passo = fluxo.split("- name: Um usuario comum instala", 1)[1].split("- name:", 1)[0]
+    assert "net user amigo" in passo and "-Credential $cred" in passo
+    assert '"/REDIRECTIONGUARD"' in passo and "--verificar" in passo
 
 
 def test_motor_quebrado_nao_termina_como_instalado():

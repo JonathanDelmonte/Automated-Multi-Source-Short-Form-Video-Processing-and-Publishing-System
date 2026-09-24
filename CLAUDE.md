@@ -2024,6 +2024,38 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
 - **O `.env` da pessoa mora em `dados\.env`** e vence tudo menos `PROTEGIDAS`
   (as pastas e o que o ajudante precisa): quem usa Docker copia o `.env` do
   repositorio, e la o `OUTPUT_DIR` pode ser `/app/...`.
+- **O Python vem DENTRO do instalador** (24-set-2026). Antes, o
+  `instalar.ps1` o baixava com `uv python install`, e no PC do autor a
+  instalacao morreu com o erro 448, "ponto de montagem nao confiavel". Tres
+  pecas, e as tres sao necessarias para entender:
+  - o uv cria um atalho de pasta (junction) por versao menor do Python
+    (`cpython-3.11-windows-...` apontando para a pasta da versao exata);
+  - o Inno Setup 6.7 liga por padrao a **RedirectionGuard** do Windows, que
+    recusa atravessar atalho criado por usuario comum -- e ela chegou ao uv,
+    neto do instalador, embora a ajuda do Inno diga que filhos nao a herdam;
+  - o runner do GitHub e administrador, e atalho criado por administrador e
+    "confiavel": por isso o CI instalava verde.
+
+  O conserto tira o atalho do caminho (o `empacotar.py --python` poe um
+  CPython standalone em `pacote/python/`, o `.iss` o copia, e o uv roda com
+  `UV_PYTHON_DOWNLOADS=never` na instalacao e na atualizacao) e desliga a
+  protecao que nao serve aqui (`RedirectionGuard=no`: ela protege instalador
+  ADMINISTRADOR mexendo em pasta que qualquer um escreve, e este roda como a
+  propria pessoa, na pasta dela). O `instalar.ps1` escreve no registro se a
+  protecao estava ligada no processo dele -- a primeira pergunta se o 448
+  voltar. E o `windows.yml` ganhou o passo **"Um usuario comum instala"**: cria
+  um usuario sem administrador e instala como ele, com a protecao FORCADA
+  (`/REDIRECTIONGUARD`), e o motor dele tem de passar no `--verificar`.
+- **A pasta mudou com o nome** (`%LOCALAPPDATA%\Cortes` ->
+  `%LOCALAPPDATA%\VirtuClips`), com o MESMO AppId, para ficar uma entrada so
+  em "Aplicativos". Sem `UsePreviousAppDir=no` o Inno instalaria de novo na
+  pasta antiga. O `MigrarDoCortes` do `[Code]` desliga o ajudante antigo, traz
+  `dados\` (os projetos) para a pasta nova e apaga o resto dela e os atalhos
+  `Cortes.lnk`; o CI monta uma instalacao antiga falsa antes de instalar e
+  confere as tres coisas. E o `caminhos_padrao` do ajudante tira a pasta de
+  ONDE O ARQUIVO ESTA (`<base>/versoes/<v>/ajudante/`), e nao do nome: uma
+  instalacao antiga que se atualiza sozinha recebe o codigo novo na pasta
+  `Cortes`, e procurar o venv em `VirtuClips` a deixaria sem subir.
 - **Armadilhas que ja morderam:**
   - no `.iss`, **nenhuma linha pode comecar com `#`** fora das diretivas: o
     pre-processador leu `#13#10` (a quebra de linha do Pascal) como diretiva e
@@ -2038,6 +2070,11 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     GitHub passa disso, e o video de ponta a ponta trabalha numa pasta curta;
   - o motor sob o ajudante nao espera o dreno de 20 s (`PROXY_DRAIN_SECONDS=0`):
     aquilo e para o proxy de deploy em nuvem;
+  - `net user` com senha de **mais de 14 caracteres** pergunta se pode
+    continuar e espera um "S" -- no CI, para sempre;
+  - o PowerShell converte inteiro para `IntPtr` sem ambiguidade, e para
+    `UIntPtr` nao: o `SIZE_T` do `GetProcessMitigationPolicy` vai como
+    `IntPtr`;
   - **so a ponta da `main` publica.** A release cria a tag no commit da volta,
     e o GitHub trata uma tag num commit cujo `.github/workflows` difere do da
     `main` como "criar workflow": exige `workflows: write`, que o

@@ -25,8 +25,8 @@ A troca e feita por OUTRO processo (`--aplicar`), depois que o ajudante sai:
    anterior as devolve), e a versao fica marcada para nao ser tentada de novo;
 4. o ajudante e aberto de novo, e avisa o que aconteceu.
 
-Stdlib pura: roda com o Python do Cortes sem carregar nada do venv que a troca
-de dependencias possa estar substituindo.
+Stdlib pura: roda com o Python do ajudante sem carregar nada do venv que a
+troca de dependencias possa estar substituindo.
 
 Uso (o ajudante chama sozinho; a mao, so para testar):
     python atualizacao.py --aplicar <pasta da versao nova> [--reabrir]
@@ -178,7 +178,7 @@ def url_das_versoes(env=os.environ) -> str:
 
 
 def _abrir(url: str, timeout: float):
-    pedido = urllib.request.Request(url, headers={"User-Agent": "Cortes-ajudante"})
+    pedido = urllib.request.Request(url, headers={"User-Agent": "VirtuClips-ajudante"})
     return urllib.request.urlopen(pedido, timeout=timeout)  # noqa: S310 -- https fixo ou o do teste
 
 
@@ -368,8 +368,8 @@ def atualizar_ytdlp(c, log) -> None:
     uv = c.bin / ("uv.exe" if aj.NO_WINDOWS else "uv")
     if not uv.exists():
         return
-    env = dict(os.environ, UV_CACHE_DIR=str(c.base / "cache-uv"),
-               UV_PYTHON_INSTALL_DIR=str(c.base / "python"))
+    # Nunca baixar Python: o do ajudante veio no instalador (ver instalar.ps1).
+    env = dict(os.environ, UV_CACHE_DIR=str(c.base / "cache-uv"), UV_PYTHON_DOWNLOADS="never")
     try:
         r = subprocess.run([str(uv), "pip", "install", "--python", str(c.python),
                             "--upgrade", "yt-dlp[default]"], env=env, capture_output=True,
@@ -399,9 +399,9 @@ def aplicar(c, nova: Path, log, verificar_fn=verificar_versao,
         log(f"verificando a versao {versao}")
         ok = verificar_fn(c, nova, log)
     if not ok:
-        log(f"a versao {versao} NAO passou; o Cortes continua na {versao_de(atual)}")
+        log(f"a versao {versao} NAO passou; o {aj.NOME} continua na {versao_de(atual)}")
         if mudaram and not dependencias_fn(c, atual, log):
-            log("as dependencias da versao anterior nao voltaram; reinstale o Cortes")
+            log(f"as dependencias da versao anterior nao voltaram; reinstale o {aj.NOME}")
         shutil.rmtree(nova, ignore_errors=True)
         registrar(c, versao, "revertida")
         return False

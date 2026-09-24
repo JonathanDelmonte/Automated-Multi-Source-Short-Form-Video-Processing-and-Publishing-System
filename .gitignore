@@ -66,4 +66,3 @@ skills-lock.json
 # O que o ajudante/empacotar.py monta para o instalador (CI do Windows).
 ajudante/pacote/
 ajudante/saida/
-ajudante/cortes.ico

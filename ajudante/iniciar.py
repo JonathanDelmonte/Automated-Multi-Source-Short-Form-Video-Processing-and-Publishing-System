@@ -1,7 +1,7 @@
 """O ponto de entrada do ajudante: o atalho, o menu Iniciar e o inicio com o
 Windows chamam ESTE arquivo (Fase 6.2).
 
-Ele mora em `%LOCALAPPDATA%\\Cortes\\iniciar.py`, fora das versoes, e a
+Ele mora em `%LOCALAPPDATA%\\VirtuClips\\iniciar.py`, fora das versoes, e a
 atualizacao sozinha nunca o troca -- por isso e pequeno e so faz uma coisa:
 achar a versao em uso (`atual.txt` -> `versoes/<versao>/`) e rodar o
 `ajudante.py` dela. Se o `atual.txt` apontar para uma pasta que nao existe ou
@@ -51,7 +51,7 @@ def versao_em_uso(base: Path) -> Optional[Path]:
 def _avisar(texto: str) -> None:
     if sys.platform == "win32":
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, texto, "Cortes", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, texto, "Virtu Clips", 0x10)
     else:
         print(texto, file=sys.stderr)
 
@@ -60,7 +60,7 @@ def main() -> int:
     base = Path(__file__).resolve().parent
     pasta = versao_em_uso(base)
     if pasta is None:
-        _avisar("O motor do Cortes não foi encontrado nesta pasta.\n\n"
+        _avisar("O motor do Virtu Clips não foi encontrado nesta pasta.\n\n"
                 "Instale de novo pelo site: o instalador guarda os seus projetos.")
         return 1
     script = pasta / "ajudante" / "ajudante.py"

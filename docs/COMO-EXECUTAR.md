@@ -28,13 +28,13 @@ removeu as integrações que pediriam uma.
 
 ## O jeito sem Docker: o ajudante
 
-Para usar o Cortes em outro computador — ou no seu, sem Docker —, nada deste guia é
-preciso: abra **https://virtu-clips.zirtuno.workers.dev**, clique em **Baixar o Cortes
-para Windows** e abra o arquivo. Ele instala o motor em `%LOCALAPPDATA%\Cortes` sem
-pedir administrador, usa a placa de vídeo se houver, fica como ícone perto do relógio,
-liga com o Windows e se atualiza sozinho. Os projetos ficam em
-`%LOCALAPPDATA%\Cortes\dados`, e desinstalar não os apaga. As decisões estão no
-ADR-012.
+Para usar o Virtu Clips em outro computador — ou no seu, sem Docker —, nada deste guia
+é preciso: abra **https://virtu-clips.zirtuno.workers.dev**, clique em **Baixar o
+Virtu Clips para Windows** e abra o arquivo. Ele instala o motor em
+`%LOCALAPPDATA%\VirtuClips` sem pedir administrador, usa a placa de vídeo se houver,
+fica como ícone perto do relógio, liga com o Windows e se atualiza sozinho. Os
+projetos ficam em `%LOCALAPPDATA%\VirtuClips\dados`, e desinstalar não os apaga. As
+decisões estão no ADR-012.
 
 O resto deste guia é o caminho do Docker, que continua valendo no seu computador. Os
 dois convivem: o Docker usa a porta 8000 e o ajudante a 8001, e quando o Docker está
@@ -42,49 +42,49 @@ de pé o ajudante para o motor dele e deixa o site falar com o Docker.
 
 ### Roteiro: testar o ajudante no seu PC (uma vez, antes de mandar para alguém)
 
-O Windows do GitHub prova a instalação, um vídeo inteiro no processador, a atualização
-sozinha e a desinstalação. Não prova a placa, o YouTube, o ícone nem o aviso do
-Windows — isso só numa máquina de verdade.
+O Windows do GitHub prova a instalação — inclusive como um usuário **sem**
+administrador, que é o caso do erro 448 de 24-set-2026 —, um vídeo inteiro no
+processador, a atualização sozinha e a desinstalação. Não prova a placa, o YouTube, o
+ícone nem o aviso do Windows: isso só numa máquina de verdade.
 
 1. **Feche o Docker Desktop** (ícone da baleia perto do relógio → *Quit Docker
    Desktop*). Não é obrigatório, mas assim o teste é do ajudante e não do Docker.
-2. Abra o site. Em poucos segundos aparece "procurando o Cortes neste computador" e o
-   botão **Baixar o Cortes para Windows**. Clique.
-3. Abra o `Cortes-Ajudante.exe` baixado. **Confira:** o Windows mostra "O Windows
-   protegeu o computador"? *Mais informações* → *Executar assim mesmo* resolve?
+2. Abra o site. Em poucos segundos aparece a logo, "procurando o Virtu Clips neste
+   computador" e o botão **Baixar o Virtu Clips para Windows**. Clique.
+3. Abra o `Instalar-Virtu-Clips.exe` baixado. **Confira:** o Windows mostra "O Windows
+   protegeu o computador"? *Mais informações* → *Executar assim mesmo* resolve? O
+   instalador é escuro, com a logo.
 4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060
    ela baixa também as bibliotecas de CUDA do whisper (~1 GB a mais), então pode
-   levar uns 10 minutos. A janela fecha sozinha.
-5. No fim, o site abre sozinho. **Confira:** o ícone "C" perto do relógio (talvez na
-   setinha ^); passando o mouse, **"Cortes: pronto (placa de vídeo)"**. Se disser
-   "(processador)", me mande o arquivo abaixo.
+   levar uns 10 minutos. A janela fecha sozinha. A pasta `%LOCALAPPDATA%\Cortes`
+   da tentativa que deu o erro 448 é limpa sozinha nesse passo.
+5. No fim, o site abre sozinho. **Confira:** o ícone "V" perto do relógio (talvez na
+   setinha ^); passando o mouse, **"Virtu Clips: pronto (placa de vídeo)"**. Se
+   disser "(processador)", me mande o arquivo abaixo.
 
    ```
-   %LOCALAPPDATA%\Cortes\dados\logs\instalacao.log
+   %LOCALAPPDATA%\VirtuClips\dados\logs\instalacao.log
    ```
 
-6. As chaves de IA. O jeito mais curto é copiar o `.env` do projeto para a pasta do
-   ajudante — ele ignora as pastas do Docker que estiverem lá. No **Prompt de
-   Comando**:
-
-   ```
-   copy "C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System\.env" "%LOCALAPPDATA%\Cortes\dados\.env"
-   ```
-
-   Depois, no ícone do relógio, **Sair**, e abra o Cortes de novo pelo menu Iniciar.
+6. **A chave de IA: o site pede, e você cola.** Na primeira vez aparece "Required API
+   keys missing" → *go to settings* → cole a chave do Gemini (a mesma da linha
+   `GEMINI_API_KEY=` do seu `.env`; quem não tem, cria de graça em
+   aistudio.google.com). Ela fica guardada no navegador. Ninguém precisa copiar
+   arquivo nenhum — e os campos para as outras chaves gratuitas (Groq e as demais
+   da cascata) são o próximo passo.
 7. Cole um link do YouTube e processe. **Confira:** o download funciona (sem cookies),
    e no log do job a linha do whisper diz `cuda`. O tempo total deve ficar perto do
    que o Docker faz com o mesmo vídeo.
-8. **A convivência:** abra o Docker Desktop e rode `atalhos\subir.bat`. **Confira:** o
-   container sobe normalmente, e em até um minuto o ícone do ajudante passa a dizer
-   "outro motor do Cortes (o Docker) já está atendendo". Recarregue o site (F5): ele
-   passa a falar com o Docker.
+8. **A convivência:** abra o Docker Desktop e rode `atalhos\atualizar.bat`.
+   **Confira:** os containers sobem (agora com o nome `virtu-clips-*`), e em até um
+   minuto o ícone do ajudante passa a dizer "outro motor do Virtu Clips (o Docker) já
+   está atendendo". Recarregue o site (F5): ele passa a falar com o Docker.
 
-Para tirar o ajudante: Configurações do Windows → Aplicativos → **Cortes (ajudante)**
-→ Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\Cortes\dados`.
+Para tirar o ajudante: Configurações do Windows → Aplicativos → **Virtu Clips** →
+Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\VirtuClips\dados`.
 
 **O que me mandar de volta:** o que aconteceu em cada "Confira", e, se algo falhar,
-os arquivos da pasta `%LOCALAPPDATA%\Cortes\dados\logs`.
+os arquivos da pasta `%LOCALAPPDATA%\VirtuClips\dados\logs`.
 
 ---
 
@@ -671,9 +671,9 @@ docker compose ps
 
 ```
 NAME               STATUS
-cortes-backend     Up 20 seconds (healthy)
-cortes-frontend    Up 19 seconds
-cortes-renderer    Up 19 seconds
+virtu-clips-backend     Up 20 seconds (healthy)
+virtu-clips-frontend    Up 19 seconds
+virtu-clips-renderer    Up 19 seconds
 ```
 
 O log do frontend anuncia `Local: http://localhost:5173/`. Esse `5173` é a

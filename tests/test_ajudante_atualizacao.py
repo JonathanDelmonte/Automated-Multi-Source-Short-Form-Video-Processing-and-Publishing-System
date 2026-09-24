@@ -48,8 +48,8 @@ def _versao(base: Path, nome: str, deps: str = "torch==1\n", completa: bool = Tr
 
 
 def _instalado(tmp_path: Path, atual: str = "10") -> "aj.Caminhos":
-    """Um Cortes instalado na versao `atual`, rodando o codigo dela."""
-    base = tmp_path / "Cortes"
+    """Um ajudante instalado na versao `atual`, rodando o codigo dela."""
+    base = tmp_path / "VirtuClips"
     pasta = _versao(base, atual)
     c = aj.Caminhos(base, codigo=pasta)
     at.gravar_atual(c, atual)
@@ -326,9 +326,9 @@ def test_o_zip_nao_leva_a_marca_e_o_conteudo_nao_depende_da_versao(tmp_path):
     for nome in empacotar.BINARIOS:
         (binarios / nome).write_bytes(b"x")
     a = empacotar.empacotar("11", binarios, pacote=tmp_path / "p1", saida=tmp_path / "s1",
-                            icone=None)
+                            imagens=False)
     b = empacotar.empacotar("12", binarios, pacote=tmp_path / "p2", saida=tmp_path / "s2",
-                            icone=None)
+                            imagens=False)
     # O CI so publica quando o `conteudo` muda: a versao sozinha nao conta.
     assert a["conteudo"] == b["conteudo"]
     assert a["tag"] == "ajudante-11"
@@ -339,6 +339,34 @@ def test_o_zip_nao_leva_a_marca_e_o_conteudo_nao_depende_da_versao(tmp_path):
     assert {"app.py", "main.py", "ajudante/iniciar.py", "ajudante/atualizacao.py"} <= nomes
     assert (tmp_path / "p1" / "motor" / at.MARCA_COMPLETA).is_file()
     assert json.loads((tmp_path / "s1" / "versao.json").read_text())["versao"] == "11"
+
+
+def test_o_python_vai_no_instalador_e_nao_na_atualizacao(tmp_path):
+    """O Python embutido (desde 24-set-2026, o erro 448) vai em pacote/python,
+    que o .iss copia; o motor.zip da atualizacao nao o leva -- a instalacao ja
+    tem o dela, e sao dezenas de MB a cada versao."""
+    import empacotar
+    binarios = tmp_path / "bin"
+    binarios.mkdir()
+    for nome in empacotar.BINARIOS:
+        (binarios / nome).write_bytes(b"x")
+    python = tmp_path / "cpython-3.11.13-windows-x86_64-none"
+    (python / "Lib").mkdir(parents=True)
+    (python / "python.exe").write_bytes(b"MZ")
+    (python / "Lib" / "os.py").write_text("# stdlib\n")
+    empacotar.empacotar("11", binarios, pacote=tmp_path / "p", saida=tmp_path / "s",
+                        imagens=False, python=python)
+    assert (tmp_path / "p" / "python" / "python.exe").read_bytes() == b"MZ"
+    assert (tmp_path / "p" / "python" / "Lib" / "os.py").is_file()
+    with zipfile.ZipFile(tmp_path / "s" / "motor.zip") as z:
+        assert not [n for n in z.namelist() if n.startswith("python/")]
+
+
+def test_uma_pasta_sem_python_nao_vira_instalador(tmp_path):
+    import empacotar
+    (tmp_path / "vazia").mkdir()
+    with pytest.raises(SystemExit, match="python.exe"):
+        empacotar.copiar_python(tmp_path / "vazia", tmp_path / "destino")
 
 
 # --- o motor diz se esta livre ------------------------------------------------------------

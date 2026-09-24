@@ -38,10 +38,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
+import marca
+
 SITE = "https://virtu-clips.zirtuno.workers.dev"
 PORTA = 8001            # a do ajudante
 PORTA_DO_DOCKER = 8000  # a do Docker; o site procura esta primeiro
-NOME = "Cortes"
+NOME = marca.NOME
+# A pasta em %LOCALAPPDATA%: sem espaco, que caminho com espaco e aspas a
+# lembrar em todo comando.
+PASTA = "VirtuClips"
+# O que ninguem ve ficou com o nome de antes da marca (24-set-2026): o valor do
+# "iniciar com o Windows" no registro e o mutex. O instalador novo SOBRESCREVE
+# o valor de uma instalacao antiga em vez de deixar dois -- dois seriam dois
+# ajudantes no login, e o segundo so abriria o site.
+VALOR_NO_INICIO = "Cortes"
+MUTEX = "Local\\CortesAjudante"
 
 NO_WINDOWS = os.name == "nt"
 _SEM_JANELA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -89,14 +100,21 @@ class Caminhos:
         return self.dados / "logs"
 
 
-def caminhos_padrao(env: Mapping[str, str] = os.environ) -> Caminhos:
-    """`%LOCALAPPDATA%\\Cortes`: por usuario, sem pedir administrador, e fora
-    das pastas que o OneDrive sincroniza -- video de trabalho la dentro seria
-    gigabyte subindo para a nuvem sem ninguem pedir."""
+def caminhos_padrao(env: Mapping[str, str] = os.environ, aqui: Path = AQUI) -> Caminhos:
+    """`%LOCALAPPDATA%\\VirtuClips`: por usuario, sem pedir administrador, e
+    fora das pastas que o OneDrive sincroniza -- video de trabalho la dentro
+    seria gigabyte subindo para a nuvem sem ninguem pedir.
+
+    Instalado, vale a pasta ONDE ESTE ARQUIVO ESTA (`<base>/versoes/<versao>/
+    ajudante/`), e nao um nome fixo: a instalacao de antes da marca nova mora
+    em `%LOCALAPPDATA%\\Cortes`, e a atualizacao sozinha leva o codigo novo
+    para la sem mudar a pasta."""
     if env.get("CORTES_BASE"):
         return Caminhos(Path(env["CORTES_BASE"]))
+    if aqui.parent.parent.name == "versoes":
+        return Caminhos(aqui.parent.parent.parent)
     raiz = env.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Caminhos(Path(raiz) / NOME)
+    return Caminhos(Path(raiz) / PASTA)
 
 
 # --- placa de video -----------------------------------------------------------
@@ -198,7 +216,8 @@ LIVRE, MOTOR, OUTRO = "livre", "motor", "outro"
 
 
 def quem_atende(porta: int, timeout: float = 2.0) -> str:
-    """`livre`, `motor` (um Cortes responde -- nosso ou o Docker) ou `outro`."""
+    """`livre`, `motor` (um motor do Virtu Clips responde -- nosso ou o
+    Docker) ou `outro`."""
     try:
         with socket.create_connection(("127.0.0.1", porta), timeout=timeout):
             pass
@@ -291,7 +310,7 @@ INICIANDO, PRONTO, DOCKER, OCUPADA, ERRO = (
 TEXTO_DO_ESTADO = {
     INICIANDO: "iniciando o motor…",
     PRONTO: "pronto",
-    DOCKER: "outro motor do Cortes (o Docker) já está atendendo",
+    DOCKER: "outro motor do Virtu Clips (o Docker) já está atendendo",
     OCUPADA: f"a porta {PORTA} está ocupada por outro programa",
     ERRO: "o motor não subiu — veja o log",
 }
@@ -302,10 +321,10 @@ ESPERAS_APOS_FALHA_S = (5, 15, 60, 300)
 class Ajudante:
     """A decisao de cada volta, separada da bandeja para o CI alcancar.
 
-    Nunca derruba quem ja atende. Com um motor do Cortes na 8000 (o Docker),
-    o nosso para -- depois de terminar o job que estiver rodando -- e fica
-    parado ate ela liberar: o autor desliga o Docker e, na volta seguinte, o
-    ajudante sobe. Um motor do Cortes que nao e o nosso na PROPRIA porta (o de
+    Nunca derruba quem ja atende. Com um motor do Virtu Clips na 8000 (o
+    Docker), o nosso para -- depois de terminar o job que estiver rodando -- e
+    fica parado ate ela liberar: o autor desliga o Docker e, na volta seguinte,
+    o ajudante sobe. Um motor que nao e o nosso na PROPRIA porta (o de
     um ajudante que caiu sem leva-lo junto) tambem e respeitado: ele atende o
     site do mesmo jeito.
     """
@@ -387,7 +406,7 @@ def ja_existe_outro_ajudante() -> bool:
     # `use_last_error`: o GetLastError chamado como outra funcao qualquer le o
     # erro da ULTIMA chamada ao Windows, que pode ja ser uma do proprio Python.
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _MUTEX = k32.CreateMutexW(None, False, "Local\\CortesAjudante")
+    _MUTEX = k32.CreateMutexW(None, False, MUTEX)
     return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
 
 
@@ -397,7 +416,7 @@ def ajudante_rodando() -> bool:
         return False
     import ctypes
     k32 = ctypes.windll.kernel32
-    h = k32.OpenMutexW(0x00100000, False, "Local\\CortesAjudante")  # SYNCHRONIZE
+    h = k32.OpenMutexW(0x00100000, False, MUTEX)  # SYNCHRONIZE
     if h:
         k32.CloseHandle(h)
         return True
@@ -417,7 +436,7 @@ def inicia_com_o_windows() -> bool:
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _CHAVE_RUN) as k:
-            winreg.QueryValueEx(k, NOME)
+            winreg.QueryValueEx(k, VALOR_NO_INICIO)
             return True
     except OSError:
         return False
@@ -427,10 +446,10 @@ def iniciar_com_o_windows(ligar: bool, c: Caminhos) -> None:
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _CHAVE_RUN, 0, winreg.KEY_SET_VALUE) as k:
         if ligar:
-            winreg.SetValueEx(k, NOME, 0, winreg.REG_SZ, comando_de_inicio(c))
+            winreg.SetValueEx(k, VALOR_NO_INICIO, 0, winreg.REG_SZ, comando_de_inicio(c))
         else:
             try:
-                winreg.DeleteValue(k, NOME)
+                winreg.DeleteValue(k, VALOR_NO_INICIO)
             except OSError:
                 pass
 
@@ -443,18 +462,9 @@ def abrir(caminho) -> None:
 
 
 def imagem_do_icone():
-    """A inicial sobre o latao, como o cabecalho do painel."""
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle((2, 2, 62, 62), radius=14, fill=(176, 141, 87, 255))
-    fonte_path = Path(__file__).resolve().parent.parent / "fonts" / "Anton-Regular.ttf"
-    try:
-        fonte = ImageFont.truetype(str(fonte_path), 44)
-    except OSError:
-        fonte = ImageFont.load_default()
-    d.text((32, 33), "C", font=fonte, fill=(20, 18, 16, 255), anchor="mm")
-    return img
+    """O V da marca: perto do relogio o icone tem 16 a 32 px, e ali a logo
+    inteira seria um borrao (ver marca.py)."""
+    return marca.monograma(64)
 
 
 def _atualizacao():
@@ -497,7 +507,7 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
     menu = pystray.Menu(
         pystray.MenuItem(lambda _i: titulo(), None, enabled=False),
         pystray.MenuItem(f"versão {versao}", None, enabled=False),
-        pystray.MenuItem("Abrir o Cortes", lambda *_: webbrowser.open(SITE), default=True),
+        pystray.MenuItem(f"Abrir o {NOME}", lambda *_: webbrowser.open(SITE), default=True),
         pystray.MenuItem("Abrir a pasta dos cortes",
                          lambda *_: abrir(c.dados / "output")),
         pystray.MenuItem("Ver o log do motor", lambda *_: abrir(c.logs / "motor.log")),
@@ -726,7 +736,7 @@ def main(argv=None) -> int:
         aviso = f"Atualizado para a versão {_valor(argv, '--atualizado', '')}."
     elif "--atualizacao-falhou" in argv:
         aviso = (f"A versão {_valor(argv, '--atualizacao-falhou', '')} não passou na "
-                 "verificação; o Cortes continua na anterior.")
+                 f"verificação; o {NOME} continua na anterior.")
     rodar_bandeja(c, aviso)
     return 0
 

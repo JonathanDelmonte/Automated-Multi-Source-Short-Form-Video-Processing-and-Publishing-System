@@ -2,7 +2,7 @@
 
 Roda no CI do Windows, antes do ISCC do Inno Setup:
 
-    python ajudante/empacotar.py --versao 463 --bin <pasta com os .exe>
+    python ajudante/empacotar.py --versao 463 --bin <pasta com os .exe> --python <pasta do Python>
 
 e deixa, dentro de `ajudante/` (ou onde `--pacote` e `--saida` mandarem):
 
@@ -15,7 +15,12 @@ e deixa, dentro de `ajudante/` (ou onde `--pacote` e `--saida` mandarem):
   ha atualizacao. A versao e a CONTAGEM de commits da `main` (`git rev-list
   --count HEAD`): so cresce, e o Docker consegue calcular a mesma coisa.
 - `pacote/bin/`: uv, ffmpeg, ffprobe e deno, copiados de `--bin`.
-- `cortes.ico`: o icone, desenhado pela mesma funcao da bandeja.
+- `pacote/python/`: o Python do motor, copiado de `--python` (um CPython
+  standalone, que funciona de qualquer pasta). Vem no instalador desde
+  24-set-2026: baixa-lo na instalacao, pelo `uv python install`, deu o erro
+  448 no PC do autor (ver instalar.ps1).
+- `pacote/virtu-clips.ico` e `pacote/assistente/`: o icone e as imagens do
+  instalador, desenhados por `marca.py`.
 - `saida/motor.zip` e `saida/versao.json`: o que a atualizacao sozinha baixa.
   O `conteudo` do versao.json e a impressao digital do motor SEM a versao: o
   CI so publica quando ela muda -- um commit so de documentacao ou do painel
@@ -84,15 +89,19 @@ def impressao_do_conteudo(motor: Path) -> str:
     return h.hexdigest()
 
 
-def gravar_icone(destino: Path) -> None:
-    import ajudante
-    img = ajudante.imagem_do_icone().resize((256, 256))
-    img.save(destino, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
+def copiar_python(origem: Path, destino: Path) -> None:
+    """O interpretador inteiro. Recusa o que nao e um: um `--python` errado
+    so apareceria no fim da instalacao no computador de alguem."""
+    if not (origem / "python.exe").is_file():
+        raise SystemExit(f"--python: {origem} nao tem o python.exe")
+    # `symlinks=True`: um atalho la dentro vira atalho, e nao a pasta para
+    # onde ele aponta copiada duas vezes.
+    shutil.copytree(origem, destino, symlinks=True)
 
 
 def empacotar(versao: str, pasta_bin: Path, commit: str = "",
               pacote: Path = AQUI / "pacote", saida: Path = AQUI / "saida",
-              icone: "Path | None" = AQUI / "cortes.ico") -> dict:
+              imagens: bool = True, python: "Path | None" = None) -> dict:
     for p in (pacote, saida):
         shutil.rmtree(p, ignore_errors=True)
     motor, binarios = pacote / "motor", pacote / "bin"
@@ -107,8 +116,13 @@ def empacotar(versao: str, pasta_bin: Path, commit: str = "",
     for nome in BINARIOS:
         shutil.copy2(pasta_bin / nome, binarios / nome)
 
-    if icone is not None:  # o .iss o procura ao lado dele
-        gravar_icone(icone)
+    if python is not None:
+        copiar_python(python, pacote / "python")
+
+    if imagens:  # o .iss as procura em pacote/
+        import marca
+        marca.gravar_ico(pacote / "virtu-clips.ico")
+        marca.gravar_imagens_do_assistente(pacote / "assistente")
 
     saida.mkdir(parents=True)
     with zipfile.ZipFile(saida / "motor.zip", "w", zipfile.ZIP_DEFLATED) as z:
@@ -134,15 +148,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--versao", required=True)
     ap.add_argument("--bin", required=True, help="pasta com uv, ffmpeg, ffprobe e deno")
+    ap.add_argument("--python", help="pasta do Python que vai no instalador")
     ap.add_argument("--commit", default="")
     ap.add_argument("--pacote", default=str(AQUI / "pacote"))
     ap.add_argument("--saida", default=str(AQUI / "saida"))
     ap.add_argument("--sem-icone", action="store_true",
-                    help="nao redesenhar o cortes.ico (pacotes so para testar a atualizacao)")
+                    help="sem icone nem imagens do instalador (pacotes so para testar a atualizacao)")
     args = ap.parse_args()
     info = empacotar(args.versao, Path(args.bin), args.commit,
-                     Path(args.pacote), Path(args.saida),
-                     icone=None if args.sem_icone else AQUI / "cortes.ico")
+                     Path(args.pacote), Path(args.saida), imagens=not args.sem_icone,
+                     python=Path(args.python) if args.python else None)
     print(json.dumps(info, indent=2))
     return 0
 

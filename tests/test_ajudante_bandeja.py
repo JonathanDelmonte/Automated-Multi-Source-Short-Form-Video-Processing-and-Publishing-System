@@ -24,10 +24,22 @@ import ajudante as aj  # noqa: E402
 
 def test_mora_no_localappdata_e_os_dados_ficam_fora_do_codigo(tmp_path):
     c = aj.caminhos_padrao({"LOCALAPPDATA": str(tmp_path)})
-    assert c.base == tmp_path / "Cortes"
+    # Sem espaco no nome da pasta: e caminho que vai em todo comando.
+    assert c.base == tmp_path / "VirtuClips"
     # A atualizacao troca `motor/` inteira: os dados nao podem morar dentro.
     assert c.motor not in c.dados.parents and c.dados not in c.motor.parents
     assert aj.caminhos_padrao({"CORTES_BASE": str(tmp_path / "x")}).base == tmp_path / "x"
+
+
+def test_instalado_a_pasta_e_a_de_onde_o_codigo_esta(tmp_path):
+    """Uma instalacao de antes da marca nova mora em %LOCALAPPDATA%\\Cortes, e
+    a atualizacao sozinha leva o codigo novo PARA LA. Se a pasta viesse do
+    nome, o ajudante atualizado procuraria o venv e os projetos em
+    VirtuClips -- que nao existe -- e nao subiria."""
+    aqui = tmp_path / "Cortes" / "versoes" / "530" / "ajudante"
+    c = aj.caminhos_padrao({"LOCALAPPDATA": str(tmp_path / "outro")}, aqui=aqui)
+    assert c.base == tmp_path / "Cortes"
+    assert aj.caminhos_padrao({"CORTES_BASE": str(tmp_path / "x")}, aqui=aqui).base == tmp_path / "x"
 
 
 # --- placa --------------------------------------------------------------------
@@ -104,7 +116,7 @@ def test_o_env_da_pessoa_vence(tmp_path):
 
 
 def test_o_env_copiado_do_docker_nao_muda_as_pastas(tmp_path):
-    """Quem usa o Docker copia o `.env` do repositorio para `dados\.env`, e
+    """Quem usa o Docker copia o `.env` do repositorio para `dados\\.env`, e
     ali as pastas sao do container (`/app/...`)."""
     c = aj.Caminhos(tmp_path)
     docker = {"OUTPUT_DIR": "/app/output", "DATA_DIR": "/app/data", "PATH": "/usr/bin",

@@ -953,7 +953,7 @@ Baixando pela internet de casa, a pergunta nem existe.
 | Bloco | O que é | Situação |
 |---|---|---|
 | 6.1 | O painel publicado no Cloudflare, atualizado a cada envio para a `main`, falando com `localhost:8000`. O servidor passou a responder só a ele e às páginas da própria máquina (`origens.py`) | ✅ no ar desde 24-set-2026: `https://virtu-clips.zirtuno.workers.dev` |
-| 6.2 | **O ajudante** no Windows: um instalador `.exe` de um clique, sem Docker, que detecta placa ou processador, atualiza sozinho e fica como ícone perto do relógio. Só em 127.0.0.1 (porta 8001, a 8000 é do Docker), e pedido que altera algo só de página autorizada. Decisões no ADR-012 | 🟡 pronto e provado no Windows do GitHub (instala sem janela, processa um vídeo, troca de versão e volta de uma quebrada, desinstala guardando os projetos). **Falta:** o teste no PC do autor (placa, YouTube, ícone, SmartScreen — roteiro no `COMO-EXECUTAR.md`) e uma forma simples de a pessoa pôr a chave de IA. O pareamento ficou para depois: a origem estrita já fecha o formulário de outro site |
+| 6.2 | **O ajudante** no Windows: um instalador `.exe` de um clique, sem Docker, que detecta placa ou processador, atualiza sozinho e fica como ícone perto do relógio. Só em 127.0.0.1 (porta 8001, a 8000 é do Docker), e pedido que altera algo só de página autorizada. Decisões no ADR-012 | 🟡 pronto e provado no Windows do GitHub (instala sem janela, processa um vídeo, troca de versão e volta de uma quebrada, desinstala guardando os projetos, e instala como usuário comum — o caso do erro 448 do primeiro teste no PC do autor, que levou o Python para dentro do instalador). **Falta:** o teste no PC do autor (placa, YouTube, ícone, SmartScreen — roteiro no `COMO-EXECUTAR.md`) e uma forma simples de a pessoa pôr a chave de IA. O pareamento ficou para depois: a origem estrita já fecha o formulário de outro site |
 | 6.3 | "Usar na nuvem" nas configurações: o processamento vai para a Modal (US$ 30/mês de crédito grátis, sem cartão), com teto mensal. **O download continua local** e o arquivo sobe para lá — pelo mesmo motivo do YouTube | a fazer |
 | 6.4 | O ajudante no Mac e no Linux | a fazer |
 
@@ -963,7 +963,7 @@ não comercial; o do Cloudflare permite uso comercial e dá 500 builds por mês,
 
 **Os dois caminhos convivem.** No computador do autor o motor continua sendo o Docker
 (`atalhos\subir.bat`, porta 8000), e o site avisa quando ele ficou para trás da versão
-publicada. Em qualquer outro, o site oferece o `Cortes-Ajudante.exe` (GitHub
+publicada. Em qualquer outro, o site oferece o `Instalar-Virtu-Clips.exe` (GitHub
 Releases), que instala o motor na porta 8001 e o mantém atualizado sozinho. Com os
 dois instalados, o ajudante cede: quando o Docker atende, ele para o motor dele.
 

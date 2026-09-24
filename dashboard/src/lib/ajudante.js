@@ -11,7 +11,7 @@
 
 const REPO = 'JonathanDelmonte/Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System';
 
-export const URL_DO_INSTALADOR = `https://github.com/${REPO}/releases/latest/download/Cortes-Ajudante.exe`;
+export const URL_DO_INSTALADOR = `https://github.com/${REPO}/releases/latest/download/Instalar-Virtu-Clips.exe`;
 
 const CHAVE = 'cortes_versao_publicada';
 // Uma hora: a API do GitHub sem login atende 60 pedidos por hora por IP, e a

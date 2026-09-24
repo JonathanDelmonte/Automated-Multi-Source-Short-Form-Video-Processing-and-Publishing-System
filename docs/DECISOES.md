@@ -758,8 +758,33 @@ Instalar exige internet (o Python e as bibliotecas vêm na hora). E a pessoa ain
 precisa de uma chave de IA: hoje, a do Gemini colada em Configurações, ou um
 `dados\.env` com as da cascata — pendente de uma forma mais simples.
 
-**Revisão se:** o `uv` deixar de publicar o CPython gerenciado para Windows; o
+**Revisão se:** o `uv` deixar de publicar o CPython standalone para Windows; o
 tamanho das bibliotecas tornar a instalação inviável em conexão lenta (aí um
 instalador "completo", com tudo dentro, como segunda opção); ou o Mac e o Linux
 entrarem (Fase 6.4), quando a pasta, o atalho e o início com o sistema mudam de
 forma, e a estrutura de versões fica.
+
+### Nota (24-set-2026, mesmo dia): o Python passou a vir no instalador
+
+O primeiro teste no PC do autor morreu no item 1: `uv python install 3.11`
+respondeu *"Failed to create Python minor version link directory"*, erro 448
+(*"o caminho não pode ser atravessado porque contém um ponto de montagem não
+confiável"*). O uv cria um atalho de pasta (junction) para cada versão menor do
+Python; o Inno Setup 6.7 liga por padrão a **RedirectionGuard** do Windows, que
+recusa atravessar atalho criado por usuário comum; e ela chegou ao uv, neto do
+instalador. O CI nunca viu porque o runner do GitHub é administrador — atalho de
+administrador é "confiável".
+
+O item 1 muda em uma coisa: **o CPython standalone vem dentro do `.exe`**
+(`empacotar.py --python`), e o `uv` roda com `UV_PYTHON_DOWNLOADS=never` — usa esse
+Python e nunca baixa outro, que é o que criaria o atalho de novo. O instalador
+cresce umas dezenas de MB, e a instalação deixa de depender do servidor de onde o
+uv baixava o Python. Junto: `RedirectionGuard=no` (a proteção é para instalador
+administrador mexendo em pasta que qualquer um escreve; este roda como a própria
+pessoa, na pasta dela) e, no `windows.yml`, uma instalação como **usuário comum**,
+com a proteção forçada, para que o caso que falhou tenha teste.
+
+**A marca virou Virtu Clips no mesmo dia** (a logo do autor): o instalador é o
+`Instalar-Virtu-Clips.exe` e o item 2 passa a morar em `%LOCALAPPDATA%\VirtuClips`.
+O AppId continua o mesmo — uma entrada só em "Aplicativos" — e o instalador traz os
+projetos da pasta `Cortes` antiga e apaga o resto dela.

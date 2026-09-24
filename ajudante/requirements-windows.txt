@@ -32,3 +32,6 @@ beautifulsoup4==4.14.3
 sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
 alembic==1.20.0
+# So do Windows: o icone perto do relogio (ajudante.py). Puro Python; no
+# Windows fala com a API do sistema por ctypes, sem pywin32.
+pystray==0.19.5

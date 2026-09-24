@@ -220,6 +220,8 @@ class TestToken:
         auth.esquecer_segredo()
         assert auth.segredo_de_sessao() == b"um-segredo-escrito-a-mao"
 
+    @pytest.mark.skipif(os.name == "nt", reason="o Windows nao tem bits de permissao POSIX; "
+                        "la o arquivo mora em %LOCALAPPDATA%, que ja e so do usuario")
     def test_o_arquivo_do_segredo_e_0600(self, ambiente):
         auth.segredo_de_sessao()
         caminho = os.path.join(str(ambiente / "dados"), auth.ARQUIVO_SEGREDO)

@@ -59,7 +59,9 @@ class RestoringStaticFiles(StaticFiles):
         except HTTPException as exc:
             if exc.status_code != 404 or self.restorer is None:
                 raise
-            job_id = path.split("/", 1)[0] if "/" in path else ""
+            # No Windows o StaticFiles devolve o caminho com `\`.
+            path_url = path.replace("\\", "/")
+            job_id = path_url.split("/", 1)[0] if "/" in path_url else ""
             if not job_id:
                 raise
             try:

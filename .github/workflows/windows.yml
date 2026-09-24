@@ -3,14 +3,19 @@ name: Windows
 # O motor fora do Docker, no Windows (ajudante, Fase 6.2, 24-set-2026).
 #
 # O CI de sempre (ci.yml) roda no Linux e, de proposito, sem torch, mediapipe
-# nem whisper. Este instala o motor INTEIRO no Windows, como o ajudante vai
-# instalar, e processa um video do comeco ao fim (ajudante/ponta_a_ponta.py):
-# fala gerada pelo proprio Windows, whisper em CPU, deteccao por um LLM falso,
-# corte, reenquadramento e legenda. Depois cancela um job no meio e apaga o
-# projeto -- no Windows, um ffmpeg orfao seguraria o arquivo e o apagar falharia.
+# nem whisper. Este roda o motor INTEIRO no Windows, de dois jeitos:
 #
-# O que ele NAO prova: placa de video, download do YouTube e IA de verdade.
-# Esses ficam para o teste no PC do autor (docs/COMO-EXECUTAR.md).
+# - `motor`: as dependencias direto no Python do runner, a suite de testes, e
+#   um video do comeco ao fim (ajudante/ponta_a_ponta.py): fala gerada pelo
+#   proprio Windows, whisper em CPU, deteccao por um LLM falso, corte,
+#   reenquadramento e legenda. Depois cancela um job no meio e apaga o
+#   projeto -- no Windows, um ffmpeg orfao seguraria o arquivo.
+# - `instalador`: monta o Cortes-Ajudante.exe, instala SEM janela como um
+#   amigo instalaria, confere que o motor instalado sobe, processa o mesmo
+#   video por ele, e desinstala conferindo que os projetos ficam.
+#
+# O que nenhum dos dois prova: placa de video, download do YouTube e IA de
+# verdade. Esses ficam para o teste no PC do autor (docs/COMO-EXECUTAR.md).
 
 on:
   push:
@@ -18,7 +23,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  motor-no-windows:
+  motor:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -29,7 +34,7 @@ jobs:
         with:
           python-version: "3.11"
       # ffmpeg do Chocolatey (o build "essentials" do gyan.dev, com libass e
-      # libx264). O instalador do ajudante fixa a versao; aqui basta ter um.
+      # libx264). O instalador leva o mesmo.
       - name: ffmpeg
         run: choco install ffmpeg -y --no-progress
       - name: Dependencias do motor
@@ -41,21 +46,107 @@ jobs:
         run: |
           ffmpeg -hide_banner -version | Select-Object -First 1
           python -c "import torch, mediapipe, faster_whisper, ctranslate2; print('torch', torch.__version__, '| mediapipe', mediapipe.__version__, '| ctranslate2', ctranslate2.__version__)"
+      # Pasta curta de proposito: o checkout aqui mora num caminho de ~180
+      # caracteres, e a libass abre a legenda com o `fopen` de 260 do Windows.
+      # Na maquina de quem instala o caminho tem ~130.
       - name: Um video do comeco ao fim
-        run: python ajudante/ponta_a_ponta.py
+        run: python ajudante/ponta_a_ponta.py --pasta "$env:RUNNER_TEMP\e2e"
       # Roda mesmo com o video vermelho: os dois sinais sao independentes, e
       # saber so de um deles numa volta de 15 minutos custa a volta seguinte.
       - name: Testes
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: pytest tests/ -q -p no:cacheprovider
-      # O log do motor e o video de entrada de uma volta que falhou: sem eles,
-      # a proxima tentativa seria palpite.
       - name: Guardar o que falhou
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ponta-a-ponta
+          name: motor-log
+          path: ${{ runner.temp }}/e2e/motor.log
+          if-no-files-found: ignore
+
+  instalador:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: O que o instalador leva
+        run: |
+          choco install ffmpeg innosetup -y --no-progress
+          python -m pip install --upgrade pip uv pillow
+          New-Item -ItemType Directory -Force binarios | Out-Null
+          $ff = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $ff.FullName binarios\
+          Copy-Item (Join-Path $ff.DirectoryName "ffprobe.exe") binarios\
+          Copy-Item (python -c "import uv; print(uv.find_uv_bin())") binarios\uv.exe
+          Invoke-WebRequest https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip -OutFile deno.zip
+          Expand-Archive deno.zip -DestinationPath binarios
+          Get-ChildItem binarios | Format-Table Name, Length
+      - name: Empacotar
+        run: python ajudante/empacotar.py --versao "0.${{ github.run_number }}.0" --bin binarios --commit "${{ github.sha }}"
+      - name: Compilar o instalador
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=0.${{ github.run_number }}.0" ajudante\instalador.iss
+          Get-ChildItem ajudante\saida | Format-Table Name, Length
+      - name: Instalar sem janela
+        run: |
+          $p = Start-Process ajudante\saida\Cortes-Ajudante.exe -Wait -PassThru `
+               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
+          "codigo do instalador: $($p.ExitCode)"
+          Get-Content "$env:LOCALAPPDATA\Cortes\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { exit 1 }
+      # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
+      # pythonw.exe do venv; se ele nao existir, o icone nao faz nada.
+      - name: Atalhos e inicio com o Windows
+        run: |
+          $base = "$env:LOCALAPPDATA\Cortes"
+          foreach ($f in "venv\Scripts\python.exe", "venv\Scripts\pythonw.exe", "bin\ffmpeg.exe", "bin\deno.exe", "motor\VERSAO", "cortes.ico") {
+            if (-not (Test-Path (Join-Path $base $f))) { "faltou $f"; exit 1 }
+          }
+          $run = (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes).Cortes
+          "inicia com o Windows: $run"
+          if ($run -notmatch "pythonw\.exe") { exit 1 }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cortes.lnk")) { "faltou o atalho do menu Iniciar"; exit 1 }
+          "versao instalada: $(Get-Content $base\motor\VERSAO)"
+      - name: O motor instalado sobe
+        run: |
+          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\motor\ajudante\ajudante.py" --verificar
+      - name: O motor instalado processa um video
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\Cortes\bin;" + $env:PATH
+          & "$env:LOCALAPPDATA\Cortes\venv\Scripts\python.exe" "$env:LOCALAPPDATA\Cortes\motor\ajudante\ponta_a_ponta.py" --pasta "$env:RUNNER_TEMP\e2e"
+      - name: Desinstalar leva o programa e deixa os projetos
+        run: |
+          & "$env:LOCALAPPDATA\Cortes\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          # O desinstalador se copia para o temporario e segue de la: espera
+          # pelo efeito, nao pelo processo.
+          $fim = (Get-Date).AddSeconds(120)
+          while ((Test-Path "$env:LOCALAPPDATA\Cortes\motor") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes\motor") { "o motor ficou para tras"; exit 1 }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Cortes\dados")) { "os projetos sumiram"; exit 1 }
+          if (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes -ErrorAction SilentlyContinue) { "o inicio com o Windows ficou"; exit 1 }
+          "desinstalado; os projetos ficaram em $env:LOCALAPPDATA\Cortes\dados"
+      - name: Guardar o instalador
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cortes-Ajudante
           path: |
-            output/ponta-a-ponta-*/motor.log
-            output/ponta-a-ponta-*/output/**/*.log
+            ajudante/saida/Cortes-Ajudante.exe
+            ajudante/saida/motor.zip
+            ajudante/saida/versao.json
+          if-no-files-found: ignore
+      - name: Guardar o que falhou
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: instalador-logs
+          path: |
+            ${{ runner.temp }}/inno.log
+            ${{ runner.temp }}/e2e/motor.log
+            ~/AppData/Local/Cortes/dados/logs/*.log
           if-no-files-found: ignore

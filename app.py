@@ -2892,14 +2892,20 @@ async def process_endpoint(
         size = 0
         limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
 
+        grande_demais = False
         with open(input_path, "wb") as buffer:
             while content := await file.read(1024 * 1024): # Read 1MB chunks
                 size += len(content)
                 if size > limit_bytes:
-                    os.remove(input_path)
-                    shutil.rmtree(job_output_dir)
-                    raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
+                    grande_demais = True
+                    break
                 buffer.write(content)
+        if grande_demais:
+            # Fora do `with`: o Windows nao apaga arquivo aberto, e o remove
+            # la dentro virava um 500 com o pedaco do upload largado no disco.
+            os.remove(input_path)
+            shutil.rmtree(job_output_dir)
+            raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
 
         upload_duration = _media_duration_seconds(input_path)
         source_seconds_for_db = upload_duration

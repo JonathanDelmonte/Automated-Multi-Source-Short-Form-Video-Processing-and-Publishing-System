@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional, Sequence, TypeVar
 
 from sqlalchemy import event, select
@@ -114,7 +115,9 @@ def database_url() -> str:
         elif raw.startswith("sqlite:///"):
             raw = raw.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
         return raw
-    return f"sqlite+aiosqlite:///{os.path.join(data_dir(), 'cortes.db')}"
+    # Barra normal tambem no Windows: e uma URL, e o `os.path.join` de la
+    # misturaria `\` no meio dela.
+    return f"sqlite+aiosqlite:///{Path(data_dir(), 'cortes.db').as_posix()}"
 
 
 def data_dir() -> str:

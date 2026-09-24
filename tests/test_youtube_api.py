@@ -149,6 +149,8 @@ class TestCofre:
         segredo = vault.resolve("vault://env/youtube/canal")
         assert segredo["client_id"] == "id-do-canal"
 
+    @pytest.mark.skipif(os.name == "nt", reason="o Windows nao tem bits de permissao POSIX; "
+                        "la o arquivo mora em %LOCALAPPDATA%, que ja e so do usuario")
     def test_arquivo_local_nasce_com_0600(self):
         """Um segredo legivel por todo mundo no container e um segredo."""
         caminho = vault.gravar("vault://local/youtube/canal",

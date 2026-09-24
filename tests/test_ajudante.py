@@ -36,12 +36,13 @@ def test_as_versoes_do_windows_sao_as_do_docker():
     docker = _pinos(RAIZ / "requirements.txt")
     windows = _pinos(AJUDANTE / "requirements-windows.txt")
     fora = {"ultralytics", "torchvision"}
+    so_do_windows = {"pystray"}  # o icone do ajudante
     assert not (fora & set(windows)), "o YOLO (AGPL) nao vai para o computador de ninguem"
     faltando = set(docker) - fora - set(windows)
     assert not faltando, f"o requirements.txt tem e o do Windows nao: {sorted(faltando)}"
     for nome, linha in windows.items():
-        if nome == "yt-dlp":
-            continue  # sem pino nos dois; no Windows com o [default]
+        if nome == "yt-dlp" or nome in so_do_windows:
+            continue  # yt-dlp: sem pino nos dois; no Windows com o [default]
         assert docker.get(nome) == linha, f"{nome}: Docker {docker.get(nome)!r} x Windows {linha!r}"
 
 
@@ -107,3 +108,88 @@ def test_o_windows_do_github_roda_o_video_de_ponta_a_ponta():
     assert "runs-on: windows-latest" in fluxo
     assert "python ajudante/ponta_a_ponta.py" in fluxo
     assert "ajudante/requirements-windows.txt" in fluxo
+
+
+# --- o que o instalador leva -------------------------------------------------
+
+import empacotar  # noqa: E402
+
+
+def test_o_pacote_leva_o_motor_e_deixa_o_resto():
+    rastreados = [
+        "app.py", "main.py", "sources/__init__.py", "fonts/Anton-Regular.ttf",
+        "ajudante/ajudante.py", "assets/watermark.png", "alembic/env.py",
+        "dashboard/src/App.jsx", "docs/DECISOES.md", "tests/test_x.py",
+        ".github/workflows/ci.yml", "atalhos/subir.bat", "screenshots/a.png",
+        "remotion/src/x.tsx", "render-service/server.js", "demo-openshorts.mp4",
+        "churchil_queen_vertical.gif", "ajudante/instalador.iss",
+    ]
+    assert empacotar.arquivos_do_motor(rastreados) == sorted([
+        "app.py", "main.py", "sources/__init__.py", "fonts/Anton-Regular.ttf",
+        "ajudante/ajudante.py", "assets/watermark.png", "alembic/env.py",
+    ])
+
+
+def test_nenhum_codigo_python_do_motor_fica_de_fora():
+    """A lista e de EXCLUSAO para que codigo novo entre sozinho; este teste
+    pega o dia em que alguem exclui uma pasta que o motor importa."""
+    import subprocess
+    todos = subprocess.run(["git", "ls-files", "*.py"], cwd=RAIZ, capture_output=True,
+                           text=True, check=True).stdout.split()
+    motor = [a for a in todos if not a.startswith(("tests/", "examples/", "ops/", "dashboard/"))]
+    fora = set(motor) - set(empacotar.arquivos_do_motor(motor))
+    assert not fora, f"codigo do motor fora do pacote: {sorted(fora)}"
+
+
+def test_a_assinatura_muda_com_as_dependencias(tmp_path):
+    motor = tmp_path / "motor"
+    (motor / "ajudante").mkdir(parents=True)
+    (motor / "ajudante" / "requirements-windows.txt").write_text("torch==1\n")
+    antes = empacotar.assinatura_das_dependencias(motor)
+    (motor / "ajudante" / "requirements-windows.txt").write_text("torch==2\n")
+    assert empacotar.assinatura_das_dependencias(motor) != antes
+
+
+def test_o_instalador_nao_pede_administrador_e_guarda_os_projetos():
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert "PrivilegesRequired=lowest" in iss
+    assert "{localappdata}\\Cortes" in iss
+    apagados = re.findall(r'Type: filesandordirs; Name: "\{app\}\\([^"]+)"', iss)
+    assert "dados" not in apagados and {"motor", "venv", "python", "bin"} <= set(apagados)
+    # No /VERYSILENT uma caixa comum esperaria um clique para sempre.
+    assert "SuppressibleMsgBox(" in iss and "  MsgBox(" not in iss
+
+
+def test_o_python_do_motor_e_o_do_proprio_cortes():
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    assert '"--python-preference", "only-managed"' in ps1
+    assert "requirements-windows-gpu.txt" in ps1 and "TemPlacaNvidia" in ps1
+
+
+def test_motor_quebrado_nao_termina_como_instalado():
+    """Sem o codigo de saida proprio, o Inno Setup devolveria 0 com o motor
+    quebrado: os arquivos foram copiados, e e so isso que ele confere."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert "function GetCustomSetupExitCode" in iss
+    assert "MotorFalhou := True" in iss
+
+
+def test_sem_janela_o_script_nao_espera_um_enter():
+    """No /VERYSILENT ninguem aperta Enter: a pausa do erro travaria o CI (e a
+    instalacao por linha de comando) ate o prazo acabar."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    assert "if WizardSilent then" in iss and "-SemPausa" in iss
+    assert "[switch]$SemPausa" in ps1
+    assert re.search(r"if \(-not \$SoDependencias -and -not \$SemPausa\)\s*\{\s*Read-Host", ps1)
+
+
+def test_o_progresso_do_uv_no_stderr_nao_derruba_o_script():
+    """No Windows PowerShell 5.1, com `Stop`, a primeira linha que um .exe
+    escreve no stderr redirecionado vira erro -- e o uv escreve o progresso
+    todo la. O `Rodar` troca para `Continue` so enquanto o programa roda."""
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    rodar = ps1.split("function Rodar", 1)[1].split("\n}\n", 1)[0]
+    assert '$ErrorActionPreference = "Continue"' in rodar
+    assert "2>&1" in rodar and "Write-Host" in rodar
+    assert "$LASTEXITCODE" in rodar

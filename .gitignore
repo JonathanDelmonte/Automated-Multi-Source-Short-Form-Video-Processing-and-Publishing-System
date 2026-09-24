@@ -62,3 +62,8 @@ skills-lock.json
 /cookies.txt
 /cookies-*.txt
 /www.*_cookies.txt
+
+# O que o ajudante/empacotar.py monta para o instalador (CI do Windows).
+ajudante/pacote/
+ajudante/saida/
+ajudante/cortes.ico

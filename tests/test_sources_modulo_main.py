@@ -9,6 +9,7 @@ cada vídeo, então isso se pagaria em todo job.
 O teste roda um subprocesso de verdade, porque é a única forma de reproduzir a
 condição: sob o pytest, `__main__` é o próprio pytest e o defeito não aparece.
 """
+import os
 import subprocess
 import sys
 import textwrap
@@ -17,13 +18,23 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 
 
+def _ambiente_minimo(tmp_path: Path) -> dict:
+    """So o necessario, de proposito: nada do ambiente do pytest vaza para o
+    subprocesso. O separador e o do sistema (`;` no Windows), e o Windows ainda
+    pede o SYSTEMROOT para o Python subir."""
+    env = {"PYTHONPATH": os.pathsep.join([str(tmp_path), str(RAIZ)]),
+           "PATH": os.environ.get("PATH", "/usr/bin:/bin") if os.name == "nt" else "/usr/bin:/bin"}
+    if os.environ.get("SYSTEMROOT"):
+        env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+    return env
+
+
 def _roda(main_py: str, tmp_path: Path) -> str:
     alvo = tmp_path / "main.py"
     alvo.write_text(textwrap.dedent(main_py), encoding="utf-8")
     proc = subprocess.run([sys.executable, str(alvo)], capture_output=True,
                           cwd=str(tmp_path),
-                          env={"PYTHONPATH": f"{tmp_path}{':'}{RAIZ}",
-                               "PATH": "/usr/bin:/bin"},
+                          env=_ambiente_minimo(tmp_path),
                           timeout=60)
     assert proc.returncode == 0, proc.stderr.decode()
     return proc.stdout.decode()
@@ -113,7 +124,7 @@ class TestSobOUvicorn:
         """), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(app)], capture_output=True,
                               cwd=str(tmp_path),
-                              env={"PYTHONPATH": f"{tmp_path}:{RAIZ}", "PATH": "/usr/bin:/bin"},
+                              env=_ambiente_minimo(tmp_path),
                               timeout=60)
         assert proc.returncode == 0, proc.stderr.decode()
         saida = proc.stdout.decode()

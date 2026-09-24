@@ -21,12 +21,23 @@ import asyncio
 import io
 import json
 import os
+import signal
 
 import httpx
 import pytest
 
 import app as app_module
 from app import app
+
+
+@pytest.fixture(autouse=True)
+def _ramo_posix(monkeypatch):
+    """O `ProcessoFalso` conta terminate/kill: e o ramo POSIX que ele mede, em
+    qualquer sistema. O ramo do Windows (`taskkill /T`) tem os testes dele em
+    `test_windows_portavel.py`. E no Windows nao existe `signal.SIGKILL`: sem
+    um valor proprio aqui, o primeiro sinal ja pareceria o ultimo."""
+    monkeypatch.setattr(app_module, "_NO_WINDOWS", False)
+    monkeypatch.setattr(app_module, "_SIGKILL", getattr(signal, "SIGKILL", 9))
 
 
 def _client_call(metodo, caminho):

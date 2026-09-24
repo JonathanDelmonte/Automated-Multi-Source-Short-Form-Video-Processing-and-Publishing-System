@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 
 # Must happen before importing app: import-time prints would land on stdout.
 _PROTOCOL_OUT = sys.stdout
@@ -80,6 +81,23 @@ def _write(response: dict) -> None:
 async def _stdin_lines():
     """Yield stdin lines without blocking the loop (tool calls run for minutes)."""
     loop = asyncio.get_running_loop()
+    if os.name == "nt":
+        # O laco do Windows (Proactor) so le cano "overlapped", e o stdin que o
+        # host abre e um cano anonimo comum: o `connect_read_pipe` ficava
+        # parado para sempre, sem erro. Uma thread le e entrega ao laco.
+        fila: asyncio.Queue = asyncio.Queue()
+
+        def ler():
+            for linha in iter(sys.stdin.buffer.readline, b""):
+                loop.call_soon_threadsafe(fila.put_nowait, linha)
+            loop.call_soon_threadsafe(fila.put_nowait, b"")
+
+        threading.Thread(target=ler, daemon=True).start()
+        while True:
+            line = await fila.get()
+            if not line:  # EOF: the host closed the pipe
+                return
+            yield line
     reader = asyncio.StreamReader()
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
     while True:

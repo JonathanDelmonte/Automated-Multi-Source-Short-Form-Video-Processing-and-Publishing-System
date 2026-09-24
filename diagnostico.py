@@ -111,7 +111,7 @@ def libs_de_cuda_na_imagem() -> Optional[bool]:
     reconstrucao de 15 a 40 minutos; placa nao reservada pede um `up` de
     segundos. Sem separar, a escolha entre as duas e cara ou coroa.
     """
-    caminhos = [p for p in (os.environ.get("LD_LIBRARY_PATH") or "").split(":")
+    caminhos = [p for p in (os.environ.get("LD_LIBRARY_PATH") or "").split(os.pathsep)
                 if p and "nvidia" in p]
     if not caminhos:
         return None      # nem o `ENV` do Dockerfile chegou: nao da para saber

@@ -231,7 +231,9 @@ def main() -> int:
     print(f"pasta de trabalho: {pasta}", flush=True)
 
     passo("gerando um video com fala")
-    wav, mp4 = pasta / "fala.wav", pasta / "entrada teste.mp4"
+    # Acento e espaco no nome, como o titulo de um video brasileiro: e o
+    # caminho que mais quebra no Windows (OpenCV, libass, linha de comando).
+    wav, mp4 = pasta / "fala.wav", pasta / "entrada teste ação.mp4"
     gerar_fala(wav)
     gerar_video(wav, mp4)
     print(f"   {mp4.name}: {sondar(mp4)['format']['duration']} s", flush=True)

@@ -81,6 +81,11 @@ class SourceAdapter:
     #: o arquivo. Obrigar a renomear e um passo a mais para errar.
     cookie_file_alt: tuple = ()
 
+    #: A fonte entrega audio e video em arquivos separados, e o `fetch` aceita
+    #: `ao_audio` para avisar quando o audio chegou (`audio_primeiro.py`). So
+    #: o YouTube: nas outras o arquivo vem inteiro, e nao ha o que adiantar.
+    audio_primeiro: bool = False
+
     @classmethod
     def matches(cls, raw: str) -> bool:
         raise NotImplementedError

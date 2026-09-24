@@ -26,6 +26,7 @@ import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
 import { apiFetch, apiJson, QuotaError } from './lib/api';
 import { track } from './lib/analytics';
+import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 
 // Simple TikTok icon sine Lucide might not have it or it varies
 const TikTokIcon = ({ size = 16, className = "" }) => (
@@ -210,6 +211,10 @@ const pollJob = async (jobId) => {
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
   const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, configCarregada, authAtiva, loading: authLoading } = useAuth();
+  // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
+  // Só depois da config, e só com sessão quando a instalação tem senha: antes
+  // disso o servidor responderia 401 a cada dois minutos.
+  useAquecerTranscricao(configCarregada && (!authAtiva || isSignedIn));
   const [showLogin, setShowLogin] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
   const [showPlanChoice, setShowPlanChoice] = useState(false);

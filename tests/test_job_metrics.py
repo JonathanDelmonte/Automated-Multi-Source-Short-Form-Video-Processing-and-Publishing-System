@@ -351,3 +351,36 @@ def test_substage_filho_sai_recuado_debaixo_do_pai():
     i_pai = next(i for i, l in enumerate(linhas) if "└ 06_reenquadra" in l)
     assert "  └ 1_cenas" in linhas[i_pai + 1]
     assert "06_reenquadra/1_cenas" not in "\n".join(linhas)
+
+
+class TestRetomar:
+    """A espera pelo video que baixa em paralelo e ingest (24-set-2026).
+
+    Com o `audio_primeiro`, o `01_ingest` termina quando o AUDIO chega. Se o
+    video ainda nao chegou quando o corte precisa dele, esse tempo tambem e
+    download -- mas anunciar o estagio de novo faria a barra voltar ao comeco.
+    """
+
+    def test_soma_no_mesmo_estagio(self, monkeypatch):
+        relogio = _Relogio()
+        monkeypatch.setattr(job_metrics, "time", relogio)
+        job_metrics.reset(".", "video")
+        with job_metrics.stage("01_ingest"):
+            relogio.avanca(10)
+        with job_metrics.stage("03_transcribe"):
+            relogio.avanca(40)
+        with job_metrics.retomar("01_ingest"):
+            relogio.avanca(5)
+        s = job_metrics.snapshot()["stages"]
+        assert s["01_ingest"]["wall_seconds"] == 15.0
+        assert s["01_ingest"]["seconds"] == 15.0
+        assert s["03_transcribe"]["wall_seconds"] == 40.0
+
+    def test_nao_move_a_barra(self, capsys):
+        job_metrics.reset(".", "video")
+        with job_metrics.stage("01_ingest"):
+            pass
+        capsys.readouterr()
+        with job_metrics.retomar("01_ingest"):
+            pass
+        assert job_metrics.STAGE_MARKER not in capsys.readouterr().out

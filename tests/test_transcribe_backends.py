@@ -502,3 +502,49 @@ class TestCargaDoModelo:
         tb._run_whisper_once("a.wav")
         saida = capsys.readouterr().out
         assert saida.count("modelo carregado em") == 1
+
+
+class TestAntesDeCarregarNaPlaca:
+    """Com o video baixando em paralelo, a carga LOCAL na placa espera o
+    download terminar (24-set-2026): CUDA subindo enquanto outra thread faz
+    fork e uma das duas suspeitas da pre-carga que travou em 23-set-2026."""
+
+    @pytest.fixture
+    def carga(self, monkeypatch):
+        criados = []
+
+        class Modelo:
+            def __init__(self, model_size, device=None, compute_type=None, **kw):
+                criados.append(device)
+
+        monkeypatch.setitem(sys.modules, "faster_whisper",
+                            types.SimpleNamespace(WhisperModel=Modelo))
+        monkeypatch.setattr(tb, "_whisper_model", None)
+        monkeypatch.setattr(tb, "_whisper_key", None)
+        monkeypatch.setattr(tb, "_whisper_force_cpu", False)
+        esperas = []
+        monkeypatch.setattr(tb, "antes_de_carregar_na_placa",
+                            lambda: esperas.append(list(criados)))
+        return criados, esperas
+
+    def test_espera_antes_de_subir_na_placa(self, carga, monkeypatch):
+        criados, esperas = carga
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        tb._get_whisper_model()
+        # Chamado ANTES de o modelo existir, e uma vez so.
+        assert esperas == [[]] and criados == ["cuda"]
+        tb._get_whisper_model()
+        assert len(esperas) == 1
+
+    def test_na_cpu_nao_espera(self, carga, monkeypatch):
+        _criados, esperas = carga
+        monkeypatch.setenv("WHISPER_DEVICE", "cpu")
+        tb._get_whisper_model()
+        assert esperas == []
+
+    def test_sem_gancho_carrega_como_antes(self, carga, monkeypatch):
+        criados, _ = carga
+        monkeypatch.setattr(tb, "antes_de_carregar_na_placa", None)
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        tb._get_whisper_model()
+        assert criados == ["cuda"]

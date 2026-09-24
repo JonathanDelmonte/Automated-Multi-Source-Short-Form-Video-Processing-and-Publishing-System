@@ -205,6 +205,19 @@ def substage(name: str):
     return _medir(name, sub=True, marcar=False)
 
 
+def retomar(name: str):
+    """Mede de novo um estagio ja anunciado, SEM mexer na barra (24-set-2026).
+
+    Existe para o download em paralelo (`audio_primeiro`): o `01_ingest`
+    termina quando o AUDIO chega, e o video continua baixando enquanto a
+    transcricao roda. Se ele ainda nao chegou quando o corte precisa dele, a
+    espera tambem e ingest -- e o resumo tem de dizer isso, senao o tempo some
+    de todos os estagios. Mas anunciar `01_ingest` de novo faria a barra do
+    painel voltar ao comeco.
+    """
+    return _medir(name, sub=False, marcar=False)
+
+
 def current_stage() -> Optional[str]:
     p = _pilha()
     return p[-1][0] if p else None

@@ -697,6 +697,13 @@ um vídeo processa (o modelo de transcrição e os quadros ficam na memória) e
 desce depois. O `Disk: ... GB used` do rodapé do Docker Desktop também não são
 vídeos: são as imagens do programa (Python, torch com CUDA, ffmpeg).
 
+**Com placa NVIDIA, abrir o painel já sobe o modelo de transcrição** (desde
+24-set-2026). Ele fica carregado na placa enquanto o painel estiver aberto — é
+o que tira uns 15 a 25 s de cada vídeo — e sai sozinho 10 minutos depois que
+você fecha a aba (`ASR_RESIDENTE_OCIOSO_MIN` no `.env` muda isso). Nesse tempo
+a memória do container e a da placa ficam mais altas mesmo sem vídeo nenhum
+processando: é o modelo esperando, não vazamento. Não ocupa disco.
+
 `atalhos\abrir-pasta-dos-cortes.bat` abre essa pasta no Explorer.
 
 Na pasta de cada projeto há mais de uma versão de cada corte: `..._clip_1.mp4`

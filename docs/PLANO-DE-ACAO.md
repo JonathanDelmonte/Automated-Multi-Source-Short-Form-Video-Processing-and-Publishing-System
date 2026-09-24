@@ -874,6 +874,15 @@ Groq (−15 s) e a carga do modelo sem rede. O resto da diferença foi conteúdo
 render: os cortes saíram 41% mais longos — desta vez quem marcou início e fim foi o
 Gemini, lendo a transcrição em lotes, e um job só não separa qual das duas pesou.
 
+**24-set-2026.** Com as duas desfeitas, o mesmo vídeo levou 192 s. A rodada 6 mexe só
+em tempo, nunca na qualidade do corte: o modelo de transcrição passa a ficar carregado
+na placa num processo do servidor enquanto o painel está aberto (sai sozinho depois de
+10 minutos sem uso), e o YouTube passa a baixar o áudio antes do vídeo, para a
+transcrição começar enquanto o vídeo ainda chega. De quebra, as linhas do log deixaram
+de grudar quando várias partes do programa escrevem ao mesmo tempo — o que já fazia um
+marcador da barra de progresso se perder. Estimativa: ~24 s a menos no mesmo vídeo, a
+confirmar no próximo log.
+
 ### Fase 5 — calibrar a detecção com dados reais · contínuo
 
 Sem alteração. A tabela `metrics` do §7 — "parece supérflua agora e é a tabela mais

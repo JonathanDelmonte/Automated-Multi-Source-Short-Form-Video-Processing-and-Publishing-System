@@ -1212,6 +1212,7 @@ portrait clip cannot reproduce the shrink either.
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | Views e retenção coletadas |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
+| POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -1716,6 +1717,85 @@ mais**, e nem tudo e defeito:
   job depois do `atualizar.bat`, o que torna o `.cache/` num volume do Docker
   o maior ganho barato que sobra -- e continua sendo decisao do autor, porque
   sao ~1,6 GB no disco do Docker.
+
+### Velocidade, rodada 6: o modelo fica na placa e o audio chega primeiro (24-set-2026)
+
+Com as duas coisas da rodada 5 desfeitas, o mesmo video levou **192 s**:
+`01_ingest` 26 s, `03_transcribe` 55 s (13,8 s so carregando o modelo),
+`04_detect` 12 s, `05_06_render` 98 s. O autor recusou os 1,6 GB do modelo num
+volume do Docker e nao quis mexer nas quatro codificacoes de cada corte ("mexer
+nisso vai mexer na qualidade") -- as duas mudancas daqui so mexem em TEMPO. A
+estimativa para esse video e ~24 s a menos (a carga e ~15 s de video e juncao),
+a confirmar no proximo log.
+
+**O modelo residente** (`asr_residente.py`):
+
+- Um processo proprio segura o whisper na placa; o job pergunta a ele por um
+  socket de arquivo e so carrega o seu se ele nao servir.
+- **Quem sobe e o servidor, quando alguem abre o painel ou um video comeca**
+  (`POST /api/asr/aquecer`, `app.run_job`), e ele sai sozinho depois de
+  `ASR_RESIDENTE_OCIOSO_MIN` (10) minutos sem uso. O painel avisa ao abrir, ao
+  voltar para a aba e a cada 2 min (`dashboard/src/lib/aquecerTranscricao.js`).
+  **Nem para sempre, nem por aba**: o modelo e do SERVIDOR, e serve todas as
+  abas e todas as pessoas da instalacao -- a pergunta do autor era como isso
+  vale para quem receber o programa, e a resposta e que vale sozinho.
+- **O modelo nasce e trabalha na mesma thread, e o processo nunca faz fork.**
+  E o oposto exato das duas suspeitas da pre-carga que travou em 23-set. Nao
+  "otimizar" transcrevendo na thread da conexao.
+- **Qualquer duvida volta ao caminho de hoje**: residente ausente, de outra
+  configuracao (a chave modelo/dispositivo/precisao e comparada), lento demais
+  para carregar (150 s), com erro, ou morto no meio -> `None`, e o job carrega
+  o dele. O job fica mais lento, nunca para.
+- **Travou, morre.** O laco principal mede o sinal de vida da thread de
+  trabalho (o progresso de cada segmento) e sai por `os._exit` depois de 300 s
+  sem ele; o job ve a conexao cair e segue sozinho.
+- **Socket em /tmp, nao em /app**: `/app` e a pasta do Windows montada, onde
+  socket nao abre. O arquivo tem zero byte, entao nao fere o "nada do
+  processamento dentro do Docker". JSON e nao pickle: pickle recebido e codigo.
+- `auto` so liga com o whisper na placa; `ASR_RESIDENTE=0` desliga.
+- `tests/test_asr_residente.py` sobe o PROCESSO de verdade, com um
+  `faster_whisper` falso no caminho: erro de import no ponto de entrada so
+  aparece ali.
+
+**O audio primeiro** (`audio_primeiro.py`):
+
+- O seletor do YouTube pede o MESMO par de formatos na ordem inversa
+  (`bestaudio...+bestvideo...`). O yt-dlp baixa na ordem escrita: o audio
+  (~10 MB) chega em ~1 s e a transcricao comeca enquanto o video (~180 MB) e a
+  juncao terminam numa thread. O mp4 final e o mesmo -- um teste roda o yt-dlp
+  DE VERDADE contra um servidor local e confere a ordem e as duas trilhas.
+- O `01_ingest` termina quando o audio chega. Quem precisa do video chama
+  `_esperar_video()`: metadata, analise visual e escolha de layout (que passou
+  para depois da deteccao, ainda antes do render). A espera volta ao
+  `01_ingest` por `job_metrics.retomar`, que mede sem mexer na barra.
+- **O audio e copiado dentro do gancho do yt-dlp**, antes de ele seguir: ele
+  apaga os pedacos depois de juntar, e uma tentativa que cai no video recomeca
+  do zero. O primeiro audio vale.
+- **Download que cai depois do audio derruba o job antes da deteccao**
+  (`levantar_se_falhou` logo depois da transcricao): nao gastar cota de LLM
+  num job que ja esta perdido.
+- **Com whisper LOCAL na placa, o CUDA so sobe depois do download**
+  (`transcribe_backends.antes_de_carregar_na_placa`). No caminho normal quem
+  transcreve e o residente e o job nem toca a placa; na queda, a carga local
+  volta a ser exatamente o caminho que sempre funcionou.
+- So o YouTube (`SourceAdapter.audio_primeiro`): nas outras fontes o arquivo
+  vem inteiro. `AUDIO_PRIMEIRO=0` volta ao de antes.
+- `tests/test_main_audio_primeiro.py` executa o bloco `__main__` do `main.py`
+  como ele esta, com torch/mediapipe/scenedetect trocados por imitacoes: e o
+  caminho de todo video do YouTube, e um nome errado ali so apareceria na
+  maquina do autor.
+
+**As linhas do log nao grudam mais** (`linhas_inteiras.py`):
+
+- Um `print` sao duas escritas; com varias threads, o marcador caia no meio da
+  linha dos outros e passava pelo `startswith` do `app.py`. No log de 192 s:
+  `...ninguem acreditou__STAGE__BEGIN 05_06_render`. O download em paralelo
+  faria disso a regra: o yt-dlp escreve o progresso com `\r` e sem `\n`
+  durante o download inteiro.
+- O `main.py` troca stdout e stderr, antes de tudo, por um escritor que so
+  emite linha inteira, por thread, sob uma trava comum (o `app.py` junta os
+  dois no mesmo cano). **Sem atributo `buffer`**: o `write_string` do yt-dlp
+  escreveria direto nele, por fora da trava.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

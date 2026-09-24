@@ -30,6 +30,8 @@ import layout_picker
 import llm_backend
 import llm_cascade
 import job_metrics
+import linhas_inteiras
+import audio_primeiro
 import sources
 import audio_probe
 import prefilter
@@ -723,8 +725,12 @@ source_label = sources.label_for
 cookie_jar_for = sources.cookie_jar_for
 
 
-def download_youtube_video(url, output_dir="."):
+def download_youtube_video(url, output_dir=".", ao_audio=None):
     """Downloads a video with yt-dlp. Returns (path, title).
+
+    `ao_audio(d, titulo)` (24-set-2026): chamado quando a parte SO de audio
+    termina, e o seletor passa a pedir o audio antes do video -- ver
+    `audio_primeiro.py`. Sem ele, o download de sempre.
 
     O nome diz YouTube e a funcao atende qualquer origem que o yt-dlp saiba
     buscar -- URL direta desde o upstream, Twitch desde o bloco 1.2 -- e ela
@@ -875,6 +881,8 @@ def download_youtube_video(url, output_dir="."):
     # Wire bytes actually pulled through the (paid) proxy, summed across
     # fragments/streams. Reported to app.py via the PROXY_BYTES= line below.
     _dl_bytes = {"total": 0, "partial": 0}
+    # O titulo da tentativa em curso, para o aviso do audio (`ao_audio`).
+    _tentativa = {"titulo": None}
 
     def _progress_hook(d):
         if d.get('status') == 'downloading':
@@ -886,6 +894,8 @@ def download_youtube_video(url, output_dir="."):
             _dl_bytes["total"] += int(d.get('total_bytes')
                                       or d.get('total_bytes_estimate')
                                       or d.get('downloaded_bytes') or 0)
+            if ao_audio is not None:
+                ao_audio(d, _tentativa["titulo"])
 
     def _attempt(extractor_args, fmt, proxy, cookies=True):
         _dl_bytes["total"] = 0
@@ -893,6 +903,7 @@ def download_youtube_video(url, output_dir="."):
         with yt_dlp.YoutubeDL(_base_opts(extractor_args, proxy, cookies)) as ydl:
             info = ydl.extract_info(url, download=False)
         sanitized = sanitize_filename(info.get('title', 'youtube_video'))
+        _tentativa["titulo"] = sanitized
         expected = os.path.join(output_dir, f'{sanitized}.mp4')
         if os.path.exists(expected):
             os.remove(expected)
@@ -927,8 +938,13 @@ def download_youtube_video(url, output_dir="."):
             _direct_first, _statics, _proxy, bool(hd_args),
             youtube=is_youtube_url(url)):
         envia_cookies = not (label.startswith('fallback') and hd_args)
+        fmt = _hd_fmt_for(capped)
+        if ao_audio is not None:
+            # O mesmo par de formatos, baixado na ordem inversa: o audio chega
+            # primeiro e a transcricao comeca enquanto o video baixa.
+            fmt = audio_primeiro.audio_antes(fmt)
         attempts.append((label, _args_da_tentativa(label, envia_cookies),
-                         _hd_fmt_for(capped), proxy, envia_cookies))
+                         fmt, proxy, envia_cookies))
     if not is_youtube_url(url):
         print("🌐 Direct file URL: downloading from the server's own IP (no proxy).")
 
@@ -1951,6 +1967,7 @@ def get_visual_clips(video_path, video_duration, language="en"):
 
 
 if __name__ == '__main__':
+    linhas_inteiras.instalar()
     parser = argparse.ArgumentParser(description="AutoCrop-Vertical with Viral Clip Detection.")
     
     input_group = parser.add_mutually_exclusive_group(required=True)
@@ -2021,31 +2038,94 @@ if __name__ == '__main__':
             else:
                 output_dir = os.path.dirname(args.input)
 
-    # O whisper NAO carrega durante o download, e isso ja foi tentado
-    # (23-set-2026): carregado numa thread de fundo enquanto o yt-dlp baixava,
-    # o modelo subiu inteiro e a transcricao travou na primeira chamada a placa,
-    # sem erro e sem log, na maquina do autor (RTX 3060, Docker Desktop/WSL 2).
-    # Revertido no mesmo dia. Ver `transcribe_backends._get_whisper_model`.
+    # O whisper NAO carrega durante o download NESTE processo, e isso ja foi
+    # tentado (23-set-2026): carregado numa thread de fundo enquanto o yt-dlp
+    # baixava, o modelo subiu inteiro e a transcricao travou na primeira chamada
+    # a placa, sem erro e sem log, na maquina do autor (RTX 3060, Docker
+    # Desktop/WSL 2). Revertido no mesmo dia. Ver
+    # `transcribe_backends._get_whisper_model`. O que corre em paralelo com o
+    # download desde 24-set-2026 e outra coisa: a TRANSCRICAO, pelo modelo que
+    # mora no processo residente (`asr_residente.py`) -- este processo nao
+    # toca a placa enquanto o video baixa.
 
     # Um unico ponto de busca para as duas entradas: acima so se decide ONDE
     # gravar. `SourceNotReady` e a fonte reconhecida cujo tipo ainda nao tem
     # implementacao (hoje, a live da Twitch) -- e um erro de uso, com conserto
     # do lado de quem chamou, entao sai como mensagem e nao como traceback.
+    #
+    # **O audio primeiro** (`audio_primeiro.py`, 24-set-2026): numa fonte que
+    # entrega audio e video separados, o `01_ingest` termina quando o AUDIO
+    # chega, e o video continua baixando numa thread enquanto a transcricao
+    # roda. Quem precisa do video de verdade chama `_esperar_video()`.
+    baixando = None
+    copia_do_audio = None
     with job_metrics.stage("01_ingest"):
         try:
-            fetched = source.fetch(raw_source, output_dir)
+            if (getattr(source, "audio_primeiro", False) and audio_primeiro.ligado()
+                    and not args.skip_analysis and not args.transcript):
+                baixando = audio_primeiro.DownloadEmParalelo(
+                    lambda ao_audio: source.fetch(raw_source, output_dir, ao_audio=ao_audio),
+                    output_dir).iniciar()
+                copia_do_audio = baixando.aguardar_audio()
+                if copia_do_audio is None:
+                    # Formato de arquivo unico: nao havia o que adiantar.
+                    fetched = baixando.aguardar_video()
+                    baixando = None
+            else:
+                fetched = source.fetch(raw_source, output_dir)
         except sources.SourceNotReady as e:
             print(f"❌ {e}")
             exit(1)
-    input_video, video_title = fetched.path, fetched.title
 
-    if not os.path.exists(input_video):
-        print(f"❌ Input file not found: {input_video}")
-        exit(1)
+    def _video_em_disco(fetched):
+        global input_video, video_title
+        input_video, video_title = fetched.path, fetched.title
+        if not os.path.exists(input_video):
+            print(f"❌ Input file not found: {input_video}")
+            exit(1)
+        # Primeiro ponto em que diretorio e titulo existem nos dois caminhos
+        # (URL e arquivo local), entao e aqui que o coletor aprende onde gravar.
+        job_metrics.set_destination(output_dir, video_title)
 
-    # Primeiro ponto em que diretorio e titulo existem nos dois caminhos (URL e
-    # arquivo local), entao e aqui que o coletor aprende onde gravar.
-    job_metrics.set_destination(output_dir, video_title)
+    def _esperar_video():
+        """O video de verdade. Com o download em paralelo, espera ele terminar
+        -- e essa espera e ingest, entao volta ao `01_ingest` sem mexer na
+        barra. Sem download em paralelo, nao faz nada."""
+        global baixando
+        if baixando is None:
+            return input_video
+        t0 = time.monotonic()
+        with job_metrics.retomar("01_ingest"):
+            fetched = baixando.aguardar_video()
+        esperei = time.monotonic() - t0
+        depois = (baixando.t_fim or time.monotonic()) - (baixando.t_audio or baixando.t_inicio)
+        job_metrics.fact("video_depois_do_audio_s", round(depois, 1))
+        job_metrics.fact("espera_do_video_s", round(esperei, 1))
+        baixando = None
+        _video_em_disco(fetched)
+        _info_video = audio_probe.probe(input_video)
+        print(f"   📥 Video pronto {depois:.1f}s depois do audio"
+              + (f" ({_info_video['width']}x{_info_video['height']})"
+                 if _info_video.get("width") and _info_video.get("height") else "")
+              + (f"; esperei {esperei:.1f}s por ele." if esperei >= 0.5
+                 else ", baixado enquanto a transcricao rodava."))
+        return input_video
+
+    if baixando is None:
+        _video_em_disco(fetched)
+        fonte_do_audio = input_video
+    else:
+        # O video ainda esta a caminho. O nome previsto e a mesma expressao do
+        # `download_youtube_video`, e serve de chave ao checkpoint da
+        # transcricao -- que existe antes do video.
+        input_video = baixando.caminho_previsto()
+        video_title = baixando.titulo
+        fonte_do_audio = copia_do_audio
+        # Se a transcricao cair no caminho LOCAL na placa (residente fora do
+        # ar), o CUDA so sobe depois de o download terminar: CUDA subindo
+        # enquanto outra thread faz fork e o que travou em 23-set-2026.
+        import transcribe_backends
+        transcribe_backends.antes_de_carregar_na_placa = baixando.esperar_terminar
 
     # 2. Probe — o audio dirige, o video obedece (§4 do Plano Tecnico).
     #
@@ -2055,10 +2135,11 @@ if __name__ == '__main__':
     # porque o custo cresce com a duracao FALADA e nao com o tamanho do arquivo.
     #
     # Tudo aqui falha aberto. Sem probe ou sem extracao, `audio_path` continua
-    # sendo o proprio video e o pipeline roda como rodava.
-    audio_path = input_video
+    # sendo o proprio video (ou o audio baixado antes dele) e o pipeline roda
+    # como rodava.
+    audio_path = fonte_do_audio
     with job_metrics.stage("02_probe"):
-        media_info = audio_probe.probe(input_video)
+        media_info = audio_probe.probe(fonte_do_audio)
         if media_info.get("width") and media_info.get("height"):
             print(f"   📐 {media_info['width']}x{media_info['height']}"
                   + (f", {media_info['duration_s']:.0f}s" if media_info.get("duration_s") else "")
@@ -2071,21 +2152,33 @@ if __name__ == '__main__':
             print("   🔇 Fonte sem trilha de audio — a analise vai ser visual.")
         else:
             _wav = audio_probe.extract_wav(
-                input_video, os.path.join(output_dir, audio_probe.WAV_NAME))
+                fonte_do_audio, os.path.join(output_dir, audio_probe.WAV_NAME))
             if _wav:
                 audio_path = _wav
                 _seg = audio_probe.wav_seconds(_wav) or 0
                 _mb = os.path.getsize(_wav) / (1024 * 1024)
                 _orig_mb = (media_info.get("size_bytes") or 0) / (1024 * 1024)
                 print(f"   🎧 Audio extraido: {_seg:.0f}s, {_mb:.0f} MB"
-                      + (f" (a fonte tem {_orig_mb:.0f} MB)" if _orig_mb else ""))
+                      + (f" (a fonte tem {_orig_mb:.0f} MB)"
+                         if _orig_mb and fonte_do_audio == input_video else ""))
                 job_metrics.fact("audio_mb", round(_mb, 1))
+                if copia_do_audio:
+                    # O WAV e o que se le daqui em diante. Nao conseguir
+                    # apagar (o Windows segura arquivo aberto) so adia para o
+                    # fim do job.
+                    try:
+                        os.remove(copia_do_audio)
+                        copia_do_audio = None
+                    except OSError:
+                        pass
 
     # Layout choice is per SOURCE video, not per clip: one upload and one call
     # instead of one per clip, and the answer is a property of the material
     # ("this is a screencast"), which does not change between its own clips.
     # It runs before any render so the modules are switched on in time.
-    if layout_picker.ENABLED:
+    def _escolher_layout():
+        if not layout_picker.ENABLED:
+            return
         try:
             _cap = cv2.VideoCapture(input_video)
             _fps = _cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -2103,6 +2196,12 @@ if __name__ == '__main__':
                 layout_picker.pick_and_apply(input_video, _duration)
         except Exception as e:
             print(f"⚠️ Layout choice skipped ({e}) — using the default layout.")
+
+    # Com o video a caminho, a escolha espera por ele: fica para depois da
+    # deteccao, que so le o audio -- ainda antes de qualquer render.
+    layout_pendente = baixando is not None
+    if not layout_pendente:
+        _escolher_layout()
 
     # 2. Decision: Analyze clips or process whole?
     if args.skip_analysis:
@@ -2125,7 +2224,7 @@ if __name__ == '__main__':
         # nao ter respondido.
         duration = media_info.get("duration_s")
         if not duration:
-            cap = cv2.VideoCapture(input_video)
+            cap = cv2.VideoCapture(_esperar_video())
             fps = cap.get(cv2.CAP_PROP_FPS) or 0
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             cap.release()
@@ -2163,6 +2262,11 @@ if __name__ == '__main__':
                     # proprio video quando nao existe.
                     transcript = transcribe_video(audio_path)
                 save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+                # O download que corre em paralelo pode ter falhado enquanto a
+                # transcricao rodava: melhor saber agora do que depois da
+                # deteccao, que gasta cota de LLM.
+                if baixando is not None:
+                    baixando.levantar_se_falhou()
             except NoAudioError as e:
                 print(f"🔇 {e} — switching to visual analysis.")
 
@@ -2185,7 +2289,7 @@ if __name__ == '__main__':
             if transcript is not None:
                 clips_data = get_viral_clips(transcript, duration, audio_path=audio_path)
             else:
-                clips_data = get_visual_clips(input_video, duration)
+                clips_data = get_visual_clips(_esperar_video(), duration)
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path
@@ -2195,6 +2299,13 @@ if __name__ == '__main__':
                 "Clip detection failed — the AI model did not return usable clips for this video.")
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} clips!")
+
+            # Daqui em diante tudo le o VIDEO: com o download em paralelo, e
+            # aqui que ele e esperado (e a escolha de layout, que precisa dele,
+            # acontece agora -- ainda antes de qualquer render).
+            _esperar_video()
+            if layout_pendente:
+                _escolher_layout()
 
             # Save metadata. Silent videos have no transcript → no subtitles,
             # which is correct (there's no speech to caption).
@@ -2317,6 +2428,12 @@ if __name__ == '__main__':
     # `.transcript_checkpoint.json`, nao este arquivo.
     if audio_path != input_video and os.path.exists(audio_path) and not args.keep_original:
         os.remove(audio_path)
+    # A copia do audio baixado antes do video, quando o WAV nao saiu dela.
+    if copia_do_audio and os.path.exists(copia_do_audio):
+        try:
+            os.remove(copia_do_audio)
+        except OSError as e:
+            print(f"⚠️ Nao consegui apagar {os.path.basename(copia_do_audio)} ({e}).")
     # The job finished: a later run in this directory must transcribe afresh.
     if not args.skip_analysis:
         clear_transcript_checkpoint(output_dir)

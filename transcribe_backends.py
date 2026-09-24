@@ -96,6 +96,16 @@ _whisper_force_cpu = False
 # modelo desta transcricao ja estava carregado.
 _whisper_carga_s = None
 
+# Chamado uma vez antes de o whisper subir NA PLACA dentro deste processo
+# (24-set-2026). O `main.py` o aponta para "espere o video terminar de baixar"
+# quando o download corre em paralelo (`audio_primeiro`): o CUDA subindo
+# enquanto outra thread faz fork -- o yt-dlp abrindo o ffmpeg e o deno -- e
+# uma das duas suspeitas da pre-carga que travou em 23-set-2026. Esperando o
+# download, a carga local volta a ser exatamente o caminho que sempre
+# funcionou. O caminho normal nem passa aqui: quem transcreve e o
+# `asr_residente`, e este processo nao toca a placa.
+antes_de_carregar_na_placa = None
+
 
 def _get_whisper_model():
     """Process-wide WhisperModel singleton, rebuilt if the env config changes.
@@ -123,6 +133,8 @@ def _get_whisper_model():
     key = (cfg["model_size"], cfg["device"], cfg["compute_type"])
     with _whisper_lock:
         if _whisper_model is None or _whisper_key != key:
+            if key[1] != "cpu" and antes_de_carregar_na_placa is not None:
+                antes_de_carregar_na_placa()
             from faster_whisper import WhisperModel
             inicio = time.time()
             try:
@@ -201,11 +213,16 @@ def _pipeline_em_lotes(model):
     return BatchedInferencePipeline(model=model)
 
 
-def _transcrever(motor, media_path, params):
+def _transcrever(motor, media_path, params, progresso=None):
     """Roda `motor.transcribe` e MATERIALIZA os segmentos (o gerador e lazy:
-    a decodificacao acontece enquanto se itera, entao a falha tambem)."""
+    a decodificacao acontece enquanto se itera, entao a falha tambem).
+
+    `progresso(total)` devolve quem recebe `update(posicao)` a cada segmento.
+    O padrao imprime as linhas de 25 em 25%; o `asr_residente` passa um que
+    manda a posicao ao job, que imprime as MESMAS linhas no log dele.
+    """
     segments, info = motor.transcribe(media_path, **params)
-    progress = _TranscribeProgress(getattr(info, "duration", 0))
+    progress = (progresso or _TranscribeProgress)(getattr(info, "duration", 0))
     materialized = []
     for segment in segments:
         materialized.append(segment)
@@ -227,22 +244,33 @@ def _run_whisper_once(media_path, **params):
         print(f"   ⏱️ [ASR] modelo carregado em {_whisper_carga_s:.1f}s", flush=True)
         _whisper_carga_s = None
     gate = _ASR_GATE if device != "cpu" else _NULL_GATE
-    lote = tamanho_do_lote() if device != "cpu" else 0
     with gate:
-        if lote > 1:
-            # Em lotes, so quando pedido (ver `tamanho_do_lote`): o VAD corta
-            # o audio em trechos de ate 30 s e a placa decodifica `lote` deles
-            # de uma vez, em vez de um por um. O `without_timestamps=False`
-            # mantem os segmentos do tamanho de uma frase, como no modo
-            # sequencial: as janelas da deteccao de momentos se alinham a eles.
-            try:
-                return _transcrever(
-                    _pipeline_em_lotes(model), media_path,
-                    dict(params, batch_size=lote, without_timestamps=False))
-            except Exception as e:  # noqa: BLE001 - o modo antigo e a rede
-                print(f"⚠️ [ASR] transcricao em lotes falhou ({type(e).__name__}: "
-                      f"{e}) — refazendo no modo sequencial.", flush=True)
-        return _transcrever(model, media_path, params)
+        return _decodificar(model, device, media_path, params)
+
+
+def _decodificar(model, device, media_path, params, progresso=None):
+    """Em lotes (so quando pedido) ou sequencial, com o sequencial de rede.
+
+    Separado de `_run_whisper_once` porque o `asr_residente` decodifica com o
+    MESMO codigo: o processo residente e so outro dono do modelo, nao outra
+    forma de transcrever.
+    """
+    lote = tamanho_do_lote() if device != "cpu" else 0
+    if lote > 1:
+        # Em lotes, so quando pedido (ver `tamanho_do_lote`): o VAD corta o
+        # audio em trechos de ate 30 s e a placa decodifica `lote` deles de uma
+        # vez, em vez de um por um. O `without_timestamps=False` mantem os
+        # segmentos do tamanho de uma frase, como no modo sequencial: as
+        # janelas da deteccao de momentos se alinham a eles.
+        try:
+            return _transcrever(
+                _pipeline_em_lotes(model), media_path,
+                dict(params, batch_size=lote, without_timestamps=False),
+                progresso)
+        except Exception as e:  # noqa: BLE001 - o modo antigo e a rede
+            print(f"⚠️ [ASR] transcricao em lotes falhou ({type(e).__name__}: "
+                  f"{e}) — refazendo no modo sequencial.", flush=True)
+    return _transcrever(model, media_path, params, progresso)
 
 
 def run_whisper_transcription(media_path, **params):
@@ -270,8 +298,33 @@ def run_whisper_transcription(media_path, **params):
 
 
 def _transcribe_with_whisper(media_path):
+    pronta = _pelo_residente(media_path)
+    if pronta is not None:
+        return pronta
     segments, info = run_whisper_transcription(media_path, **WHISPER_TRANSCRIBE_PARAMS)
+    return _transcricao_de(segments, info)
 
+
+def _pelo_residente(media_path):
+    """A transcricao feita pelo modelo que ja esta na placa, ou None.
+
+    None em qualquer duvida -- residente desligado, ausente, de outra
+    configuracao, travado --, e ai o job carrega o modelo como sempre fez.
+    """
+    import asr_residente
+
+    if _whisper_force_cpu or not asr_residente.ativo():
+        return None
+    cfg = get_whisper_config()
+    chave = (cfg["model_size"], cfg["device"], cfg["compute_type"])
+    return asr_residente.transcrever(
+        media_path, chave, dict(WHISPER_TRANSCRIBE_PARAMS),
+        linha_do_whisper=linha_do_whisper(*chave),
+        progresso=_TranscribeProgress)
+
+
+def _transcricao_de(segments, info):
+    """Segmentos do faster-whisper -> o contrato do pipeline (ver o topo)."""
     out_segments = []
     text_parts = []
     for segment in segments:

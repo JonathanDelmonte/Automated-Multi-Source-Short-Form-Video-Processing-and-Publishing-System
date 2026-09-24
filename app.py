@@ -1,4 +1,5 @@
 import os
+import asr_residente
 import job_metrics
 import job_registry
 import llm_backend
@@ -2137,6 +2138,10 @@ async def run_job(job_id, job_data):
     # nomeia a coluna, e traduzir aqui e mais barato que uma migracao para
     # acomodar o vocabulario do upstream.
     await job_registry.marcar_job(job_id, status='running')
+    # O modelo de transcricao sobe na placa enquanto o job ainda baixa o video
+    # (ver `asr_residente.py`). Aqui e nao no `/api/process` para cobrir tambem
+    # o job retomado depois de um restart e o que esperava vaga na fila.
+    await asyncio.to_thread(asr_residente.garantir, "video")
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
     
     try:
@@ -2328,6 +2333,19 @@ async def get_config():
         "localLlm": None if BILLING_ENABLED else (
             llm_backend.describe() or _cascade_config()),
     }
+
+@app.post("/api/asr/aquecer")
+async def aquecer_transcricao():
+    """Sobe o modelo de transcricao na placa, se ainda nao estiver (24-set-2026).
+
+    O painel chama ao abrir e a cada poucos minutos enquanto esta aberto: e
+    esse sinal que segura o modelo carregado, e a falta dele por
+    `ASR_RESIDENTE_OCIOSO_MIN` que o solta. Nunca espera a carga -- um ping
+    curto e, se ninguem responder, o `Popen` do processo residente. Ver
+    `asr_residente.py`.
+    """
+    return {"estado": await asyncio.to_thread(asr_residente.garantir, "painel aberto")}
+
 
 async def _probe_youtube_quality(url: str) -> dict:
     """Run quality_probe.py in a worker thread; {} on any failure (fail-open)."""

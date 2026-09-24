@@ -16,12 +16,15 @@ class YouTubeAdapter(SourceAdapter):
     # O nome com que as extensoes de exportar cookies salvam o arquivo. Aceitar
     # os dois evita o passo "agora renomeie", que e um passo a mais para errar.
     cookie_file_alt = ("www.youtube.com_cookies.txt",)
+    # Audio e video vem separados (DASH): o audio chega antes e a transcricao
+    # comeca enquanto o video baixa. Ver `audio_primeiro.py`.
+    audio_primeiro = True
 
     @classmethod
     def matches(cls, raw: str) -> bool:
         return is_http_url(raw) and host_of(raw).endswith(HOSTS)
 
-    def fetch(self, raw: str, output_dir: str = ".") -> Fetched:
+    def fetch(self, raw: str, output_dir: str = ".", ao_audio=None) -> Fetched:
         # Import tardio: o `main` importa este pacote, e importa-lo de volta no
         # topo fecharia o ciclo.
         #
@@ -30,5 +33,6 @@ class YouTubeAdapter(SourceAdapter):
         # de bytes pagos, PROXY_ROUTE. Traze-la para ca daria conflito em todo
         # `git fetch upstream` -- exatamente o que as interfaces do §4 existem
         # para evitar (ver "Fluxo de git" no CLAUDE.md). O adapter e fino.
-        path, title = modulo_main().download_youtube_video(raw, output_dir)
+        extra = {"ao_audio": ao_audio} if ao_audio is not None else {}
+        path, title = modulo_main().download_youtube_video(raw, output_dir, **extra)
         return Fetched(path=path, title=title, kind=self.id)

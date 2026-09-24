@@ -25,6 +25,7 @@ import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
 import { apiFetch, apiJson, QuotaError } from './lib/api';
+import { API_BASE_URL } from './config';
 import { track } from './lib/analytics';
 import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 
@@ -177,6 +178,13 @@ const horaDaLinha = (linha) =>
 // agora esperada até o servidor responder, "vazia" viraria "preta para
 // sempre" se o backend não subir. Diz o que está acontecendo e, se demorar,
 // o que fazer.
+//
+// No site do Cloudflare (`build:site`) há uma causa a mais, e a mais provável
+// na primeira visita: o Chrome pergunta se o site pode falar com este
+// computador, e um "Bloquear" por engano deixa esta tela girando para sempre
+// sem erro nenhum. O servidor nunca fica sabendo -- só a tela pode dizer.
+const ABERTO_PELO_SITE = /^https?:\/\//.test(API_BASE_URL);
+
 function EsperandoServidor() {
   const [demorou, setDemorou] = useState(false);
   useEffect(() => {
@@ -194,6 +202,14 @@ function EsperandoServidor() {
             Logo depois de atualizar, o servidor leva alguns segundos para subir.
             Se passar de um minuto, confira se o Docker Desktop está aberto e rode
             atalhos\subir.bat.
+          </p>
+        )}
+        {demorou && ABERTO_PELO_SITE && (
+          <p className="text-xs text-muted leading-relaxed">
+            Este site é só a tela: quem processa é o programa neste computador.
+            Se o navegador perguntou se o site pode acessar apps e serviços deste
+            dispositivo, a resposta é Permitir. Se bloqueou, libere no ícone à
+            esquerda do endereço e recarregue a página.
           </p>
         )}
       </div>

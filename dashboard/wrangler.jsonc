@@ -1,0 +1,26 @@
+// O site no Cloudflare (24-set-2026): so o PAINEL, em arquivos estaticos.
+//
+// Nada do processamento roda aqui -- download, transcricao e render sao do
+// programa que roda no computador de quem abre o site (hoje o Docker; depois,
+// o ajudante). O painel publicado por este arquivo conversa com ele em
+// http://localhost:8000 (ver `.env.site` e o `build:site` do package.json).
+//
+// O Cloudflare le este arquivo a cada envio para a `main` (Workers Builds):
+//   Caminho (root directory):  /dashboard
+//   Build command:             npm ci && npm run build:site
+//   Deploy command:            npx wrangler deploy
+//
+// **O `name` tem de ser o nome do projeto no painel do Cloudflare.** O build
+// de la recusa o deploy se os dois divergirem; renomear um exige renomear o
+// outro.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "virtu-clips",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    // O painel navega por hash (#/account...), entao isto quase nunca atua;
+    // fica para que um endereco direto a uma rota nao vire 404.
+    "not_found_handling": "single-page-application"
+  }
+}

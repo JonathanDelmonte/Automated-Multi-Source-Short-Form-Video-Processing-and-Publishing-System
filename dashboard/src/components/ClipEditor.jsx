@@ -877,7 +877,9 @@ export default function ClipEditor({ jobId, clipIndex, clipTitle, onClose, onRer
             setRenderedFraming(data.framing || 'auto');
             setFraming(data.framing || 'auto');
             dispatch({ type: 'init', segments: data.recipe.segments.map((s) => ({ ...s })) });
-            setPreviewUrl(`${getApiUrl(data.new_video_url)}?t=${Date.now()}`);
+            // O `?t=` entra no getApiUrl, e nao depois dele: depois, com a auth
+            // ligada, colaria no valor do `mt` e o video responderia 404.
+            setPreviewUrl(getApiUrl(`${data.new_video_url}?t=${Date.now()}`));
             onRerendered?.(clipIndex, data);
             refreshMe();
         } catch (e) {

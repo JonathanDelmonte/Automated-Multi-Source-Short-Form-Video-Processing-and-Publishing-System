@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Loader2, Plus, AlertTriangle, RotateCcw, Film } from 'lucide-react';
 import { apiFetch, apiJson } from '../lib/api';
+import { getApiUrl } from '../config';
 
 // A tela de projetos: uma grade de cartoes, um por vídeo processado.
 //
@@ -158,8 +159,10 @@ export default function ProjectsGrid({ onOpen, onNew, onApagado, refreshKey = 0 
                     {capa ? (
                       // O proprio clipe como capa: `metadata` baixa so o
                       // cabecalho e o navegador desenha o primeiro quadro.
+                      // Pelo getApiUrl: no site o servidor nao e a origem da
+                      // pagina, e com a auth ligada falta o `mt` sem ele.
                       <video
-                        src={capa}
+                        src={getApiUrl(capa)}
                         preload="metadata"
                         muted
                         playsInline

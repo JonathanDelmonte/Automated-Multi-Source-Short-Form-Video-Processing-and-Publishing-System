@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Download, Trash2, Loader2, Plus, CheckCircle2, Youtube,
          Instagram, AlertTriangle, Send, Clock } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { getApiUrl } from '../config';
 import { CartaoDeTempo } from './OndeVaiOTempo';
 
 // A tela de publicação (Fase 3, bloco 3.5).
@@ -112,7 +113,9 @@ export default function PublicacoesTab() {
     // Download direto pelo navegador: o ZIP pode ter centenas de MB e passá-lo
     // por fetch() significaria carregá-lo inteiro na memória da aba antes de
     // salvar.
-    window.location.href = `/api/publicacoes/pacote?dia=${encodeURIComponent(dia)}`;
+    // Pelo `getApiUrl`: no site do Cloudflare o servidor nao e a mesma origem
+    // da pagina, e um caminho solto baixaria do Cloudflare (404).
+    window.location.href = getApiUrl(`/api/publicacoes/pacote?dia=${encodeURIComponent(dia)}`);
   };
 
   const publicar = () => acao(async () => {

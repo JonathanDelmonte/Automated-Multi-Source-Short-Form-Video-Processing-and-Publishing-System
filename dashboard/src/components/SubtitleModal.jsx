@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { getApiUrl } from '../config';
 import RemotionPreview from './RemotionPreview';
 import Modal from './ui/Modal';
 import SegmentedControl from './ui/SegmentedControl';
@@ -132,7 +133,9 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll,
             });
             const dados = await res.json();
             if (!res.ok) throw new Error(dados.detail || 'falhou');
-            setPreviewUrl(`${dados.new_video_url}?t=${Date.now()}`);
+            // Pelo getApiUrl: no site do Cloudflare o video nao mora na origem
+            // da pagina, e sem o `mt` a auth ligada responderia 404.
+            setPreviewUrl(getApiUrl(`${dados.new_video_url}?t=${Date.now()}`));
         } catch (e) {
             setTemplateErro(e.message);
         } finally {

@@ -1893,6 +1893,46 @@ ADR-011; o que importa ao mexer no codigo:
   (`model_env`); `tests/test_llm_cascade_gratis.py` falha se um provedor novo
   nascer sem ela.
 
+### O site no Cloudflare e so a tela (Fase 6, 24-set-2026)
+
+O autor quer abrir o programa de qualquer computador e ver a versao nova sem
+`atualizar.bat`. O painel agora e publicado no Cloudflare (Workers com arquivos
+estaticos, projeto `virtu-clips`) a cada envio para a `main`. **So o painel**:
+download, transcricao e render continuam no computador de quem abre o site.
+
+- **O site fala com `http://localhost:8000`, fixo** (`dashboard/.env.site`,
+  `npm run build:site`). Cada navegador fala com a propria maquina, entao o
+  mesmo site serve a todo computador que tiver o programa rodando. O `build`
+  comum nao muda: caminho relativo e o proxy do Vite.
+- **Processar na nuvem nao e o padrao, e o motivo e o YouTube**: ele recusa IP
+  de datacenter, e a saida seria cookie de conta -- risco de banimento que o
+  autor recusou ("so estou copiando um link"). Baixando pela internet de quem
+  usa, nao ha cookie nenhum. A nuvem fica como opcao para PC fraco, com limite
+  mensal (plano: Fase 6.3).
+- **O Chrome pede permissao uma vez** para o site acessar o que roda neste
+  computador (Local Network Access). `http://localhost` nao conta como conteudo
+  misto numa pagina https -- e origem "potencialmente confiavel" --, entao a
+  permissao e a unica barreira. Um "Bloquear" por engano deixa o painel girando
+  sem erro nenhum, e o servidor nunca fica sabendo: por isso a
+  `EsperandoServidor` explica a permissao quando a URL da API e absoluta.
+- **Toda URL do servidor passa pelo `getApiUrl`, sem excecao.** No site, um
+  caminho solto (`/videos/...`) vai ao Cloudflare e nao acha nada -- a capa do
+  projeto, a previa do template e o pacote do dia faziam isso. E o `?t=` que
+  fura o cache vai DENTRO do `getApiUrl`: depois dele, com a auth ligada,
+  colaria no valor do `mt`.
+- **O `name` do `wrangler.jsonc` e o nome do projeto no Cloudflare**; o build de
+  la recusa o deploy se os dois divergirem. No painel deles: caminho
+  `/dashboard`, build `npm ci && npm run build:site`, deploy
+  `npx wrangler deploy`.
+- **O `robots.txt` recusa todo rastreador.** O herdado convidava todos e
+  apontava para o sitemap do produto do upstream -- inofensivo em localhost,
+  errado com endereco publico (ADR-009).
+- **Pendente, e vem com o ajudante (Fase 6.2):** o servidor aceita qualquer
+  origem (o CORS reflete a que chegar) e o compose publica a porta em todas as
+  interfaces. A permissao do Chrome ja impede outro site de falar com ele sem a
+  pessoa deixar; a tranca de verdade e lista de origens, pareamento e
+  127.0.0.1.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

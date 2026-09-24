@@ -218,9 +218,12 @@ jobs:
         run: |
           & "$env:LOCALAPPDATA\Cortes\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
           # O desinstalador se copia para o temporario e segue de la: espera
-          # pelo efeito, nao pelo processo.
-          $fim = (Get-Date).AddSeconds(120)
-          while ((Test-Path "$env:LOCALAPPDATA\Cortes\versoes") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
+          # pelo efeito, nao pelo processo. E pelo ULTIMO efeito -- ele apaga
+          # a si mesmo no fim; o venv, com milhares de arquivos, ainda estava
+          # sendo apagado quando a pasta das versoes ja tinha sumido.
+          $fim = (Get-Date).AddSeconds(300)
+          while ((Test-Path "$env:LOCALAPPDATA\Cortes\unins000.exe") -and ((Get-Date) -lt $fim)) { Start-Sleep 2 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes\unins000.exe") { "o desinstalador nao terminou"; exit 1 }
           if (Test-Path "$env:LOCALAPPDATA\Cortes\versoes") { "o motor ficou para tras"; exit 1 }
           if (Test-Path "$env:LOCALAPPDATA\Cortes\venv") { "o venv ficou para tras"; exit 1 }
           if (-not (Test-Path "$env:LOCALAPPDATA\Cortes\dados")) { "os projetos sumiram"; exit 1 }
@@ -236,15 +239,21 @@ jobs:
             ajudante/saida/motor.zip
             ajudante/saida/versao.json
           if-no-files-found: ignore
+      # Numa pasta so: o upload-artifact recusa caminhos sem uma raiz comum
+      # (o temporario do runner e o AppData da pessoa).
+      - name: Juntar os registros
+        if: ${{ failure() }}
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\registros" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\inno.log", "$env:RUNNER_TEMP\e2e\motor.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\Cortes\dados\logs\*.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          Get-ChildItem "$env:RUNNER_TEMP\registros"
       - name: Guardar o que falhou
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: instalador-logs
-          path: |
-            ${{ runner.temp }}/inno.log
-            ${{ runner.temp }}/e2e/motor.log
-            ~/AppData/Local/Cortes/dados/logs/*.log
+          path: ${{ runner.temp }}/registros
           if-no-files-found: ignore
 
   publicar:

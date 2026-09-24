@@ -674,3 +674,92 @@ qual variável trocar, e não um job parado.
 medição da Fase 5 mostrar que um dos fallbacks escolhe cortes piores que o Gemini —
 aí ele desce na ordem, não sai.
 
+
+---
+
+## ADR-012 — O ajudante: o motor no Windows sem Docker, por usuário, e que se atualiza sozinho
+
+**Data:** 2026-09-24 · **Status:** aceita; provada no Windows do GitHub, falta o teste no PC do autor
+
+**Contexto.** Desde a Fase 6.1 o site é só a tela, e quem processa é o motor no
+computador de quem o abre — pelo motivo do YouTube, que recusa IP de datacenter
+(ver a Fase 6 no `PLANO-DE-ACAO.md`). Até aqui "o motor" era o Docker do autor:
+Docker Desktop, WSL 2, um `.env` à mão e 15 a 40 minutos de `docker compose
+build`. Para outra pessoa, isso não é instalar um programa, é montar um ambiente.
+O autor pediu um instalador de um clique, que use a placa de vídeo se houver e se
+atualize sozinho, e que o Docker dele continue funcionando.
+
+**Decisão.**
+
+1. **Python de verdade, instalado pelo `uv`, e não um executável congelado.**
+   PyInstaller com torch, mediapipe e ctranslate2 dá mais de 2 GB, *hooks* frágeis
+   e, a cada atualização, tudo de novo. O instalador (Inno Setup, grátis) traz só
+   o que não depende da máquina — o código (~1 MB zipado), o `uv`, o ffmpeg e o
+   deno — e o `instalar.ps1` baixa o resto: um CPython 3.11 só do Cortes (`uv
+   python install`, `--python-preference only-managed`, para nunca depender do
+   Python que a pessoa tiver), as bibliotecas (~350 MB) e, **só onde há placa
+   NVIDIA**, as de CUDA do whisper (~1 GB). A atualização passa a ser do código;
+   as bibliotecas só mudam quando a lista delas muda.
+   - **torch de CPU** (o do PyPI no Windows, ~200 MB contra ~2,5 GB). A placa fica
+     com o que mais pesa: o whisper (ctranslate2) e o NVENC do ffmpeg. O
+     TransNetV2 lê quadros de 48×27, que a CPU aguenta.
+   - **O YOLO (AGPL) não vai** (ADR-003): nem `ultralytics`, nem `torchvision`.
+2. **Por usuário, sem administrador** (`PrivilegesRequired=lowest`,
+   `%LOCALAPPDATA%\Cortes`): fora das pastas que o OneDrive sincroniza.
+   Desinstalar leva o programa e **deixa `dados\`** — são os cortes da pessoa.
+3. **Sem assinatura digital** (é paga). O Windows avisa na primeira vez, e o site
+   explica o "Mais informações → Executar assim mesmo". O SignPath Foundation
+   assina projetos abertos de graça; fica para quando houver usuários além do
+   círculo do autor.
+4. **O ajudante usa a porta 8001; a 8000 é do Docker.** No login os dois sobem
+   juntos e o ajudante quase sempre chega antes: na mesma porta, o container do
+   Docker morreria com "port is already allocated", em silêncio. O site procura a
+   8000 e depois a 8001, e quando o Docker atende o ajudante para o motor dele —
+   depois de terminar o job que estiver rodando. Só escuta em 127.0.0.1.
+5. **Cada versão numa pasta, e um arquivo diz qual vale** (`versoes\<versão>\` e
+   `atual.txt`). Trocar de versão é reescrever o arquivo (atômico), não renomear a
+   pasta do motor: no Windows um rename falha com qualquer arquivo aberto lá
+   dentro — o antivírus examinando o que acabou de ser extraído, por exemplo. O
+   atalho, o menu Iniciar e o início com o Windows chamam o `iniciar.py`, que a
+   atualização nunca troca e que cai na versão completa mais nova se o
+   `atual.txt` apontar para o nada.
+6. **A atualização verifica antes de trocar, e volta atrás sozinha.** De 6 em 6
+   horas o ajudante confere o GitHub Releases e prepara a versão nova sem parar
+   nada; troca só com a fila vazia e ninguém no painel há 5 minutos (o `/health`
+   diz as duas coisas). A troca é de outro processo, depois que o ajudante sai — o
+   Windows não deixaria o `uv` substituir o Pillow e o pystray que ele tem
+   carregados. A versão nova sobe numa porta de teste, com pastas temporárias, e
+   o `main.py` tem de importar. Não passou: não vira a atual, as dependências da
+   anterior voltam (os pinos são exatos) e ela não é tentada de novo.
+7. **Versão = contagem de commits da `main`.** Só cresce, e o Docker calcula a
+   mesma coisa pelo git (`versao_do_motor.py`): o site compara com a publicada e,
+   **só no Docker** — que se atualiza pelo `atualizar.bat` —, avisa quando o motor
+   ficou para trás.
+8. **Publicação pelo CI do Windows, e só quando o motor muda.** Com o motor e o
+   instalador verdes — instalar sem janela, processar um vídeo pelo motor
+   instalado, trocar para uma versão boa e voltar de uma quebrada, desinstalar —,
+   o instalador vai para o GitHub Releases. A impressão digital do conteúdo decide:
+   um commit de documentação ou do painel não publica nada e não reinicia o motor
+   de ninguém. Ficam as 5 versões mais novas.
+9. **Sob o ajudante, pedido que altera algo só vem de página autorizada**
+   (`CORTES_ORIGEM_ESTRITA`). O CORS decide quem lê a resposta, não quem manda o
+   pedido: um formulário de qualquer site disparava um `POST` simples no motor, e
+   o job rodava. Com a origem fora da lista, 403 antes do endpoint. Sem `Origin` é
+   programa, não navegador, e passa. O Docker não liga ainda: o painel aberto de
+   outro aparelho da rede passa pelo proxy do Vite com a origem daquele aparelho.
+
+**O que o CI não prova**, e fica para o teste no PC do autor (`COMO-EXECUTAR.md`):
+a placa de vídeo, o download do YouTube, a IA de verdade, o ícone na bandeja e o
+aviso do SmartScreen.
+
+**Consequências.** O repositório passa a ter um segundo caminho de execução que o
+Linux do CI não roda — daí o `windows.yml`, que custa ~10 minutos por envio.
+Instalar exige internet (o Python e as bibliotecas vêm na hora). E a pessoa ainda
+precisa de uma chave de IA: hoje, a do Gemini colada em Configurações, ou um
+`dados\.env` com as da cascata — pendente de uma forma mais simples.
+
+**Revisão se:** o `uv` deixar de publicar o CPython gerenciado para Windows; o
+tamanho das bibliotecas tornar a instalação inviável em conexão lenta (aí um
+instalador "completo", com tudo dentro, como segunda opção); ou o Mac e o Linux
+entrarem (Fase 6.4), quando a pasta, o atalho e o início com o sistema mudam de
+forma, e a estrutura de versões fica.

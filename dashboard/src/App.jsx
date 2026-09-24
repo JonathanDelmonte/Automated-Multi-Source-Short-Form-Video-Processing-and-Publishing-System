@@ -26,6 +26,8 @@ import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
 import { apiFetch, apiJson, QuotaError } from './lib/api';
 import { API_BASE_URL } from './config';
+import { URL_DO_INSTALADOR } from './lib/ajudante';
+import AvisoDoMotor from './components/AvisoDoMotor';
 import { track } from './lib/analytics';
 import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 
@@ -186,11 +188,61 @@ const horaDaLinha = (linha) =>
 const ABERTO_PELO_SITE = /^https?:\/\//.test(API_BASE_URL);
 
 function EsperandoServidor() {
+  // No site, quem chega pela primeira vez não tem motor nenhum: esperar os
+  // 15 s do Docker para dizer o que fazer seria 15 s olhando um "conectando"
+  // que nunca termina. Quem já tem o ajudante aberto não chega a ver isto --
+  // a config responde antes.
   const [demorou, setDemorou] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setDemorou(true), 15000);
+    const t = setTimeout(() => setDemorou(true), ABERTO_PELO_SITE ? 4000 : 15000);
     return () => clearTimeout(t);
   }, []);
+
+  if (ABERTO_PELO_SITE) {
+    return (
+      <div className="min-h-screen bg-paper flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-4">
+          <p className="flex items-center justify-center gap-2 text-sm text-ink2">
+            <Loader2 size={15} className="animate-spin text-brass" /> procurando o Cortes neste computador…
+          </p>
+          {demorou && (
+            <>
+              <p className="text-sm text-ink2 leading-relaxed">
+                Este site é só a tela. Quem baixa, transcreve e corta os vídeos é um
+                programa no seu computador, que usa a placa de vídeo se houver.
+              </p>
+              <a href={URL_DO_INSTALADOR} className="btn-primary px-4 py-2 text-sm inline-flex">
+                <Download size={15} /> Baixar o Cortes para Windows
+              </a>
+              <p className="text-xs text-muted leading-relaxed">
+                Abra o arquivo baixado: ele instala tudo sem pedir administrador (leva
+                alguns minutos) e abre este site sozinho. Se o Windows disser que
+                protegeu o computador, clique em “Mais informações” e depois em
+                “Executar assim mesmo”.
+              </p>
+              <div className="text-xs text-muted leading-relaxed space-y-1.5 text-left border-t border-rule pt-3">
+                <p>
+                  <span className="text-ink2">Já instalou?</span> Abra o Cortes pelo menu
+                  Iniciar; o ícone dele fica perto do relógio.
+                </p>
+                <p>
+                  <span className="text-ink2">O navegador perguntou</span> se este site pode
+                  acessar apps e serviços deste dispositivo? A resposta é Permitir. Se
+                  bloqueou, libere no ícone à esquerda do endereço e recarregue a página.
+                </p>
+                <p>
+                  <span className="text-ink2">Usa o Docker?</span> Abra o Docker Desktop ou
+                  rode atalhos\subir.bat.
+                </p>
+                <p>Mac e Linux ainda não têm o ajudante.</p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen bg-paper flex items-center justify-center p-6">
       <div className="max-w-sm text-center space-y-2">
@@ -202,14 +254,6 @@ function EsperandoServidor() {
             Logo depois de atualizar, o servidor leva alguns segundos para subir.
             Se passar de um minuto, confira se o Docker Desktop está aberto e rode
             atalhos\subir.bat.
-          </p>
-        )}
-        {demorou && ABERTO_PELO_SITE && (
-          <p className="text-xs text-muted leading-relaxed">
-            Este site é só a tela: quem processa é o programa neste computador.
-            Se o navegador perguntou se o site pode acessar apps e serviços deste
-            dispositivo, a resposta é Permitir. Se bloqueou, libere no ícone à
-            esquerda do endereço e recarregue a página.
           </p>
         )}
       </div>
@@ -226,7 +270,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, configCarregada, authAtiva, loading: authLoading } = useAuth();
+  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
   // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   // Só depois da config, e só com sessão quando a instalação tem senha: antes
   // disso o servidor responderia 401 a cada dois minutos.
@@ -1297,6 +1341,9 @@ function App() {
             </button>
           </div>
         )}
+
+        {/* O motor do Docker atrás do site (o ajudante se atualiza sozinho). */}
+        <AvisoDoMotor motor={motor} />
 
         {/* Session Recovery Banner */}
         {sessionRecovered && (

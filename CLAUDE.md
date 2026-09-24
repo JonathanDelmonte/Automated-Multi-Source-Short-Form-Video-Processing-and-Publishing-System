@@ -89,7 +89,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 011 |
+| `docs/DECISOES.md` | ADR-001 a 012 |
 | `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
@@ -1900,10 +1900,12 @@ O autor quer abrir o programa de qualquer computador e ver a versao nova sem
 estaticos, projeto `virtu-clips`) a cada envio para a `main`. **So o painel**:
 download, transcricao e render continuam no computador de quem abre o site.
 
-- **O site fala com `http://localhost:8000`, fixo** (`dashboard/.env.site`,
-  `npm run build:site`). Cada navegador fala com a propria maquina, entao o
-  mesmo site serve a todo computador que tiver o programa rodando. O `build`
-  comum nao muda: caminho relativo e o proxy do Vite.
+- **O site fala com `http://localhost`, fixo** (`dashboard/.env.site`,
+  `npm run build:site`): procura a 8000 (o Docker) e depois a 8001 (o
+  ajudante), e fica com a primeira que responder (`config.usarServidor`, pelo
+  AuthContext). Cada navegador fala com a propria maquina, entao o mesmo site
+  serve a todo computador que tiver o programa rodando. O `build` comum nao
+  muda: caminho relativo e o proxy do Vite.
 - **Processar na nuvem nao e o padrao, e o motivo e o YouTube**: ele recusa IP
   de datacenter, e a saida seria cookie de conta -- risco de banimento que o
   autor recusou ("so estou copiando um link"). Baixando pela internet de quem
@@ -1944,12 +1946,75 @@ download, transcricao e render continuam no computador de quem abre o site.
     API no boot.
   - **Renomear o projeto no Cloudflare exige trocar `SITE_OFICIAL`**; ha teste
     comparando com o `name` do `wrangler.jsonc`.
-- **Pendente, e vem com o ajudante (Fase 6.2):** CORS decide quem LE a
-  resposta, nao quem MANDA o pedido. Um formulario de outro site ainda dispara
-  um POST simples, sem preflight -- o `/api/process` recebe `Form` --, e o job
-  roda sem que ninguem leia a resposta. A permissao do Chrome ja barra isso
-  para quem a nega; a tranca inteira e pareamento e 127.0.0.1 (o compose ainda
-  publica a porta em todas as interfaces).
+- **CORS decide quem LE a resposta, nao quem MANDA o pedido.** Um formulario
+  de outro site dispara um POST simples, sem preflight -- o `/api/process`
+  recebe `Form` --, e o job rodava sem que ninguem lesse a resposta. Sob o
+  ajudante isso fechou (`CORTES_ORIGEM_ESTRITA`, ver a secao seguinte). **No
+  Docker continua aberto**, e a permissao do Chrome e a unica barreira: o
+  painel aberto de outro aparelho da rede chega pelo proxy do Vite com a
+  origem daquele aparelho, que nenhuma lista preve (e o compose publica a
+  porta em todas as interfaces).
+
+### O ajudante: o motor no Windows sem Docker (Fase 6.2, ADR-012)
+
+`ajudante/`: o instalador (`instalador.iss`, Inno Setup), o que ele roda no fim
+(`instalar.ps1`), o icone perto do relogio (`ajudante.py`), a atualizacao
+sozinha (`atualizacao.py`), o ponto de entrada fixo (`iniciar.py`) e o
+empacotador do CI (`empacotar.py`). O `windows.yml` instala o `.exe` de verdade
+num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
+
+- **Porta 8001; a 8000 e do Docker, e o ajudante nunca a ocupa.** No login os
+  dois sobem juntos e o ajudante chega antes: na mesma porta, o container
+  morreria com "port is already allocated", em silencio. Com o Docker
+  atendendo, o ajudante para o motor dele (terminando antes o job em curso).
+- **Cada versao numa pasta (`versoes\<versao>\`), e o `atual.txt` diz qual
+  vale.** Trocar e `os.replace` num arquivo, nunca rename de pasta: no Windows
+  o rename falha com qualquer arquivo aberto la dentro. O atalho, o menu
+  Iniciar, o inicio com o Windows e o desinstalador chamam o `iniciar.py`, que
+  a atualizacao nunca troca -- por isso ele e pequeno, stdlib pura, e repete
+  duas definicoes do `atualizacao.py` (ha teste comparando).
+- **`Caminhos.motor` e a versao que roda o arquivo**, nao uma pasta fixa: e
+  assim que a verificacao sobe o motor da versao NOVA.
+- **A troca verifica antes, e e de outro processo.** A versao nova sobe na
+  porta 8128 com pastas temporarias (`--verificar --temporario`) e o `main.py`
+  tem de importar; nao passou, as dependencias da anterior voltam (pinos
+  exatos) e ela entra em `dados\atualizacao.json` para nao ser tentada de
+  novo. O processo e outro porque a bandeja tem o Pillow e o pystray
+  carregados, e o Windows nao deixa o `uv` trocar uma DLL em uso.
+- **So troca com o motor livre**: nenhum job e ninguem no painel ha 5 min. O
+  `/health` diz as duas coisas (`jobs_ativos`, `ocioso_s`); `/health`,
+  `/api/config` e `/api/asr/aquecer` nao contam como atividade (o aquecer e o
+  painel ABERTO, nao alguem trabalhando).
+- **A versao e a contagem de commits da `main`.** O `empacotar.py` grava
+  `VERSAO`; o Docker calcula pelo git ao subir (`versao_do_motor.py`, com
+  `safe.directory` e recusando clone raso). O `/api/config` manda `motor`, e o
+  `AvisoDoMotor` do painel avisa -- so no Docker -- quando a publicada e mais
+  nova.
+- **O CI so publica quando o motor muda** (`conteudo` do `versao.json`, a
+  impressao digital sem a versao). Commit de documentacao nao reinicia o motor
+  de ninguem.
+- **`CORTES_ORIGEM_ESTRITA=1` sob o ajudante**: POST/PUT/PATCH/DELETE com
+  `Origin` fora de `origens.py` e 403 antes do endpoint. Sem `Origin` passa --
+  e programa, nao navegador.
+- **O `.env` da pessoa mora em `dados\.env`** e vence tudo menos `PROTEGIDAS`
+  (as pastas e o que o ajudante precisa): quem usa Docker copia o `.env` do
+  repositorio, e la o `OUTPUT_DIR` pode ser `/app/...`.
+- **Armadilhas que ja morderam:**
+  - no `.iss`, **nenhuma linha pode comecar com `#`** fora das diretivas: o
+    pre-processador leu `#13#10` (a quebra de linha do Pascal) como diretiva e
+    a compilacao abortou. Ha teste;
+  - no `instalar.ps1` (Windows PowerShell 5.1), a saida de `.exe` passa por
+    `Write-Host` com `$ErrorActionPreference = "Continue"` so dentro do
+    `Rodar`: com `Stop`, a primeira linha de progresso que o `uv` escreve no
+    stderr derruba o script;
+  - numa funcao do PowerShell, **a saida de um `.exe` vira parte do valor de
+    retorno** -- dai o `| Out-Host` no `Atualizar` do `windows.yml`;
+  - a libass abre a legenda com o `fopen` de 260 caracteres: o checkout do
+    GitHub passa disso, e o video de ponta a ponta trabalha numa pasta curta;
+  - o motor sob o ajudante nao espera o dreno de 20 s (`PROXY_DRAIN_SECONDS=0`):
+    aquilo e para o proxy de deploy em nuvem.
+- **O que o CI nao prova**: placa, YouTube, IA de verdade, o icone e o
+  SmartScreen. O roteiro para o PC do autor esta no `COMO-EXECUTAR.md`.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

@@ -136,3 +136,53 @@ def test_preflight_de_rede_privada_do_site_passa():
     })
     assert r.status_code == 200
     assert r.headers.get("access-control-allow-private-network") == "true"
+
+
+# --- origem estrita: quem MANDA pedido que altera algo (ajudante, Fase 6.2) ----
+
+@pytest.fixture
+def estrita(monkeypatch):
+    import app as app_module
+    monkeypatch.setattr(app_module, "_ORIGEM_ESTRITA", True)
+
+
+def test_formulario_de_outro_site_nao_dispara_nada(estrita):
+    """O ataque que o CORS nao pega: um POST simples, sem preflight. Ele
+    chegava ao endpoint -- a pagina so nao lia a resposta, e o job rodava."""
+    r = _pedir("POST", "/api/jobs/qualquer/cancel", {"Origin": "https://site-qualquer.com"})
+    assert r.status_code == 403
+    r = _pedir("DELETE", "/api/jobs/qualquer", {"Origin": "null"})  # iframe isolado, file://
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("cabecalhos", [
+    {"Origin": SITE},
+    {"Origin": "http://localhost:5175"},
+    {},  # sem Origin e programa (o ajudante, curl, MCP), nao navegador
+])
+def test_o_site_a_maquina_e_os_programas_passam(estrita, cabecalhos):
+    r = _pedir("POST", "/api/jobs/nao-existe/cancel", cabecalhos)
+    assert r.status_code != 403
+
+
+def test_leitura_continua_com_o_cors(estrita):
+    r = _pedir("GET", "/api/config", {"Origin": "https://site-qualquer.com"})
+    assert r.status_code == 200
+    assert "access-control-allow-origin" not in r.headers
+
+
+def test_sem_a_origem_estrita_nada_muda():
+    """O Docker nao liga: o painel aberto de outro aparelho da rede chega pelo
+    proxy do Vite com a origem daquele aparelho."""
+    import app as app_module
+    assert app_module._ORIGEM_ESTRITA is False
+    r = _pedir("POST", "/api/jobs/nao-existe/cancel", {"Origin": "http://192.168.0.10:5175"})
+    assert r.status_code != 403
+
+
+def test_o_ajudante_liga_a_origem_estrita(tmp_path):
+    import sys
+    sys.path.insert(0, str(RAIZ / "ajudante"))
+    import ajudante
+    env = ajudante.ambiente_do_motor(ajudante.Caminhos(tmp_path), False, {})
+    assert env["CORTES_ORIGEM_ESTRITA"] == "1"

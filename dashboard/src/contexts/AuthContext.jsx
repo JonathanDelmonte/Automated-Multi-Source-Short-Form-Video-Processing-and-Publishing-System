@@ -5,7 +5,7 @@
 // When billingEnabled is false the provider is inert and the app behaves as the
 // classic BYOK dashboard.
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { getApiUrl, setMediaToken } from '../config';
+import { getApiUrl, setMediaToken, SERVIDORES, usarServidor } from '../config';
 import { apiFetch, apiJson, getToken, setToken, clearToken } from '../lib/api';
 import { track, identify, reset as resetAnalytics } from '../lib/analytics';
 import { report as reportAttribution } from '../lib/attribution';
@@ -135,15 +135,22 @@ export function AuthProvider({ children }) {
       // de LLM e pedia uma (22-set-2026). É exatamente o que acontece logo
       // depois do `atualizar.bat`, quando o painel volta antes do backend -- e
       // um F5 "consertava", porque aí o backend já estava de pé.
+      //
+      // No site, a cada volta pergunta aos dois motores possiveis (Docker e
+      // ajudante, ver config.js), na ordem, e fica com o primeiro que
+      // responder.
       let cfg = null;
       for (let tentativa = 0; vivo && !cfg; tentativa += 1) {
-        try {
-          const res = await fetch(getApiUrl('/api/config'));
-          if (!res.ok) throw new Error(`config ${res.status}`);
-          cfg = await res.json();
-        } catch (_) {
-          await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** tentativa, 5000)));
+        for (const base of SERVIDORES) {
+          try {
+            const res = await fetch(`${base}/api/config`);
+            if (!res.ok) throw new Error(`config ${res.status}`);
+            cfg = await res.json();
+            usarServidor(base);
+            break;
+          } catch (_) { /* o proximo, ou a proxima volta */ }
         }
+        if (!cfg) await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** tentativa, 5000)));
       }
       if (!vivo) return;
       setConfig(cfg);
@@ -237,6 +244,9 @@ export function AuthProvider({ children }) {
   const value = {
     billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
+    // Versão e origem do motor (ajudante, docker, codigo): o AvisoDoMotor
+    // compara com a publicada.
+    motor: config.motor || null,
     configCarregada,
     googleAuthEnabled: config.googleAuthEnabled,
     jobRetentionSeconds: config.jobRetentionSeconds || null,

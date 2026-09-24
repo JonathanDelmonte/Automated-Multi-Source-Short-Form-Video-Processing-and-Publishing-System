@@ -103,6 +103,21 @@ def test_o_env_da_pessoa_vence(tmp_path):
     assert aj.ler_env_da_pessoa(aj.Caminhos(tmp_path / "nada")) == {}
 
 
+def test_o_env_copiado_do_docker_nao_muda_as_pastas(tmp_path):
+    """Quem usa o Docker copia o `.env` do repositorio para `dados\.env`, e
+    ali as pastas sao do container (`/app/...`)."""
+    c = aj.Caminhos(tmp_path)
+    docker = {"OUTPUT_DIR": "/app/output", "DATA_DIR": "/app/data", "PATH": "/usr/bin",
+              "CORTES_ORIGEM_ESTRITA": "0", "GROQ_API_KEY": "gsk_x", "WHISPER_DEVICE": "cuda"}
+    env = aj.ambiente_do_motor(c, True, {}, docker)
+    assert env["OUTPUT_DIR"] == str(c.dados / "output")
+    assert env["DATA_DIR"] == str(c.dados / "data")
+    assert env["PATH"].split(aj.os.pathsep)[0] == str(c.bin)
+    assert env["CORTES_ORIGEM_ESTRITA"] == "1"
+    # O resto e escolha da pessoa, e vale.
+    assert env["GROQ_API_KEY"] == "gsk_x" and env["WHISPER_DEVICE"] == "cuda"
+
+
 # --- quem atende a porta -------------------------------------------------------
 
 def _servidor(corpo: bytes, status=200):
@@ -139,6 +154,7 @@ class _MotorFalso:
     def __init__(self):
         self.vivo_ = False
         self.subidas = 0
+        self.paradas = 0
 
     def vivo(self):
         return self.vivo_
@@ -147,17 +163,32 @@ class _MotorFalso:
         self.subidas += 1
         self.vivo_ = True
 
+    def parar(self):
+        self.paradas += 1
+        self.vivo_ = False
+
 
 class _Mundo:
     def __init__(self):
-        self.porta = aj.LIVRE
+        self.porta = aj.LIVRE    # a 8001, do ajudante
+        self.docker = aj.LIVRE   # a 8000, do Docker
+        self.ocupado = False     # o nosso motor tem job rodando
         self.agora = 1000.0
 
 
 def _ajudante():
     motor, mundo = _MotorFalso(), _Mundo()
-    a = aj.Ajudante(motor, quem_atende_fn=lambda: mundo.porta, relogio=lambda: mundo.agora)
+    a = aj.Ajudante(motor, quem_atende_fn=lambda: mundo.porta,
+                    docker_fn=lambda: mundo.docker, ocupado_fn=lambda: mundo.ocupado,
+                    relogio=lambda: mundo.agora)
     return a, motor, mundo
+
+
+def test_o_ajudante_nunca_usa_a_porta_do_docker():
+    """No login os dois sobem juntos, e o ajudante quase sempre primeiro: na
+    mesma porta, o container do Docker morreria com "port is already
+    allocated", sem aviso nenhum."""
+    assert aj.PORTA != aj.PORTA_DO_DOCKER == 8000
 
 
 def test_porta_livre_sobe_o_motor_e_fica_pronto():
@@ -170,13 +201,47 @@ def test_porta_livre_sobe_o_motor_e_fica_pronto():
 
 def test_com_o_docker_atendendo_o_ajudante_nao_sobe_nada():
     a, motor, mundo = _ajudante()
-    mundo.porta = aj.MOTOR
+    mundo.docker = aj.MOTOR
     for _ in range(5):
         assert a.passo() == aj.DOCKER
     assert motor.subidas == 0
     # O autor desliga o Docker: na volta seguinte, o ajudante assume.
-    mundo.porta = aj.LIVRE
+    mundo.docker = aj.LIVRE
     assert a.passo() == aj.INICIANDO and motor.subidas == 1
+
+
+def test_o_docker_subindo_depois_o_ajudante_cede():
+    """O Docker Desktop leva um minuto para subir no login: o ajudante ja
+    estava de pe. Parado para ceder nao conta como falha."""
+    a, motor, mundo = _ajudante()
+    a.passo()
+    mundo.porta = aj.MOTOR
+    assert a.passo() == aj.PRONTO
+    mundo.docker = aj.MOTOR
+    assert a.passo() == aj.DOCKER
+    assert motor.paradas == 1 and not motor.vivo_ and a.falhas == 0
+    mundo.docker, mundo.porta = aj.LIVRE, aj.LIVRE
+    assert a.passo() == aj.INICIANDO and motor.subidas == 2
+
+
+def test_com_job_rodando_o_ajudante_termina_antes_de_ceder():
+    a, motor, mundo = _ajudante()
+    a.passo()
+    mundo.porta = aj.MOTOR
+    mundo.docker, mundo.ocupado = aj.MOTOR, True
+    for _ in range(3):
+        assert a.passo() == aj.PRONTO
+    assert motor.paradas == 0
+    mundo.ocupado = False
+    assert a.passo() == aj.DOCKER and motor.paradas == 1
+
+
+def test_outro_motor_na_porta_do_ajudante_e_respeitado():
+    """O motor de um ajudante que caiu sem leva-lo junto continua atendendo o
+    site; subir outro por cima so disputaria a porta."""
+    a, motor, mundo = _ajudante()
+    mundo.porta = aj.MOTOR
+    assert a.passo() == aj.DOCKER and motor.subidas == 0
 
 
 def test_porta_ocupada_por_outro_programa():

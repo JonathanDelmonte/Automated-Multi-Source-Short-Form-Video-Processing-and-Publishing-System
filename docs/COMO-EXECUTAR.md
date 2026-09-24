@@ -26,6 +26,68 @@ removeu as integrações que pediriam uma.
 
 ---
 
+## O jeito sem Docker: o ajudante
+
+Para usar o Cortes em outro computador — ou no seu, sem Docker —, nada deste guia é
+preciso: abra **https://virtu-clips.zirtuno.workers.dev**, clique em **Baixar o Cortes
+para Windows** e abra o arquivo. Ele instala o motor em `%LOCALAPPDATA%\Cortes` sem
+pedir administrador, usa a placa de vídeo se houver, fica como ícone perto do relógio,
+liga com o Windows e se atualiza sozinho. Os projetos ficam em
+`%LOCALAPPDATA%\Cortes\dados`, e desinstalar não os apaga. As decisões estão no
+ADR-012.
+
+O resto deste guia é o caminho do Docker, que continua valendo no seu computador. Os
+dois convivem: o Docker usa a porta 8000 e o ajudante a 8001, e quando o Docker está
+de pé o ajudante para o motor dele e deixa o site falar com o Docker.
+
+### Roteiro: testar o ajudante no seu PC (uma vez, antes de mandar para alguém)
+
+O Windows do GitHub prova a instalação, um vídeo inteiro no processador, a atualização
+sozinha e a desinstalação. Não prova a placa, o YouTube, o ícone nem o aviso do
+Windows — isso só numa máquina de verdade.
+
+1. **Feche o Docker Desktop** (ícone da baleia perto do relógio → *Quit Docker
+   Desktop*). Não é obrigatório, mas assim o teste é do ajudante e não do Docker.
+2. Abra o site. Em poucos segundos aparece "procurando o Cortes neste computador" e o
+   botão **Baixar o Cortes para Windows**. Clique.
+3. Abra o `Cortes-Ajudante.exe` baixado. **Confira:** o Windows mostra "O Windows
+   protegeu o computador"? *Mais informações* → *Executar assim mesmo* resolve?
+4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060
+   ela baixa também as bibliotecas de CUDA do whisper (~1 GB a mais), então pode
+   levar uns 10 minutos. A janela fecha sozinha.
+5. No fim, o site abre sozinho. **Confira:** o ícone "C" perto do relógio (talvez na
+   setinha ^); passando o mouse, **"Cortes: pronto (placa de vídeo)"**. Se disser
+   "(processador)", me mande o arquivo abaixo.
+
+   ```
+   %LOCALAPPDATA%\Cortes\dados\logs\instalacao.log
+   ```
+
+6. As chaves de IA. O jeito mais curto é copiar o `.env` do projeto para a pasta do
+   ajudante — ele ignora as pastas do Docker que estiverem lá. No **Prompt de
+   Comando**:
+
+   ```
+   copy "C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System\.env" "%LOCALAPPDATA%\Cortes\dados\.env"
+   ```
+
+   Depois, no ícone do relógio, **Sair**, e abra o Cortes de novo pelo menu Iniciar.
+7. Cole um link do YouTube e processe. **Confira:** o download funciona (sem cookies),
+   e no log do job a linha do whisper diz `cuda`. O tempo total deve ficar perto do
+   que o Docker faz com o mesmo vídeo.
+8. **A convivência:** abra o Docker Desktop e rode `atalhos\subir.bat`. **Confira:** o
+   container sobe normalmente, e em até um minuto o ícone do ajudante passa a dizer
+   "outro motor do Cortes (o Docker) já está atendendo". Recarregue o site (F5): ele
+   passa a falar com o Docker.
+
+Para tirar o ajudante: Configurações do Windows → Aplicativos → **Cortes (ajudante)**
+→ Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\Cortes\dados`.
+
+**O que me mandar de volta:** o que aconteceu em cada "Confira", e, se algo falhar,
+os arquivos da pasta `%LOCALAPPDATA%\Cortes\dados\logs`.
+
+---
+
 ## Antes de começar
 
 - **Docker Desktop** instalado **e aberto** — veja o quadro abaixo se ainda não

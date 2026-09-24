@@ -4,12 +4,14 @@ O site (https://virtu-clips.zirtuno.workers.dev) e so a tela. Quem baixa o
 video, transcreve e corta e o motor -- o mesmo `app.py` do Docker --, e o
 ajudante e quem o mantem de pe no Windows, sem Docker:
 
-- sobe o motor em 127.0.0.1:8000, num console ESCONDIDO que os filhos herdam
+- sobe o motor em 127.0.0.1:8001, num console ESCONDIDO que os filhos herdam
   (sem ele, cada ffmpeg do job piscaria uma janela preta na tela);
 - escolhe placa de video ou processador pelo `nvidia-smi`;
-- fica QUIETO quando outro motor ja atende a porta -- o Docker do autor. Subir
-  por cima seria disputar o endereco, e o Windows deixaria os dois de pe, com o
-  mais novo roubando os pedidos do outro;
+- CEDE ao Docker. A 8000 e do Docker, e o ajudante nunca a ocupa: no login os
+  dois sobem juntos, o ajudante quase sempre primeiro, e na mesma porta o
+  container do Docker morreria com "port is already allocated", em silencio.
+  O site procura a 8000 e depois a 8001; quando o Docker atende, o ajudante
+  para o motor dele (terminando antes o job que estiver rodando);
 - mora perto do relogio: abrir o site, abrir a pasta dos cortes, ver o log,
   iniciar com o Windows e sair.
 
@@ -37,7 +39,8 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 SITE = "https://virtu-clips.zirtuno.workers.dev"
-PORTA = 8000
+PORTA = 8001            # a do ajudante
+PORTA_DO_DOCKER = 8000  # a do Docker; o site procura esta primeiro
 NOME = "Cortes"
 
 NO_WINDOWS = os.name == "nt"
@@ -134,11 +137,21 @@ def ler_env_da_pessoa(c: Caminhos) -> dict:
     return valores
 
 
+# O que o `.env` da pessoa NAO muda: as pastas e o que o ajudante precisa
+# para funcionar. O caminho natural de quem ja usa o Docker e copiar o `.env`
+# do repositorio para `dados\.env` -- e la o `OUTPUT_DIR` pode ser `/app/...`,
+# uma pasta do container que no Windows nao existe.
+PROTEGIDAS = frozenset({
+    "PATH", "OUTPUT_DIR", "UPLOAD_DIR", "DATA_DIR", "HF_HOME",
+    "PYTHONUTF8", "PYTHONIOENCODING", "PROXY_DRAIN_SECONDS", "CORTES_ORIGEM_ESTRITA",
+})
+
+
 def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
                       da_pessoa: Optional[Mapping[str, str]] = None,
                       pastas_em: Optional[Path] = None) -> dict:
-    """As variaveis com que o motor sobe. O `.env` da pessoa vence tudo --
-    menos as pastas de uma verificacao (`pastas_em`), que nunca podem cair nos
+    """As variaveis com que o motor sobe. O `.env` da pessoa vence tudo menos
+    `PROTEGIDAS` -- e as pastas de uma verificacao (`pastas_em`) nunca caem nos
     projetos de verdade.
 
     Com placa mas SEM as DLLs de CUDA (instalado antes de a placa existir, ou
@@ -166,8 +179,12 @@ def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
         # sao para o proxy do deploy em nuvem tira-lo de rotacao. Aqui nao ha
         # proxy nenhum -- so a pessoa esperando o motor reiniciar.
         "PROXY_DRAIN_SECONDS": "0",
+        # Pedido que altera algo so de pagina autorizada (o site, localhost):
+        # sem isto, qualquer site aberto no navegador poderia mandar o motor
+        # desta maquina baixar e processar o que quisesse. Ver app.py.
+        "CORTES_ORIGEM_ESTRITA": "1",
     })
-    env.update(da_pessoa or {})
+    env.update({k: v for k, v in (da_pessoa or {}).items() if k not in PROTEGIDAS})
     if pastas_em is not None:
         env.update({"OUTPUT_DIR": str(pastas_em / "output"),
                     "UPLOAD_DIR": str(pastas_em / "uploads"),
@@ -180,7 +197,7 @@ def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
 LIVRE, MOTOR, OUTRO = "livre", "motor", "outro"
 
 
-def quem_atende(porta: int = PORTA, timeout: float = 2.0) -> str:
+def quem_atende(porta: int, timeout: float = 2.0) -> str:
     """`livre`, `motor` (um Cortes responde -- nosso ou o Docker) ou `outro`."""
     try:
         with socket.create_connection(("127.0.0.1", porta), timeout=timeout):
@@ -272,8 +289,8 @@ INICIANDO, PRONTO, DOCKER, OCUPADA, ERRO = (
 TEXTO_DO_ESTADO = {
     INICIANDO: "iniciando o motor...",
     PRONTO: "pronto",
-    DOCKER: "o Docker ja esta atendendo",
-    OCUPADA: "a porta 8000 esta ocupada por outro programa",
+    DOCKER: "outro motor do Cortes (o Docker) ja esta atendendo",
+    OCUPADA: f"a porta {PORTA} esta ocupada por outro programa",
     ERRO: "o motor nao subiu -- veja o log",
 }
 
@@ -283,15 +300,22 @@ ESPERAS_APOS_FALHA_S = (5, 15, 60, 300)
 class Ajudante:
     """A decisao de cada volta, separada da bandeja para o CI alcancar.
 
-    Nunca derruba quem ja atende: se a porta responde e nao e o nosso
-    processo, e o Docker (ou outro ajudante), e ficamos parados ate ela
-    liberar -- o autor desliga o Docker e, na volta seguinte, o ajudante sobe.
+    Nunca derruba quem ja atende. Com um motor do Cortes na 8000 (o Docker),
+    o nosso para -- depois de terminar o job que estiver rodando -- e fica
+    parado ate ela liberar: o autor desliga o Docker e, na volta seguinte, o
+    ajudante sobe. Um motor do Cortes que nao e o nosso na PROPRIA porta (o de
+    um ajudante que caiu sem leva-lo junto) tambem e respeitado: ele atende o
+    site do mesmo jeito.
     """
 
-    def __init__(self, motor, quem_atende_fn: Callable[[], str] = quem_atende,
+    def __init__(self, motor, quem_atende_fn: Callable[[], str] = lambda: quem_atende(PORTA),
+                 docker_fn: Callable[[], str] = lambda: quem_atende(PORTA_DO_DOCKER),
+                 ocupado_fn: Callable[[], bool] = lambda: False,
                  relogio: Callable[[], float] = time.monotonic):
         self.motor = motor
         self.quem_atende = quem_atende_fn
+        self.docker = docker_fn
+        self.ocupado = ocupado_fn
         self.relogio = relogio
         self.estado = INICIANDO
         self.falhas = 0
@@ -308,6 +332,17 @@ class Ajudante:
         if self.encerrado:
             return self.estado
         agora = self.relogio()
+        if self.docker() == MOTOR:
+            # O site procura a 8000 primeiro: com o Docker de pe, o nosso motor
+            # so disputaria placa e memoria.
+            if self.motor.vivo():
+                if self.ocupado():
+                    self.estado = PRONTO  # termina o que comecou, depois cede
+                    return self.estado
+                self.motor.parar()
+            self._subiu_em = None  # parar para ceder nao e falha
+            self.estado = DOCKER
+            return self.estado
         if self.motor.vivo():
             if self.quem_atende() == MOTOR:
                 self.estado, self.falhas = PRONTO, 0
@@ -439,7 +474,8 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
     at = _atualizacao()
     placa = tem_placa_nvidia()
     motor = Motor(c, lambda: ambiente_do_motor(c, placa, os.environ, ler_env_da_pessoa(c)))
-    ajudante = Ajudante(motor)
+    ajudante = Ajudante(
+        motor, ocupado_fn=lambda: (at.saude(PORTA) or {}).get("jobs_ativos", 0) > 0)
     parar = threading.Event()
     primeira_vez = not (c.dados / ".ja_abriu_o_site").exists()
     versao = at.versao_de(c.motor) or "de desenvolvimento"

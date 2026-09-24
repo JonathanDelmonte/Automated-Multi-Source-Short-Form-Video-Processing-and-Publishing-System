@@ -4,6 +4,7 @@ import job_metrics
 import job_registry
 import llm_backend
 import llm_cascade
+import versao_do_motor
 import sources
 import publishers
 import publish_queue
@@ -1938,11 +1939,20 @@ _cors_extra = {}
 # "conectando ao servidor".
 if "allow_private_network" in inspect.signature(CORSMiddleware.__init__).parameters:
     _cors_extra["allow_private_network"] = True
+_REGEX_DAS_ORIGENS = _origens.regex_das_origens(_origens.origens_do_painel())
+# CORS decide quem LE a resposta, nao quem MANDA o pedido: um formulario de
+# qualquer site dispara um POST simples, sem preflight, e o `/api/process`
+# recebe `Form`. Com a origem estrita, pedido que ALTERA alguma coisa e vem de
+# uma pagina fora da lista e recusado antes de chegar ao endpoint (ver
+# `tranca_da_api`). O ajudante liga (Fase 6.2): la o motor e so desta maquina,
+# e o computador e de alguem que nunca vai ler este comentario. O Docker nao,
+# por ora -- o painel aberto de OUTRO aparelho da rede passa pelo proxy do
+# Vite com a origem daquele aparelho, que nenhuma lista preve.
+_ORIGEM_ESTRITA = os.environ.get("CORTES_ORIGEM_ESTRITA") == "1"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cloud.settings.allowed_origins if BILLING_ENABLED else [],
-    allow_origin_regex=(None if BILLING_ENABLED
-                        else _origens.regex_das_origens(_origens.origens_do_painel())),
+    allow_origin_regex=None if BILLING_ENABLED else _REGEX_DAS_ORIGENS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2367,6 +2377,11 @@ def _cascade_config() -> Optional[dict]:
             "baseUrl": first["label"], "cascade": d}
 
 
+#: Uma vez, ao subir: e o codigo que SUBIU que importa, e nao o que um `git
+#: pull` sem reinicio deixou no disco (ver versao_do_motor.py).
+_MOTOR = versao_do_motor.descobrir()
+
+
 @app.get("/api/config")
 async def get_config():
     return {
@@ -2382,6 +2397,10 @@ async def get_config():
         # because the moment picker runs on an OpenAI-compatible server.
         "localLlm": None if BILLING_ENABLED else (
             llm_backend.describe() or _cascade_config()),
+        # A versao deste motor e de onde ele roda (ajudante, docker, codigo).
+        # O site compara com a versao publicada e, no Docker, que so se
+        # atualiza pelo atualizar.bat, avisa quando ficou para tras.
+        "motor": _MOTOR,
     }
 
 @app.post("/api/asr/aquecer")
@@ -5931,6 +5950,19 @@ async def media_token(request: Request):
             "ttl": media_auth.MEDIA_TOKEN_TTL_SECONDS}
 
 
+def _origem_recusada(request: Request) -> bool:
+    """Um pedido que altera algo, vindo de uma pagina fora da lista.
+
+    So o NAVEGADOR manda `Origin`, e manda em todo POST de outra origem: sem o
+    cabecalho e um programa (o ajudante, o `curl`, um cliente de MCP), que nao
+    e o ataque de que isto protege. Leitura (GET) fica com o CORS.
+    """
+    if not _ORIGEM_ESTRITA or request.method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    origem = request.headers.get("origin")
+    return origem is not None and not _origens.permitida(origem, _REGEX_DAS_ORIGENS)
+
+
 @app.middleware("http")
 async def tranca_da_api(request: Request, call_next):
     """A tranca, num lugar so.
@@ -5948,6 +5980,9 @@ async def tranca_da_api(request: Request, call_next):
     continuam servidos como sempre foram, e o `COMO-EXECUTAR.md` diz isso.
     """
     caminho = request.url.path
+    if _origem_recusada(request):
+        return JSONResponse(status_code=403,
+                            content={"detail": "Esta pagina nao pode usar o Cortes."})
     _marcar_atividade(caminho)
     # Os BYTES dos clipes (bloco 4.3). Ficam fora do ramo de `/api/` porque a
     # prova e outra: o player nao manda cabecalho, entao vale tambem o token

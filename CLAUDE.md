@@ -2012,7 +2012,15 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   - a libass abre a legenda com o `fopen` de 260 caracteres: o checkout do
     GitHub passa disso, e o video de ponta a ponta trabalha numa pasta curta;
   - o motor sob o ajudante nao espera o dreno de 20 s (`PROXY_DRAIN_SECONDS=0`):
-    aquilo e para o proxy de deploy em nuvem.
+    aquilo e para o proxy de deploy em nuvem;
+  - **so a ponta da `main` publica.** A release cria a tag no commit da volta,
+    e o GitHub trata uma tag num commit cujo `.github/workflows` difere do da
+    `main` como "criar workflow": exige `workflows: write`, que o
+    `GITHUB_TOKEN` nunca tem, e responde 403 "Resource not accessible by
+    integration" -- com `Contents: write` no token. Medido em 24-set-2026 pelo
+    cabecalho `X-Accepted-GitHub-Permissions` (`contents=write` OU
+    `contents=write,workflows=write`). Com um commit mais novo na `main`, a
+    volta dele publica, e as versoes saem em ordem.
 - **O que o CI nao prova**: placa, YouTube, IA de verdade, o icone e o
   SmartScreen. O roteiro para o PC do autor esta no `COMO-EXECUTAR.md`.
 

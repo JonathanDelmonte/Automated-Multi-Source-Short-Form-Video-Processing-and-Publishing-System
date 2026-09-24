@@ -226,3 +226,13 @@ def test_o_que_o_windows_le_sem_bom_fica_em_ascii(nome):
     texto = (AJUDANTE / nome).read_bytes()
     fora = sorted({chr(b) for b in texto if b > 127})
     assert not fora, f"{nome} tem caracteres fora do ASCII: {fora}"
+
+
+def test_so_a_ponta_da_main_publica():
+    """Tag num commit cujo .github/workflows difere do da main exige a
+    permissao `workflows`, que o GITHUB_TOKEN nunca tem: publicar um commit
+    que ja foi superado respondia 403 (24-set-2026)."""
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    publicar = fluxo.split("  publicar:", 1)[1]
+    assert 'commits/main" --jq .sha' in publicar
+    assert publicar.index("commits/main") < publicar.index("gh release create")

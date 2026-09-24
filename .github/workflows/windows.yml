@@ -271,9 +271,21 @@ jobs:
         with:
           name: Cortes-Ajudante
           path: novo
+      # So a PONTA da main publica. A release cria a tag no commit desta
+      # volta, e o GitHub trata uma tag num commit cujo .github/workflows
+      # difere do da main como "criar workflow" -- exige `workflows: write`,
+      # que o GITHUB_TOKEN nunca tem, e responde 403 "Resource not accessible
+      # by integration" (24-set-2026, medido: o cabecalho da resposta aceita
+      # `contents=write` OU `contents=write,workflows=write`). Com um commit
+      # mais novo na main, a volta DELE publica -- e as versoes saem em ordem.
       - name: Publicar se o motor mudou
         run: |
           set -euo pipefail
+          ponta=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [ "$ponta" != "$GITHUB_SHA" ]; then
+            echo "a main ja esta em ${ponta::7}: a volta dela publica"
+            exit 0
+          fi
           ls -l novo
           versao=$(jq -r .versao novo/versao.json)
           conteudo=$(jq -r .conteudo novo/versao.json)
@@ -292,8 +304,18 @@ jobs:
           # cedo mataria o printf de uma mensagem longa (SIGPIPE).
           titulo="${TITULO_DO_COMMIT%%$'\n'*}"
           notas=$(printf 'Motor do commit %s: %s\n\nBaixe o **Cortes-Ajudante.exe** e abra; ele instala o motor (sem Docker, sem administrador) e abre o site. Quem ja tem o ajudante recebe esta versao sozinho.\n' "${GITHUB_SHA::7}" "$titulo")
-          gh release create "ajudante-$versao" novo/Cortes-Ajudante.exe novo/motor.zip novo/versao.json \
-            --title "Cortes $versao" --notes "$notas" --target "$GITHUB_SHA" --latest
+          if ! gh release create "ajudante-$versao" novo/Cortes-Ajudante.exe novo/motor.zip novo/versao.json \
+               --title "Cortes $versao" --notes "$notas" --target "$GITHUB_SHA" --latest; then
+            # Um envio chegou entre a conferencia e a criacao: a volta dele
+            # publica. Qualquer outro motivo e erro de verdade.
+            ponta=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+            if [ "$ponta" != "$GITHUB_SHA" ]; then
+              echo "a main andou para ${ponta::7} no meio: a volta dela publica"
+              gh release delete "ajudante-$versao" --cleanup-tag --yes 2>/dev/null || true
+              exit 0
+            fi
+            exit 1
+          fi
           echo "publicada: ajudante-$versao"
       - name: Guardar so as 5 mais novas
         run: |

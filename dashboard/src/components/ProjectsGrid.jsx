@@ -103,7 +103,7 @@ export default function ProjectsGrid({ onOpen, onNew, onApagado, refreshKey = 0 
         <div className="flex items-end justify-between gap-3 flex-wrap">
           <div>
             <p className="eyebrow hidden sm:block">02 · projetos</p>
-            <h1 className="font-display lowercase text-2xl sm:text-3xl text-ink">
+            <h1 className="font-display uppercase tracking-wide text-2xl sm:text-3xl text-ink">
               seus projetos
             </h1>
           </div>

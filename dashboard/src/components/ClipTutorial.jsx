@@ -206,7 +206,7 @@ export default function ClipTutorial({ phase, jobStatus, onStart, onSkip, onDism
           }}
         >
           <p className="eyebrow mb-2">{String(step + 1).padStart(2, '0')} / {String(TOUR.length).padStart(2, '0')}</p>
-          <h3 className="font-display lowercase text-lg text-ink leading-tight mb-2">{spec.title}</h3>
+          <h3 className="font-display uppercase tracking-wide text-lg text-ink leading-tight mb-2">{spec.title}</h3>
           <p className="text-sm text-muted leading-relaxed mb-4">{spec.body}</p>
           <div className="flex flex-wrap items-center gap-2">
             {step > 0 && (

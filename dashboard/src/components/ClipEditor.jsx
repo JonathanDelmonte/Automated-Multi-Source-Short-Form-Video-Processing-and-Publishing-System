@@ -1103,7 +1103,7 @@ export default function ClipEditor({ jobId, clipIndex, clipTitle, onClose, onRer
             <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-rule flex items-start justify-between gap-4 shrink-0">
                 <div className="min-w-0">
                     <p className="eyebrow mb-1">EDITOR · CLIP {clipIndex + 1}</p>
-                    <h2 className="font-display lowercase text-xl sm:text-2xl text-ink truncate">edit clip</h2>
+                    <h2 className="font-display uppercase tracking-wide text-xl sm:text-2xl text-ink truncate">edit clip</h2>
                     {clipTitle && <p className="text-xs text-muted truncate mt-0.5">{clipTitle}</p>}
                     {/* Phone: the readouts move under the title — as a third
                         column they squeezed the title to two characters. */}

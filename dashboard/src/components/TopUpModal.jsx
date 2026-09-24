@@ -130,7 +130,7 @@ export default function TopUpModal({ onClose, required, remaining, context = 'wa
                   Most popular
                 </span>
               )}
-              <h3 className="font-display lowercase text-lg text-ink">{entry.plan}</h3>
+              <h3 className="font-display uppercase tracking-wide text-lg text-ink">{entry.plan}</h3>
               <p className="text-muted text-xs mb-3 lowercase">{PLAN_BLURBS[entry.plan] || ''}</p>
               <div className="mb-3 flex items-baseline gap-1.5">
                 <span className="font-display text-3xl text-ink tabular-nums">{fmt(entry.amount, entry.currency)}</span>

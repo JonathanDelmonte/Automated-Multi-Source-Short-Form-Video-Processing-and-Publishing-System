@@ -94,7 +94,7 @@ export default function McpConnectCard({ cloud = true, compact = false }) {
 
   return (
     <div className="card p-6" id="connect-agent">
-      <h3 className="font-display lowercase text-lg text-ink mb-1 flex items-center gap-2">
+      <h3 className="font-display uppercase tracking-wide text-lg text-ink mb-1 flex items-center gap-2">
         <Plug size={16} className="text-brass" /> Connect an agent
       </h3>
       <p className="text-muted text-sm mb-4">

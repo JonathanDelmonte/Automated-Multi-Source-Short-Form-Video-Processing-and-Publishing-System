@@ -14,7 +14,7 @@ x-log-com-teto: &log-com-teto
 services:
   backend:
     build: .
-    container_name: cortes-backend
+    container_name: virtu-clips-backend
     # `--reload` so aqui, no arquivo de desenvolvimento local: o `CMD` do
     # Dockerfile continua sem ele, que e o que producao roda. Com isto, editar
     # um `.py` passa a valer sozinho, como ja acontecia com `.jsx` no Vite --
@@ -51,7 +51,7 @@ services:
     build:
       context: ./dashboard
       target: dev
-    container_name: cortes-frontend
+    container_name: virtu-clips-frontend
     ports:
       - "5175:5173"
     environment:
@@ -78,7 +78,7 @@ services:
     build:
       context: .
       dockerfile: render-service/Dockerfile
-    container_name: cortes-renderer
+    container_name: virtu-clips-renderer
     ports:
       - "3100:3100"
     volumes:

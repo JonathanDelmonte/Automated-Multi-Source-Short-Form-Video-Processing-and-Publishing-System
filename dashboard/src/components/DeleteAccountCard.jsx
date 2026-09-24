@@ -70,7 +70,7 @@ export default function DeleteAccountCard() {
 
   return (
     <div className="card p-6">
-      <h3 className="font-display lowercase text-lg text-ink mb-1 flex items-center gap-2">
+      <h3 className="font-display uppercase tracking-wide text-lg text-ink mb-1 flex items-center gap-2">
         <Trash2 size={16} className="text-danger" /> Delete account
       </h3>
       <p className="text-muted text-sm">

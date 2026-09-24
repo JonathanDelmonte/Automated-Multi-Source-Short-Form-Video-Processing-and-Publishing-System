@@ -5982,7 +5982,7 @@ async def tranca_da_api(request: Request, call_next):
     caminho = request.url.path
     if _origem_recusada(request):
         return JSONResponse(status_code=403,
-                            content={"detail": "Esta pagina nao pode usar o Cortes."})
+                            content={"detail": "Esta pagina nao pode usar o Virtu Clips."})
     _marcar_atividade(caminho)
     # Os BYTES dos clipes (bloco 4.3). Ficam fora do ramo de `/api/` porque a
     # prova e outra: o player nao manda cabecalho, entao vale tambem o token

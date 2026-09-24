@@ -162,7 +162,7 @@ export default function PublicacoesTab() {
       <div className="max-w-3xl mx-auto space-y-6">
         <div>
           <p className="eyebrow">publicação</p>
-          <h2 className="font-display lowercase text-2xl sm:text-3xl text-ink">
+          <h2 className="font-display uppercase tracking-wide text-2xl sm:text-3xl text-ink">
             pacote e fila
           </h2>
         </div>

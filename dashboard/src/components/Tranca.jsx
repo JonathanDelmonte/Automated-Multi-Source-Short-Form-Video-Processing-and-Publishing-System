@@ -44,10 +44,8 @@ export default function Tranca() {
     <div className="min-h-screen bg-paper flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-11 h-11 rounded-card bg-brass text-brassink font-display text-xl">
-            C
-          </div>
-          <h1 className="font-display lowercase text-2xl text-ink">cortes</h1>
+          <img src="/virtu-clips.png" alt="" className="mx-auto h-24 w-auto" />
+          <h1 className="sr-only">Virtu Clips</h1>
           <p className="text-muted text-[13px] leading-snug">
             {primeiroAcesso
               ? 'Esta instalação ainda não tem dono. Escolha um e-mail e uma senha — o projeto que já está aqui continua sendo seu.'

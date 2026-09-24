@@ -1335,25 +1335,47 @@ seguinte.
   inicial; as duas fazem polling de 5s **so** enquanto ha job vivo.
 - `tests/test_job_control.py` cobre os tres endpoints e o marcador.
 
-### A marca e "Cortes", nao "OpenShorts" (13-set-2026)
+### A marca e Virtu Clips (24-set-2026)
 
-O painel dizia `openshorts` na barra lateral, os containers se chamavam
-`openshorts-*` e o `package.json` era `openshorts-app` -- num projeto que o
-autor quer proprio, isso e a marca de outra pessoa na tela dele todo dia.
-Trocado para **Cortes**, que ja era o `<title>` do `index.html`.
+OpenShorts (do upstream) virou **Cortes** em 13-set-2026 e **Virtu Clips** em
+24-set-2026, com a logo do autor: `marca/virtu-clips.png` -- VIRTU em letra
+liquida, a barra com o alfinete, CLIPS em caixa alta pesada e condensada --,
+branca sobre transparente. Feita para fundo escuro: todo lugar que a usa poe
+preto por baixo.
 
-O logo herdado saiu do cabecalho e virou a inicial em `font-display` sobre
-`brass`. **Nao inventei um logo**: tipografia tambem e marca, e esta ja e a do
-projeto (sistema Lumen). Um simbolo proprio e decisao do autor.
-
-**Ficou um resto, de proposito:** o favicon (`index.html:6`) ainda aponta para
-`/logo-openshorts.png`. Trocar exige um arquivo de imagem que so o autor pode
-decidir; apagar a linha deixaria o icone padrao do navegador, que e pior.
-Quando existir um logo proprio, e substituir o arquivo em `dashboard/public/`.
-
-`SESSION_KEY` continua `openshorts_session` -- e chave de localStorage,
-invisivel, e renomear so invalidaria as sessoes de quem ja usa sem ganho
-nenhum.
+- **Um lugar desenha, todos chamam: `ajudante/marca.py`.** O icone do
+  instalador e do atalho, as imagens do assistente do instalador, o icone da
+  bandeja e os arquivos do site. O site nao roda Python no build, entao
+  `dashboard/public/virtu-clips.png`, `favicon.png` e `apple-touch-icon.png`
+  sao versionados: trocou a logo, rode `python ajudante/marca.py` e versione o
+  resultado. `tests/test_marca.py` falha se eles ficarem para tras.
+- **Abaixo de 48 px a logo e borrao** (VIRTU e CLIPS empilhados num icone de
+  16 px teriam ~4 px de altura cada). Ali entra o monograma: um V na Anton, a
+  letra do CLIPS. O `.ico` leva os dois desenhos e o Windows escolhe pelo
+  tamanho -- ate 40 px o V, de 48 para cima a logo. O favicon do site e o V.
+- **O site e preto e branco.** O acento deixou de ser o latao laranja do
+  sistema herdado ("Lumen") e virou o branco: botao principal branco com letra
+  preta, como a logo. Os NOMES ficaram (`brass`, `brassink`...: ~170 usos);
+  mudou o valor, no `tokens.css` e no `tailwind.config.js`. Os titulos sao
+  Anton em caixa alta (`font-display uppercase tracking-wide`; era Instrument
+  Serif em minusculas), servida de `public/fonts/` como as outras, cortada do
+  `fonts/Anton-Regular.ttf` que o motor ja usa nos ganchos.
+- **Containers `virtu-clips-*`.** O nome do projeto do compose nao mudou,
+  entao o `up -d` do `atualizar.bat` recria os tres no lugar, sem sobrar os
+  antigos segurando as portas.
+- **Ficou o nome antigo no que ninguem ve, de proposito**, pelo mesmo motivo
+  do `SESSION_KEY` (que continua `openshorts_session`): renomear so teria
+  custo.
+  - as chaves de localStorage `cortes_*` e as variaveis `CORTES_*`;
+  - no ajudante, o mutex `Local\CortesAjudante` e o valor `Cortes` do
+    "iniciar com o Windows" (`ajudante.VALOR_NO_INICIO`): o instalador novo
+    SOBRESCREVE o valor de uma instalacao antiga, e dois valores seriam dois
+    ajudantes no login -- o segundo so abriria o site;
+  - `cortes-app` no `dashboard/package.json`: o `atalhos\atualizar.bat` manda
+    reconstruir a imagem (40 min) quando um `package.json` muda;
+  - o template semeado "Padrao Cortes": o seed procura pelo NOME, e renomear
+    criaria uma segunda linha em todo banco que ja existe. E "cortes" ali e o
+    substantivo comum.
 
 ### GPU: sao dois passos, e os atalhos dao os dois
 

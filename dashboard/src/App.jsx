@@ -202,8 +202,11 @@ function EsperandoServidor() {
     return (
       <div className="min-h-screen bg-paper flex items-center justify-center p-6">
         <div className="max-w-md text-center space-y-4">
+          {/* A primeira coisa que quem chega pelo site vê: a marca, antes de
+              qualquer explicação. */}
+          <img src="/virtu-clips.png" alt="Virtu Clips" className="mx-auto h-24 w-auto mb-2" />
           <p className="flex items-center justify-center gap-2 text-sm text-ink2">
-            <Loader2 size={15} className="animate-spin text-brass" /> procurando o Cortes neste computador…
+            <Loader2 size={15} className="animate-spin text-brass" /> procurando o Virtu Clips neste computador…
           </p>
           {demorou && (
             <>
@@ -212,7 +215,7 @@ function EsperandoServidor() {
                 programa no seu computador, que usa a placa de vídeo se houver.
               </p>
               <a href={URL_DO_INSTALADOR} className="btn-primary px-4 py-2 text-sm inline-flex">
-                <Download size={15} /> Baixar o Cortes para Windows
+                <Download size={15} /> Baixar o Virtu Clips para Windows
               </a>
               <p className="text-xs text-muted leading-relaxed">
                 Abra o arquivo baixado: ele instala tudo sem pedir administrador (leva
@@ -222,7 +225,7 @@ function EsperandoServidor() {
               </p>
               <div className="text-xs text-muted leading-relaxed space-y-1.5 text-left border-t border-rule pt-3">
                 <p>
-                  <span className="text-ink2">Já instalou?</span> Abra o Cortes pelo menu
+                  <span className="text-ink2">Já instalou?</span> Abra o Virtu Clips pelo menu
                   Iniciar; o ícone dele fica perto do relógio.
                 </p>
                 <p>
@@ -550,7 +553,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `cortes_${(jobId || '').slice(0, 8)}.zip`;
+      a.download = `virtu-clips_${(jobId || '').slice(0, 8)}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1070,11 +1073,11 @@ function App() {
   // entirely — an unlabelled 80px rail ate a fifth of a phone screen.
   const Sidebar = () => (
     <div className="hidden md:flex w-20 lg:w-64 bg-paper2 border-r border-rule flex-col h-full shrink-0 transition-all duration-300">
-      <a href="#app" className="p-6 flex items-center gap-3" title="início">
-        <div className="w-8 h-8 bg-paper3 rounded-input flex items-center justify-center shrink-0 overflow-hidden border border-rule">
-          <span className="w-full h-full flex items-center justify-center font-display text-brass text-sm">C</span>
-        </div>
-        <span className="font-display lowercase text-lg text-ink hidden lg:block">cortes</span>
+      {/* A marca: a logo inteira quando a barra tem rótulo (lg), e o V dela
+          no trilho estreito (md), onde a logo seria um borrão de 32 px. */}
+      <a href="#app" className="p-6 pb-4 flex items-center" title="início">
+        <img src="/favicon.png" alt="Virtu Clips" className="w-8 h-8 rounded-input shrink-0 lg:hidden" />
+        <img src="/virtu-clips.png" alt="Virtu Clips" className="hidden lg:block h-16 w-auto" />
       </a>
 
       <nav className="flex-1 px-4 py-4 space-y-1">
@@ -1125,11 +1128,8 @@ function App() {
       />
       <div className="relative w-[17rem] max-w-[82vw] h-full bg-paper2 border-r border-rule flex flex-col animate-slide-in-left">
         <div className="flex items-center justify-between px-5 h-14 border-b border-rule shrink-0">
-          <a href="#app" className="flex items-center gap-2.5" onClick={() => setNavOpen(false)}>
-            <div className="w-7 h-7 bg-paper3 rounded-input overflow-hidden border border-rule shrink-0">
-              <span className="w-full h-full flex items-center justify-center font-display text-brass text-sm">C</span>
-            </div>
-            <span className="font-display lowercase text-lg text-ink">cortes</span>
+          <a href="#app" className="flex items-center" onClick={() => setNavOpen(false)}>
+            <img src="/virtu-clips.png" alt="Virtu Clips" className="h-10 w-auto" />
           </a>
           <button
             onClick={() => setNavOpen(false)}
@@ -1249,8 +1249,8 @@ function App() {
             >
               <Menu size={20} />
             </button>
-            <span data-tutorial="nav-clips" className="md:hidden font-display lowercase text-base text-ink truncate">
-              {activeNav?.label || 'cortes'}
+            <span data-tutorial="nav-clips" className="md:hidden font-display uppercase tracking-wide text-base text-ink truncate">
+              {activeNav?.label || 'Virtu Clips'}
             </span>
             {/* Dentro de um projeto, o que falta e VOLTAR -- o unico botao
                 aqui dizia "New Project", que cria em vez de voltar, e nao
@@ -1329,7 +1329,7 @@ function App() {
               <div className="min-w-0">
                 <span className="font-medium text-ink">Required API keys missing.</span>{' '}
                 <span className="text-muted">
-                  Defina uma chave de API para usar o Cortes.
+                  Defina uma chave de API para usar o Virtu Clips.
                 </span>
               </div>
             </div>
@@ -1375,7 +1375,7 @@ function App() {
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">
                 <div>
                   <p className="eyebrow mb-1.5">07 · SETTINGS</p>
-                  <h1 className="font-display lowercase text-2xl text-ink">Settings</h1>
+                  <h1 className="font-display uppercase tracking-wide text-2xl text-ink">Settings</h1>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted mt-1">
                   <Shield size={12} className="text-ok shrink-0" /> Privacy: keys only live in your browser (sent to backend just to process)
@@ -1441,7 +1441,7 @@ function App() {
                   <p className="eyebrow flex items-center gap-2">
                     <Bot size={12} /> 03 · AI AGENT · AUTONOMOUS SKILL
                   </p>
-                  <h1 className="font-display lowercase text-3xl md:text-4xl text-ink">
+                  <h1 className="font-display uppercase tracking-wide text-3xl md:text-4xl text-ink">
                     Your Personal Clipping Team
                   </h1>
                   <p className="text-muted text-base md:text-lg leading-relaxed max-w-2xl">
@@ -1546,7 +1546,7 @@ function App() {
               <div className="max-w-xl w-full text-center space-y-5 sm:space-y-8">
                 <div className="space-y-2.5 sm:space-y-4">
                   <p className="eyebrow hidden sm:block">01 · CLIP GENERATOR</p>
-                  <h1 className="font-display lowercase text-3xl sm:text-4xl md:text-5xl text-ink">
+                  <h1 className="font-display uppercase tracking-wide text-3xl sm:text-4xl md:text-5xl text-ink">
                     Create Viral Shorts
                   </h1>
                   <p className="text-muted text-[15px] sm:text-lg leading-snug sm:leading-normal max-w-sm sm:max-w-none mx-auto">
@@ -1728,7 +1728,7 @@ function App() {
                     below. Wrapping them all together dropped a lone half-width
                     "schedule week" pill under the title on a phone. */}
                 <div className="mb-4 sm:mb-6 shrink-0 space-y-3">
-                  <h2 className="font-display lowercase text-lg sm:text-xl text-ink flex flex-wrap items-center gap-2">
+                  <h2 className="font-display uppercase tracking-wide text-lg sm:text-xl text-ink flex flex-wrap items-center gap-2">
                     <span className="mr-auto">Generated Shorts</span>
                     {results?.clips?.length > 0 && (
                       <span className="readout bg-paper3 px-2.5 py-1 rounded-full">
@@ -1860,7 +1860,7 @@ function App() {
       >
         <div className="space-y-4">
           <p className="text-sm text-muted">
-            O Cortes precisa de uma chave de <strong className="text-ink2">LLM</strong>. Groq e Gemini têm camada gratuita.
+            O Virtu Clips precisa de uma chave de <strong className="text-ink2">LLM</strong>. Groq e Gemini têm camada gratuita.
           </p>
 
           {/* Gemini block */}

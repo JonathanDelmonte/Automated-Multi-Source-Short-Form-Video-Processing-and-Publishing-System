@@ -1,0 +1,5 @@
+# So com placa NVIDIA: as bibliotecas de CUDA que o whisper (ctranslate2)
+# carrega em tempo de execucao -- as mesmas faixas do `GPU=1` do Dockerfile.
+# O driver vem da propria placa; isto e so o lado do programa.
+nvidia-cublas-cu12<13
+nvidia-cudnn-cu12>=9,<10

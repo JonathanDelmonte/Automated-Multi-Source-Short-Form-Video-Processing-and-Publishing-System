@@ -50,8 +50,11 @@ import layout_ranges
 load_dotenv()
 
 # Constants
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "output"
+# Relativas por padrao, como sempre foram (no Docker, dentro de /app). O
+# ajudante do Windows (Fase 6.2) aponta as duas para fora da pasta do codigo:
+# a atualizacao sozinha troca o codigo inteiro, e os projetos nao podem ir junto.
+UPLOAD_DIR = (os.environ.get("UPLOAD_DIR") or "").strip() or "uploads"
+OUTPUT_DIR = (os.environ.get("OUTPUT_DIR") or "").strip() or "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -2093,7 +2096,11 @@ def enqueue_output(out, job_id):
     """Reads output from a subprocess and appends it to jobs logs."""
     try:
         for line in iter(out.readline, b''):
-            decoded_line = _scrub_secrets(line.decode('utf-8').strip())
+            # `replace` e nao o estrito: um byte fora do UTF-8 (a saida de um
+            # ffmpeg no Windows, um nome de arquivo) levantava aqui, o laco
+            # acabava e ninguem mais esvaziava o cano -- o `main.py` travava na
+            # proxima escrita, com o job "processando" para sempre.
+            decoded_line = _scrub_secrets(line.decode('utf-8', 'replace').strip())
             if decoded_line:
                 # Internal marker from main.py's downloader, not a log line.
                 # Internal marker: a clip finished its whole chain and this is
@@ -3055,9 +3062,33 @@ def _terminar_processo(process) -> None:
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            _sinalizar_grupo(process, signal.SIGKILL)
+            # `signal.SIGKILL` nao existe no Windows: avaliado ali, levantava
+            # antes de chegar ao `_sinalizar_grupo`.
+            _sinalizar_grupo(process, _SIGKILL)
     except Exception as e:
         print(f"⚠️ Não consegui encerrar o processo do job: {e}")
+
+
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+_NO_WINDOWS = os.name == "nt"
+
+
+def _derrubar_arvore_no_windows(process) -> None:
+    """O equivalente do `killpg` no Windows, que nao tem grupo de processos.
+
+    `taskkill /T` segue a arvore pelo processo pai -- e por isso tem de vir
+    ANTES de qualquer `terminate()`: com o `main.py` morto, os ffmpeg ficam sem
+    pai vivo e o `/T` nao os acha mais. No Windows isso importa em dobro, porque
+    arquivo aberto nao se apaga: um ffmpeg orfao seguraria o video e o "apagar
+    projeto" responderia que nao conseguiu.
+    """
+    subprocess.run(
+        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if process.poll() is None:
+        process.kill()
 
 
 def _sinalizar_grupo(process, sinal) -> None:
@@ -3067,8 +3098,12 @@ def _sinalizar_grupo(process, sinal) -> None:
     o unico jeito de alcancar os netos: o `main.py` morto nao repassa sinal a
     ninguem. Sem isto, apagar um projeto em andamento deixava um ffmpeg orfao
     gravando na pasta recem-apagada -- o arquivo que "voltava" depois.
-    Sem grupo (Windows, ou um processo de teste), cai no sinal so para ele.
+    Sem grupo (um processo de teste), cai no sinal so para ele. No Windows, a
+    arvore inteira cai de uma vez (`_derrubar_arvore_no_windows`).
     """
+    if _NO_WINDOWS:
+        _derrubar_arvore_no_windows(process)
+        return
     try:
         grupo = os.getpgid(process.pid)
         # So o grupo que o proprio job lidera. Um processo que nao nasceu com
@@ -3078,7 +3113,7 @@ def _sinalizar_grupo(process, sinal) -> None:
             raise PermissionError("processo sem grupo proprio")
         os.killpg(grupo, sinal)
     except (AttributeError, ProcessLookupError, PermissionError, OSError):
-        if sinal == signal.SIGKILL:
+        if sinal == _SIGKILL:
             process.kill()
         else:
             process.terminate()

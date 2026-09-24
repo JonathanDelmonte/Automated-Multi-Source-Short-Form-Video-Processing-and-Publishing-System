@@ -1,0 +1,34 @@
+# O motor no Windows, sem Docker (ajudante, Fase 6.2, 24-set-2026).
+#
+# As MESMAS versoes do requirements.txt -- tests/test_ajudante.py compara as
+# duas listas --, menos o que nao se quer no computador de quem instala:
+#
+# - ultralytics e torchvision: o YOLO e AGPL e fica desligado por padrao
+#   (ADR-003); so o `FACE_TRACKER=yolo` os importa, e o ajudante nao liga isso.
+# - torch: o do PyPI no Windows ja e o de CPU, ~200 MB contra ~2,5 GB do de
+#   CUDA. A placa fica com o que mais pesa -- o whisper (ctranslate2, ver
+#   requirements-windows-gpu.txt) e o NVENC do ffmpeg --, e o TransNetV2 le
+#   quadros de 48x27, que a CPU aguenta.
+#
+# E soma o `[default]` do yt-dlp: e ele que traz o yt-dlp-ejs, com que o deno
+# resolve o desafio de JavaScript do YouTube (no Docker vem pelo Dockerfile).
+scenedetect==0.7
+transnetv2-pytorch==1.0.5
+torch==2.11.0
+tqdm==4.67.3
+yt-dlp[default]
+faster-whisper==1.2.1
+py3langid==0.3.0
+google-genai==1.75.0
+python-dotenv==1.2.2
+mediapipe==0.10.14
+fastapi==0.136.1
+uvicorn==0.46.0
+watchfiles==1.2.0
+python-multipart==0.0.27
+httpx==0.28.1
+Pillow==12.2.0
+beautifulsoup4==4.14.3
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+alembic==1.20.0

@@ -32,6 +32,16 @@ THUMB_FONT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "
 TEXT_POSITIONS = ("left", "right", "top", "bottom")
 
 
+def _pasta_de_saida() -> str:
+    """A mesma pasta que o `app.py` serve em /thumbnails (`OUTPUT_DIR`).
+
+    Era "output" fixo: com o `OUTPUT_DIR` apontado para fora do codigo (o
+    ajudante do Windows faz isso), a miniatura seria gravada num lugar e
+    procurada noutro.
+    """
+    return (os.environ.get("OUTPUT_DIR") or "").strip() or "output"
+
+
 def _parse_json(text):
     """Gemini JSON, tolerant of code fences and prose around the object."""
     text = (text or "").strip()
@@ -265,7 +275,7 @@ def extract_face_frames(video_path, session_id, n=5, samples=40):
     import cv2
     from main import detect_face_candidates
 
-    out_dir = os.path.join("output", "thumbnails", session_id, "frames")
+    out_dir = os.path.join(_pasta_de_saida(), "thumbnails", session_id, "frames")
     os.makedirs(out_dir, exist_ok=True)
 
     cap = cv2.VideoCapture(video_path)
@@ -661,7 +671,7 @@ def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_imag
     Returns [{"url", "text", "why"}] (only the ones that rendered).
     """
     client = genai.Client(api_key=api_key)
-    output_dir = os.path.join("output", "thumbnails", session_id)
+    output_dir = os.path.join(_pasta_de_saida(), "thumbnails", session_id)
     os.makedirs(output_dir, exist_ok=True)
 
     # References travel as immutable byte parts: one PIL Image shared by the

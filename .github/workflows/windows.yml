@@ -1,0 +1,61 @@
+name: Windows
+
+# O motor fora do Docker, no Windows (ajudante, Fase 6.2, 24-set-2026).
+#
+# O CI de sempre (ci.yml) roda no Linux e, de proposito, sem torch, mediapipe
+# nem whisper. Este instala o motor INTEIRO no Windows, como o ajudante vai
+# instalar, e processa um video do comeco ao fim (ajudante/ponta_a_ponta.py):
+# fala gerada pelo proprio Windows, whisper em CPU, deteccao por um LLM falso,
+# corte, reenquadramento e legenda. Depois cancela um job no meio e apaga o
+# projeto -- no Windows, um ffmpeg orfao seguraria o arquivo e o apagar falharia.
+#
+# O que ele NAO prova: placa de video, download do YouTube e IA de verdade.
+# Esses ficam para o teste no PC do autor (docs/COMO-EXECUTAR.md).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  motor-no-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # ffmpeg do Chocolatey (o build "essentials" do gyan.dev, com libass e
+      # libx264). O instalador do ajudante fixa a versao; aqui basta ter um.
+      - name: ffmpeg
+        run: choco install ffmpeg -y --no-progress
+      - name: Dependencias do motor
+        id: deps
+        run: |
+          python -m pip install --upgrade pip uv
+          uv pip install --system -r ajudante/requirements-windows.txt pytest
+      - name: Versoes
+        run: |
+          ffmpeg -hide_banner -version | Select-Object -First 1
+          python -c "import torch, mediapipe, faster_whisper, ctranslate2; print('torch', torch.__version__, '| mediapipe', mediapipe.__version__, '| ctranslate2', ctranslate2.__version__)"
+      - name: Um video do comeco ao fim
+        run: python ajudante/ponta_a_ponta.py
+      # Roda mesmo com o video vermelho: os dois sinais sao independentes, e
+      # saber so de um deles numa volta de 15 minutos custa a volta seguinte.
+      - name: Testes
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pytest tests/ -q -p no:cacheprovider
+      # O log do motor e o video de entrada de uma volta que falhou: sem eles,
+      # a proxima tentativa seria palpite.
+      - name: Guardar o que falhou
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponta-a-ponta
+          path: |
+            output/ponta-a-ponta-*/motor.log
+            output/ponta-a-ponta-*/output/**/*.log
+          if-no-files-found: ignore

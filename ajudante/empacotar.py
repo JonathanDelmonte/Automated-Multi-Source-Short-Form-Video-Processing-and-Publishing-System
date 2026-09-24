@@ -45,9 +45,16 @@ from atualizacao import MARCA_COMPLETA, assinatura_das_dependencias  # noqa: E40
 FORA = (
     "dashboard/", "docs/", "tests/", "examples/", "ops/", ".github/",
     "atalhos/", ".claude/", "screenshots/", "remotion/", "render-service/",
-    "ajudante/pacote/", "ajudante/saida/",
+    "cli/", "skills/", "ajudante/pacote/", "ajudante/saida/",
 )
-FORA_EXTENSOES = (".mp4", ".mov", ".gif", ".iss")
+# `.md` tambem: o CLAUDE.md e o README mudam a toda hora e o motor nao le
+# nenhum dos dois. Dentro do pacote, cada mudanca deles viraria uma versao
+# nova -- e todo ajudante instalado reiniciaria o motor por causa de texto.
+FORA_EXTENSOES = (".mp4", ".mov", ".gif", ".iss", ".md")
+# Da raiz, o que so o Docker e o GitHub leem. LICENSE e NOTICE ficam: a
+# licenca manda acompanhar o codigo que se distribui.
+FORA_DA_RAIZ = (".dockerignore", ".env.example", ".gitignore", "Dockerfile",
+                "docker-compose", "requirements.txt", "glama.json", "server.json")
 
 BINARIOS = ("uv.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe")
 
@@ -55,7 +62,8 @@ BINARIOS = ("uv.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe")
 def arquivos_do_motor(rastreados: list) -> list:
     return sorted(
         a for a in rastreados
-        if not a.startswith(FORA) and not a.endswith(FORA_EXTENSOES))
+        if not a.startswith(FORA) and not a.endswith(FORA_EXTENSOES)
+        and not ("/" not in a and a.startswith(FORA_DA_RAIZ)))
 
 
 def rastreados() -> list:

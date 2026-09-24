@@ -123,11 +123,26 @@ def test_o_pacote_leva_o_motor_e_deixa_o_resto():
         ".github/workflows/ci.yml", "atalhos/subir.bat", "screenshots/a.png",
         "remotion/src/x.tsx", "render-service/server.js", "demo-openshorts.mp4",
         "churchil_queen_vertical.gif", "ajudante/instalador.iss",
+        # o que so o Docker, o GitHub e quem le o repositorio usam
+        "CLAUDE.md", "README.md", "design.md", "skills/openshorts/SKILL.md",
+        "cli/openshorts_cli.py", "Dockerfile", "docker-compose.gpu.yml",
+        ".env.example", ".gitignore", "requirements.txt", "server.json",
+        # a licenca acompanha o codigo distribuido
+        "LICENSE", "NOTICE", "alembic.ini",
     ]
     assert empacotar.arquivos_do_motor(rastreados) == sorted([
         "app.py", "main.py", "sources/__init__.py", "fonts/Anton-Regular.ttf",
         "ajudante/ajudante.py", "assets/watermark.png", "alembic/env.py",
+        "LICENSE", "NOTICE", "alembic.ini",
     ])
+
+
+def test_o_requirements_de_uma_subpasta_nao_e_o_da_raiz():
+    """So a raiz perde `requirements.txt` (e o do Docker); o do ajudante mora
+    numa subpasta e e o que o instalar.ps1 le."""
+    assert empacotar.arquivos_do_motor([
+        "requirements.txt", "ajudante/requirements-windows.txt",
+    ]) == ["ajudante/requirements-windows.txt"]
 
 
 def test_nenhum_codigo_python_do_motor_fica_de_fora():
@@ -136,7 +151,9 @@ def test_nenhum_codigo_python_do_motor_fica_de_fora():
     import subprocess
     todos = subprocess.run(["git", "ls-files", "*.py"], cwd=RAIZ, capture_output=True,
                            text=True, check=True).stdout.split()
-    motor = [a for a in todos if not a.startswith(("tests/", "examples/", "ops/", "dashboard/"))]
+    # cli/ e o cliente de linha de comando, outro programa: nao e o motor.
+    motor = [a for a in todos
+             if not a.startswith(("tests/", "examples/", "ops/", "dashboard/", "cli/"))]
     fora = set(motor) - set(empacotar.arquivos_do_motor(motor))
     assert not fora, f"codigo do motor fora do pacote: {sorted(fora)}"
 

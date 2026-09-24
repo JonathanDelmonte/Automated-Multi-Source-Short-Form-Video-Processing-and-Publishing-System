@@ -113,23 +113,25 @@ jobs:
           Invoke-WebRequest https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip -OutFile deno.zip
           Expand-Archive deno.zip -DestinationPath binarios
           # O Python do motor vai DENTRO do instalador (ver instalar.ps1): o
-          # CPython standalone que o uv instalaria, copiado da pasta concreta
-          # -- e nao do atalho de versao menor que o uv cria ao lado dela.
-          $env:UV_PYTHON_INSTALL_DIR = "$env:RUNNER_TEMP\py"
+          # CPython standalone que o uv instalaria, pela pasta concreta -- e
+          # nao pelo atalho de versao menor que o uv cria ao lado dela. Numa
+          # pasta CURTA, como o pacote: o ISCC nao abre caminho de mais de 260
+          # caracteres, e so a pasta do checkout ja tem 150.
+          $env:UV_PYTHON_INSTALL_DIR = "C:\vc\py"
           python -m uv python install 3.11
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $py = Get-ChildItem $env:UV_PYTHON_INSTALL_DIR -Directory -Filter "cpython-3.11.*-windows-x86_64-none" |
                 Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | Select-Object -First 1
           if (-not $py) { "o uv nao deixou um Python 3.11 em $env:UV_PYTHON_INSTALL_DIR"; exit 1 }
-          Copy-Item $py.FullName binarios\python -Recurse
-          & binarios\python\python.exe -c "import sys, ssl, sqlite3, ctypes, venv; print(sys.version)"
+          "PYTHON_DO_INSTALADOR=$($py.FullName)" >> $env:GITHUB_ENV
+          & "$($py.FullName)\python.exe" -c "import sys, ssl, sqlite3, ctypes, venv; print(sys.version)"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem binarios | Format-Table Name, Length
       - name: Empacotar
-        run: python ajudante/empacotar.py --versao $env:VERSAO --bin binarios --python binarios\python --commit "${{ github.sha }}"
+        run: python ajudante/empacotar.py --versao $env:VERSAO --bin binarios --python $env:PYTHON_DO_INSTALADOR --pacote C:\vc\pacote --commit "${{ github.sha }}"
       - name: Compilar o instalador
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=$env:VERSAO" ajudante\instalador.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=$env:VERSAO" "/DPacote=C:\vc\pacote" ajudante\instalador.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem ajudante\saida | Format-Table Name, Length
       # Antes, uma instalacao do tempo em que o programa se chamava Cortes

@@ -24,6 +24,13 @@
 #ifndef Versao
   #define Versao "0.0.0-local"
 #endif
+; Onde o empacotar.py deixou o pacote. O CI o monta numa pasta CURTA
+; (/DPacote=C:\vc\pacote): o ISCC do Inno 6.7 nao abre caminho de mais de 260
+; caracteres, e o Python embutido, dentro da pasta do checkout do GitHub, passa
+; disso (Lib\site-packages\pip\...\__pycache__\...).
+#ifndef Pacote
+  #define Pacote "pacote"
+#endif
 
 [Setup]
 ; O mesmo AppId de quando o programa se chamava Cortes: o Windows trata esta
@@ -64,9 +71,9 @@ SolidCompression=yes
 ; fundo no canto das outras -- o transparente ganha a cor da janela, que no
 ; estilo escuro ja e escura. Varios tamanhos: o Inno escolhe pelo DPI.
 WizardStyle=modern dark includetitlebar
-WizardImageFile=pacote\assistente\grande-*.png
-WizardSmallImageFile=pacote\assistente\pequena-*.png
-SetupIconFile=pacote\virtu-clips.ico
+WizardImageFile={#Pacote}\assistente\grande-*.png
+WizardSmallImageFile={#Pacote}\assistente\pequena-*.png
+SetupIconFile={#Pacote}\virtu-clips.ico
 UninstallDisplayIcon={app}\virtu-clips.ico
 UninstallDisplayName=Virtu Clips
 ; Uma atualizacao feita pelo instalador fecha o ajudante antes de copiar.
@@ -83,11 +90,11 @@ Type: filesandordirs; Name: "{app}\versoes"
 Type: filesandordirs; Name: "{app}\python"
 
 [Files]
-Source: "pacote\motor\*"; DestDir: "{app}\versoes\{#Versao}"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "pacote\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Pacote}\motor\*"; DestDir: "{app}\versoes\{#Versao}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Pacote}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "iniciar.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "pacote\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "pacote\virtu-clips.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Pacote}\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#Pacote}\virtu-clips.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{userprograms}\Virtu Clips"; Filename: "{app}\venv\Scripts\pythonw.exe"; \

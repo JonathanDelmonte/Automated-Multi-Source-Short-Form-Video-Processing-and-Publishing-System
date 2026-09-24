@@ -187,11 +187,25 @@ def test_o_python_vem_no_instalador_e_o_uv_nao_baixa_outro():
     assert '"python", "install"' not in ps1
     assert '$env:UV_PYTHON_DOWNLOADS = "never"' in ps1
     assert 'Rodar $uv @("venv", $venv, "--python", $pythonBase' in ps1
-    assert 'Source: "pacote\\python\\*"; DestDir: "{app}\\python"' in iss
+    assert 'Source: "{#Pacote}\\python\\*"; DestDir: "{app}\\python"' in iss
     assert "requirements-windows-gpu.txt" in ps1 and "TemPlacaNvidia" in ps1
     # A atualizacao tambem instala com o uv: la tambem, nada de baixar Python.
     fonte = (AJUDANTE / "atualizacao.py").read_text(encoding="utf-8")
     assert 'UV_PYTHON_DOWNLOADS="never"' in fonte and "UV_PYTHON_INSTALL_DIR" not in fonte
+
+
+def test_o_ci_compila_o_instalador_de_uma_pasta_curta():
+    """O ISCC do Inno 6.7 nao abre caminho de mais de 260 caracteres, e o
+    Python embutido, dentro da pasta do checkout do GitHub (~150 so ela),
+    passa disso: "The system cannot find the path specified", no meio da
+    compressao (24-set-2026). O pacote e montado em C:\\vc e o .iss o recebe
+    por /DPacote."""
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    assert "--pacote C:\\vc\\pacote" in fluxo and '"/DPacote=C:\\vc\\pacote"' in fluxo
+    assert '#define Pacote "pacote"' in iss
+    # Nenhum caminho do pacote escrito a mao, que escaparia da pasta curta.
+    assert not re.search(r"pacote\\", iss.replace("{#Pacote}", "")), "caminho do pacote a mao"
 
 
 def test_a_redirectionguard_do_inno_fica_desligada():

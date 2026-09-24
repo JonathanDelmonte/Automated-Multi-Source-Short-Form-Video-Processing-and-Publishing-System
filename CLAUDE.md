@@ -2070,6 +2070,11 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     GitHub passa disso, e o video de ponta a ponta trabalha numa pasta curta;
   - o motor sob o ajudante nao espera o dreno de 20 s (`PROXY_DRAIN_SECONDS=0`):
     aquilo e para o proxy de deploy em nuvem;
+  - o ISCC do Inno 6.7 **nao abre caminho de mais de 260 caracteres**, e o
+    Python embutido, dentro da pasta do checkout do GitHub (~150 caracteres
+    so ela), passa disso ("The system cannot find the path specified" no
+    meio da compressao). O CI monta o pacote em `C:\vc\pacote` e o `.iss` o
+    recebe por `/DPacote`; ha teste contra caminho do pacote escrito a mao;
   - `net user` com senha de **mais de 14 caracteres** pergunta se pode
     continuar e espera um "S" -- no CI, para sempre;
   - o PowerShell converte inteiro para `IntPtr` sem ambiguidade, e para

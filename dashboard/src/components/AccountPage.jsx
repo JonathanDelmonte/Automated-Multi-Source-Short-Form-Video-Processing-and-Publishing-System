@@ -205,7 +205,7 @@ export default function AccountPage() {
         </div>
       )}
 
-      <McpConnectCard cloud />
+      <McpConnectCard />
 
       <ApiKeysCard />
 

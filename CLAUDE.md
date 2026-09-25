@@ -1226,11 +1226,24 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
-| POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
+| POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
 
 ### Agent access (MCP, API keys, webhooks)
+
+> **Neste fork, so o MCP do motor local vale** (as `osk_`, o OAuth e o
+> `mcp.openshorts.app` sairam com o `cloud/`). O cartao "Conectar um agente de
+> IA" das Configuracoes (`McpConnectCard.jsx`, 25-set-2026) era o do produto
+> em nuvem do upstream: em ingles, prometendo "8 tools" com uma de publicar
+> que saiu na Fase 0.3, e com a URL do servico pago deles. Agora ele so
+> conhece o motor deste computador e diz que nada ali le a conta de ninguem --
+> foi a primeira pergunta do autor ao ve-lo. A lista de ferramentas que ele
+> mostra e comparada com o `mcp_server.TOOLS` (`tests/test_cartao_do_agente.py`).
+> Ficou para a proxima mudanca de motor: o `SERVER_INFO` ainda se apresenta
+> como `openshorts` (tres testes prendem o nome) e as `INSTRUCTIONS` dizem ao
+> agente que o video e analisado "on its own servers" -- aqui e o computador
+> de quem usa.
 
 - **API keys** (`cloud/api_keys.py`): `osk_...` tokens, sha256-stored, created in
   the dashboard account page. `cloud/auth.get_current_user_optional` accepts

@@ -1393,7 +1393,7 @@ function App() {
               )}
               {/* Self-hosted installs have no account page, so the agent
                   how-to lives here; cloud users get it (with OAuth) in Account. */}
-              {!billingEnabled && <div className="mb-6"><McpConnectCard cloud={false} /></div>}
+              {!billingEnabled && <div className="mb-6"><McpConnectCard /></div>}
               {isManaged ? (
                 <div className="card p-6 mb-2">
                   <div className="flex items-center justify-between mb-3">

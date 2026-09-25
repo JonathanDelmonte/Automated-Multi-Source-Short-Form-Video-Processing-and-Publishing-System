@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { versaoDoSite } from './versao-do-site.js'
 
 // Alvo do backend para o proxy de desenvolvimento. O padrão é o nome do
 // serviço no docker-compose; use VITE_PROXY_TARGET=http://localhost:8000 para
@@ -75,6 +76,9 @@ function reiniciarQuandoOMotorSeAtualizar() {
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), reiniciarQuandoOMotorSeAtualizar()],
+  // Configurações → Versões: a versão, o commit e a data deste build
+  // (`versao-do-site.js`).
+  define: { __VERSAO_DO_SITE__: JSON.stringify(versaoDoSite()) },
   server: {
     watch: polling ? { usePolling: true, interval: 300 } : undefined,
     proxy: {

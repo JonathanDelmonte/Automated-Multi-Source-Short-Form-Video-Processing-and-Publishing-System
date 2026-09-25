@@ -125,8 +125,9 @@ Clips** → Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\VirtuClips\dad
 E se algo quebrar, abrir o instalador e escolher **Reinstalar** conserta sem perder
 projeto nenhum — o Windows do GitHub testa exatamente isso a cada versão.
 
-**O que me mandar de volta:** o que aconteceu em cada "Confira", e, se algo falhar,
-os arquivos da pasta `%LOCALAPPDATA%\VirtuClips\dados\logs`.
+**O que me mandar de volta:** o que aconteceu em cada "Confira", o bloco de
+**Configurações → Versões** (botão **copiar**), e, se algo falhar, os arquivos da
+pasta `%LOCALAPPDATA%\VirtuClips\dados\logs`.
 
 ---
 
@@ -1346,7 +1347,7 @@ docker compose exec backend python main.py -i /app/uploads/seu_video.mp4 -o /app
 
 ## O que me mandar de volta
 
-Três coisas, e com elas eu ajusto a Fase 1 sobre comportamento real em vez de
+Quatro coisas, e com elas eu ajusto a Fase 1 sobre comportamento real em vez de
 suposição:
 
 1. **O bloco `📊 Custo deste job`** inteiro — é o que valida ou corrige a
@@ -1355,3 +1356,6 @@ suposição:
    reconhecida. **Menos o valor das chaves** — elas não aparecem nesse JSON, e
    não devem aparecer no que você colar.
 3. **Qualquer erro**, com as ~30 linhas de log em volta.
+4. **O bloco de Configurações → Versões** (botão **copiar**): a versão do
+   programa, a do site e o navegador, numa linha cada. Sem ele, "no meu
+   computador não funciona" começa por adivinhar qual versão estava rodando.

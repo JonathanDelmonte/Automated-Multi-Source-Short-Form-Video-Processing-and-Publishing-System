@@ -7,6 +7,8 @@ import ProjectsGrid from './components/ProjectsGrid';
 import PublicacoesTab from './components/PublicacoesTab';
 import Tranca from './components/Tranca';
 import McpConnectCard from './components/McpConnectCard';
+import Versoes from './components/Versoes';
+import { seloDaIA } from './lib/seloDaIA';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 // import Gallery from './components/Gallery';
@@ -1394,6 +1396,8 @@ function App() {
               {/* Self-hosted installs have no account page, so the agent
                   how-to lives here; cloud users get it (with OAuth) in Account. */}
               {!billingEnabled && <div className="mb-6"><McpConnectCard /></div>}
+              {/* Por ultimo: e o que se copia para pedir ajuda, nao o que se usa. */}
+              {!billingEnabled && <Versoes />}
               {isManaged ? (
                 <div className="card p-6 mb-2">
                   <div className="flex items-center justify-between mb-3">
@@ -1740,9 +1744,12 @@ function App() {
                         {results.clips.length} Clips
                       </span>
                     )}
+                    {/* Tokens, e nao dolares (25-set-2026): o selo dizia "GEMINI · $0.012"
+                        com chave gratuita, que nao cobra nada -- e o preco e o do plano
+                        pago. Quem respondeu e quanto custaria ficam no title. */}
                     {results?.cost_analysis && !isManaged && (
-                      <span className="readout bg-paper3 px-2.5 py-1 rounded-full" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
-                        GEMINI · ${results.cost_analysis.total_cost.toFixed(5)}
+                      <span className="readout bg-paper3 px-2.5 py-1 rounded-full" title={seloDaIA(results.cost_analysis).detalhe}>
+                        {seloDaIA(results.cost_analysis).texto}
                       </span>
                     )}
                   </h2>

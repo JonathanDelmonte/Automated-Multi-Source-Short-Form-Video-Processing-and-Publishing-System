@@ -2369,6 +2369,37 @@ componente `ChavesDeIA.jsx`). `GET/POST /api/chaves`.
   `ambiente` desfaz o monkeypatch e devolve uma foto; um fixture do modulo
   falha em qualquer CI se algo ficar.
 
+### Configuracoes -> Versoes, e o selo de tokens (25-set-2026)
+
+Pedido do autor: "um pequeno espaco para colocar essas versoes". O cartao
+(`Versoes.jsx`) mostra o programa deste computador (`/api/config.motor`), a
+mais nova publicada (`lib/ajudante.versaoPublicada`), o site e o navegador, e o
+botao **copiar** junta tudo -- e o que o `COMO-EXECUTAR.md` pede de volta.
+
+- **A versao do site e gravada no build** (`dashboard/versao-do-site.js`, pelo
+  `define` do `vite.config.js` como `__VERSAO_DO_SITE__`). E a contagem de
+  commits, a mesma regra do motor, e so vale com historico inteiro: num clone
+  raso o `git rev-list --count` devolve a PROFUNDIDADE ("1" no lugar de "546"),
+  sem erro. No build do Cloudflare (`WORKERS_CI`) o script traz o historico
+  com `git fetch --unshallow --filter=blob:none` (so commits, ~2 s); nao deu,
+  fica sem numero. O commit sai sempre (do git ou de `WORKERS_CI_COMMIT_SHA`).
+- **O numero do site passa o do programa, e e o normal**: commit so de tela nao
+  gera versao nova do programa. O cartao diz isso, e quem avisa atraso continua
+  sendo o `AvisoDoMotor`, no topo.
+- **No painel do Docker (Vite em modo dev, sem git no container) nao ha
+  numero**: o cartao diz que a tela acompanha a pasta do projeto.
+- **O navegador** (`lib/navegador.js`): a marca que interessa nos derivados do
+  Chromium e a que nao e "Chromium" nem a marca de mentira; e o Windows 11 so
+  se separa do 10 pela pergunta de alta entropia (`platformVersion` >= 13) --
+  no userAgent os dois dizem "NT 10.0". Sem `userAgentData` (Firefox, Safari),
+  o userAgent, com Edge e Opera testados antes do Chrome.
+- **O selo dos cortes gerados diz tokens, nao dolares** (`lib/seloDaIA.js`).
+  Era "GEMINI · $0.01200": o nome fixo do primeiro provedor e o preco do plano
+  PAGO, e o autor perguntou se estava pagando. O `title` diz quem respondeu e
+  quanto custaria num plano pago.
+- `tests/test_versao_do_site.py` roda os dois modulos no `node` de verdade
+  (clone raso e inteiro, sem git, as marcas e os userAgents); sem node, pula.
+
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
 

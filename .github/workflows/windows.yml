@@ -47,9 +47,19 @@ jobs:
         with:
           python-version: "3.11"
       # ffmpeg do Chocolatey (o build "essentials" do gyan.dev, com libass e
-      # libx264). O instalador leva o mesmo.
+      # libx264). O instalador leva o mesmo. Quando o feed deles cai (504 em
+      # 25-set-2026), o choco diz "installed 0/0 packages" e sai com 0: o
+      # passo ficava verde e o erro aparecia no seguinte, como "ffmpeg is not
+      # recognized". Tres tentativas, e a conferencia de que ele chegou.
       - name: ffmpeg
-        run: choco install ffmpeg -y --no-progress
+        run: |
+          foreach ($vez in 1..3) {
+            choco install ffmpeg -y --no-progress
+            if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { exit 0 }
+            if ($vez -lt 3) { Start-Sleep -Seconds (60 * $vez) }
+          }
+          "o Chocolatey nao entregou o ffmpeg em 3 tentativas: o feed deles pode estar fora do ar"
+          exit 1
       - name: Dependencias do motor
         id: deps
         run: |
@@ -103,10 +113,18 @@ jobs:
           "versao $v"
       - name: O que o instalador leva
         run: |
-          choco install ffmpeg innosetup -y --no-progress
+          # Tres tentativas, pelo mesmo motivo do passo ffmpeg do motor: sem
+          # elas, o feed fora do ar virava "Cannot bind argument to parameter
+          # 'Path' because it is null" no Copy-Item.
+          foreach ($vez in 1..3) {
+            choco install ffmpeg innosetup -y --no-progress
+            $ff = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($ff -and (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { break }
+            if ($vez -eq 3) { "o Chocolatey nao entregou o ffmpeg e o Inno Setup em 3 tentativas: o feed deles pode estar fora do ar"; exit 1 }
+            Start-Sleep -Seconds (60 * $vez)
+          }
           python -m pip install --upgrade pip uv pillow
           New-Item -ItemType Directory -Force binarios | Out-Null
-          $ff = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           Copy-Item $ff.FullName binarios\
           Copy-Item (Join-Path $ff.DirectoryName "ffprobe.exe") binarios\
           Copy-Item (python -c "import uv; print(uv.find_uv_bin())") binarios\uv.exe

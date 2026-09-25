@@ -2172,6 +2172,10 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     no ISCC (25-set-2026). O mesmo vale para a ajuda do site deles;
   - `net user` com senha de **mais de 14 caracteres** pergunta se pode
     continuar e espera um "S" -- no CI, para sempre;
+  - **o `choco install` sai com 0 quando o feed do Chocolatey cai**
+    ("installed 0/0 packages", depois de um 504 em 25-set-2026): o passo
+    ficava verde e o erro aparecia no seguinte, com outra cara. Os dois
+    passos que usam o choco tentam tres vezes e conferem o que chegou;
   - o PowerShell converte inteiro para `IntPtr` sem ambiguidade, e para
     `UIntPtr` nao: o `SIZE_T` do `GetProcessMitigationPolicy` vai como
     `IntPtr`;
@@ -2312,6 +2316,13 @@ componente `ChavesDeIA.jsx`). `GET/POST /api/chaves`.
   local, que tem endereco), o `provedoresDeIA.js` lista exatamente as
   `VARIAVEIS`, o aviso "pode usar o que voce manda para treinar" e o
   `trains_on_data` da cascata, e os links sao os do `.env.example`.
+- **Os testes que guardam chave escrevem no `os.environ` DE VERDADE** -- e o
+  que o endpoint tem de provar (`localLlm` le dali) --, e o `monkeypatch.delenv`
+  nao devolve variavel que nao existia. A GROQ_API_KEY falsa ficou para os
+  testes seguintes e so o CI do Windows viu, porque e o unico onde o `main`
+  importa: la a deteccao dos testes do `main` passou a ir pela cascata. O
+  `ambiente` desfaz o monkeypatch e devolve uma foto; um fixture do modulo
+  falha em qualquer CI se algo ficar.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

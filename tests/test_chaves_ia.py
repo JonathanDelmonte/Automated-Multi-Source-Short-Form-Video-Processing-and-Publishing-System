@@ -28,17 +28,55 @@ GROQ = "gsk_" + "A1b2C3d4E5f6G7h8I9j0" * 2
 GEMINI_NOVA = "AQ.Ab8RN6" + "x" * 30
 GEMINI_VELHA = "AIzaSy" + "B" * 33
 
+# O que estes testes tocam no `os.environ`: as chaves, e o que mais faria a
+# cascata achar uma IA configurada na maquina que roda o teste.
+_NOMES = ci.VARIAVEIS + ("CEREBRAS_API_KEY", "OLLAMA_BASE_URL", "LLM_BASE_URL", "LLM_CASCADE")
+
+
+def _foto():
+    return {v: os.environ.get(v) for v in _NOMES}
+
+
+def _devolver(foto):
+    for v, valor in foto.items():
+        if valor is None:
+            os.environ.pop(v, None)
+        else:
+            os.environ[v] = valor
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _nada_fica_para_os_outros_testes():
+    """O alarme do vazamento de 25-set-2026 (ver o `ambiente`), e em TODO CI.
+    Sem ele, so o do Windows via: e o unico onde o `main` importa, entao os
+    testes que tropecavam na chave esquecida so rodavam la."""
+    antes = _foto()
+    yield
+    ficou = sorted(v for v, valor in _foto().items() if valor != antes[v])
+    _devolver(antes)
+    assert not ficou, f"os testes das chaves deixaram no os.environ: {ficou}"
+
 
 @pytest.fixture
 def ambiente(monkeypatch):
-    """Um ambiente sem nenhuma das chaves, que o monkeypatch devolve como
-    estava -- inclusive o que a `Chaves` escrever direto no `os.environ`."""
-    for v in ci.VARIAVEIS:
+    """Um ambiente sem nenhuma das chaves, devolvido como estava no fim.
+
+    O monkeypatch sozinho NAO devolvia, e este docstring dizia o contrario.
+    Para uma variavel que nao existia, o `delenv` nao guarda nada para
+    desfazer, e a `Chaves` escreve direto no `os.environ`: a GROQ_API_KEY
+    falsa ficava para os testes seguintes. No CI do Windows -- o unico onde o
+    `main` importa -- os testes do `main` passaram a ir pela cascata em vez do
+    caminho sem chave (25-set-2026). E o desfazer do monkeypatch, que roda
+    DEPOIS deste fixture, poria de volta a chave que um `ambiente.delenv` no
+    meio do teste tirou. Por isso: desfaz o monkeypatch aqui, e devolve a foto
+    por ultimo.
+    """
+    foto = _foto()
+    for v in _NOMES:
         monkeypatch.delenv(v, raising=False)
-    # E nenhuma outra IA configurada na maquina que roda o teste.
-    for v in ("CEREBRAS_API_KEY", "OLLAMA_BASE_URL", "LLM_BASE_URL", "LLM_CASCADE"):
-        monkeypatch.delenv(v, raising=False)
-    return monkeypatch
+    yield monkeypatch
+    monkeypatch.undo()
+    _devolver(foto)
 
 
 # --- o que se cola ------------------------------------------------------------------------

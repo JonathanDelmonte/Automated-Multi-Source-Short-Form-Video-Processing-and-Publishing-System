@@ -105,7 +105,9 @@ Name: "{userdesktop}\Virtu Clips"; Filename: "{app}\venv\Scripts\pythonw.exe"; \
   IconFilename: "{app}\virtu-clips.ico"; Tasks: atalho
 
 [Tasks]
-Name: "atalho"; Description: "Criar um atalho na area de trabalho"
+; O texto vem da traducao do proprio Inno, com os acentos que este arquivo --
+; ASCII de proposito -- nao pode ter.
+Name: "atalho"; Description: "{cm:CreateDesktopIcon}"
 
 [Registry]
 ; Liga com o Windows. O proprio ajudante deixa desligar pelo menu. O nome do
@@ -122,10 +124,14 @@ Filename: "{app}\venv\Scripts\pythonw.exe"; \
   Description: "Abrir o Virtu Clips agora"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-; Desliga o ajudante (e o motor) antes de apagar os arquivos dele.
+; Desliga o ajudante (e o motor) antes de apagar os arquivos dele. Numa
+; instalacao que morreu antes de criar o venv (o erro 448 de 24-set-2026), o
+; python.exe nao existe e nao ha ajudante para desligar: sem o
+; `skipifdoesntexist`, o desinstalador mostraria um erro por isso.
 Filename: "{app}\venv\Scripts\python.exe"; \
   Parameters: """{app}\iniciar.py"" --parar"; \
-  WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "PararAjudante"
+  WorkingDir: "{app}"; Flags: runhidden waituntilterminated skipifdoesntexist; \
+  RunOnceId: "PararAjudante"
 
 [UninstallDelete]
 ; Os PROJETOS ficam (dados\): sao os cortes da pessoa. O resto sai.
@@ -139,6 +145,71 @@ Type: filesandordirs; Name: "{app}\cache-uv"
 [Code]
 var
   MotorFalhou: Boolean;
+  PaginaDoQueFazer: TInputOptionWizardPage;
+  Desinstalando: Boolean;
+
+// O desinstalador de uma instalacao que ja existe neste computador -- desta
+// ou do tempo em que o programa se chamava Cortes (o AppId e o mesmo, entao a
+// chave do registro e a mesma). Vazio se nao ha nenhuma.
+function DesinstaladorExistente: String;
+var
+  Caminho: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, ExpandConstant(
+       'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1'),
+       'UninstallString', Caminho) then
+  begin
+    Caminho := RemoveQuotes(Caminho);
+    if FileExists(Caminho) then
+      Result := Caminho;
+  end;
+end;
+
+// Abrir o instalador com o programa ja instalado pergunta o que fazer:
+// reinstalar (o padrao -- e o que uma instalacao sem janela faz, porque ali
+// ninguem escolhe) ou desinstalar. Os textos com acento vao por codigo de
+// caractere: este arquivo e ASCII de proposito (ver o teste).
+procedure InitializeWizard;
+begin
+  if DesinstaladorExistente = '' then
+    Exit;
+  PaginaDoQueFazer := CreateInputOptionPage(wpWelcome,
+    'O Virtu Clips j' + #$E1 + ' est' + #$E1 + ' instalado neste computador',
+    'O que voc' + #$EA + ' quer fazer?',
+    'Nos dois casos, os seus projetos (os cortes que o programa j' + #$E1 +
+      ' fez) ficam guardados.',
+    True, False);
+  PaginaDoQueFazer.Add('Reinstalar: conserta a instala' + #$E7 + #$E3 +
+    'o e atualiza o motor');
+  PaginaDoQueFazer.Add('Desinstalar: tira o programa deste computador');
+  PaginaDoQueFazer.SelectedValueIndex := 0;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Codigo: Integer;
+begin
+  Result := True;
+  if (PaginaDoQueFazer <> nil) and (CurPageID = PaginaDoQueFazer.ID) and
+     (PaginaDoQueFazer.SelectedValueIndex = 1) then
+  begin
+    // O desinstalador pede a propria confirmacao e, antes de apagar, desliga
+    // o ajudante; este instalador so sai do caminho.
+    Exec(DesinstaladorExistente, '', '', SW_SHOWNORMAL, ewNoWait, Codigo);
+    Desinstalando := True;
+    WizardForm.Close;
+    Result := False;
+  end;
+end;
+
+// Fechar para desinstalar nao e desistir: sem isto o Inno perguntaria se a
+// pessoa quer mesmo cancelar a instalacao.
+procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
+begin
+  if Desinstalando then
+    Confirm := False;
+end;
 
 // Pede ao ajudante instalado numa pasta que saia, levando o motor junto. Sem
 // ajudante rodando, o `--parar` volta na hora.
@@ -226,8 +297,8 @@ begin
       // para sempre.
       // Nenhuma linha pode COMECAR com `#`: o pre-processador do Inno a le
       // como diretiva (`#13#10` virava "Unknown preprocessor directive").
-      SuppressibleMsgBox('A instalacao do motor nao terminou.' + #13#10 + #13#10 +
-             'O registro esta em ' + ExpandConstant('{app}\dados\logs\instalacao.log') + #13#10 +
+      SuppressibleMsgBox('A instala' + #$E7 + #$E3 + 'o do motor n' + #$E3 + 'o terminou.' + #13#10 + #13#10 +
+             'O registro est' + #$E1 + ' em ' + ExpandConstant('{app}\dados\logs\instalacao.log') + #13#10 +
              'Confira a internet e rode o instalador de novo.',
              mbError, MB_OK, IDOK);
     end;

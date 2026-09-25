@@ -42,6 +42,16 @@ def test_instalado_a_pasta_e_a_de_onde_o_codigo_esta(tmp_path):
     assert aj.caminhos_padrao({"CORTES_BASE": str(tmp_path / "x")}, aqui=aqui).base == tmp_path / "x"
 
 
+def test_o_menu_so_oferece_desinstalar_quando_ha_o_que_desinstalar(tmp_path):
+    """Instalado, o Inno deixa o `unins000.exe` na pasta do programa; rodando
+    do codigo, ele nao existe e o item fica escondido -- um "Desinstalar" que
+    nao faz nada seria pior que nenhum."""
+    c = aj.Caminhos(tmp_path)
+    assert aj.desinstalador(c) is None
+    (tmp_path / "unins000.exe").write_bytes(b"MZ")
+    assert aj.desinstalador(c) == tmp_path / "unins000.exe"
+
+
 # --- placa --------------------------------------------------------------------
 
 def _roda(returncode=0, stdout="", erro=None):

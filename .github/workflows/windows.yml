@@ -247,6 +247,26 @@ jobs:
             "---- dados\logs\atualizacao.log"
             Get-Content "$base\dados\logs\atualizacao.log" -Tail 80 -ErrorAction SilentlyContinue
           }
+      # Abrir o instalador com o programa ja instalado: a pagina pergunta
+      # "reinstalar ou desinstalar", e sem janela vale o padrao, reinstalar.
+      # E o que a pessoa faz quando algo quebrou, entao aqui algo quebra de
+      # proposito (uma biblioteca do motor some) e a reinstalacao tem de
+      # consertar sem perder projeto nenhum.
+      - name: Instalar de novo por cima conserta e guarda os projetos
+        run: |
+          $base = "$env:LOCALAPPDATA\VirtuClips"
+          Get-ChildItem "$base\venv\Lib\site-packages" -Filter "fastapi*" | Remove-Item -Recurse -Force
+          & "$base\venv\Scripts\python.exe" -c "import fastapi" 2>$null
+          if ($LASTEXITCODE -eq 0) { "a quebra de proposito nao quebrou"; exit 1 }
+          $p = Start-Process ajudante\saida\Instalar-Virtu-Clips.exe -Wait -PassThru `
+               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno-de-novo.log"
+          "codigo do instalador: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit 1 }
+          if (-not (Test-Path "$base\dados\output\projeto\corte.txt")) { "os projetos sumiram"; exit 1 }
+          $atual = (Get-Content "$base\atual.txt").Trim()
+          if ($atual -ne $env:VERSAO) { "atual.txt diz $atual, e nao $env:VERSAO"; exit 1 }
+          & "$base\venv\Scripts\python.exe" -c "import fastapi; print('o motor voltou inteiro')"
+          if ($LASTEXITCODE -ne 0) { "a reinstalacao nao consertou"; exit 1 }
       - name: Desinstalar leva o programa e deixa os projetos
         run: |
           $base = "$env:LOCALAPPDATA\VirtuClips"
@@ -342,7 +362,7 @@ jobs:
         if: ${{ failure() }}
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\registros" | Out-Null
-          Copy-Item "$env:RUNNER_TEMP\inno.log", "$env:RUNNER_TEMP\e2e\motor.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\inno.log", "$env:RUNNER_TEMP\inno-de-novo.log", "$env:RUNNER_TEMP\e2e\motor.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
           Copy-Item "$env:LOCALAPPDATA\VirtuClips\dados\logs\*.log" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
           Copy-Item "C:\Users\Public\vc\*.log", "C:\Users\Public\vc\*.txt" "$env:RUNNER_TEMP\registros\" -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\registros\amigo" | Out-Null

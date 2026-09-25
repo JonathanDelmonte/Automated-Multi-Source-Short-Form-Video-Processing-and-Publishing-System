@@ -2054,6 +2054,18 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   Medido na primeira volta verde (24-set-2026): o log do Inno diz "Not
   enabling" no instalador de sempre e "Enabled in enforcing mode" no forcado
   -- e o forcado instala igual, porque sem o atalho nao ha o que barrar.
+- **Abrir o instalador de novo pergunta: Reinstalar ou Desinstalar**
+  (25-set-2026, pedido do autor depois da instalacao que falhou: "o ajudante
+  precisa ter a opcao de instalar e desinstalar"). A pagina so aparece quando
+  a chave do AppId em `HKCU\...\Uninstall` aponta para um `unins000.exe` que
+  existe -- a mesma de antes da marca nova. **Reinstalar e o padrao** e e o que
+  uma instalacao sem janela faz, porque ali ninguem escolhe; Desinstalar roda o
+  desinstalador de "Aplicativos" e fecha o instalador sem o "quer mesmo
+  cancelar?". O menu da bandeja tem o mesmo item. O CI tira o `fastapi` do
+  venv, reinstala por cima sem janela e confere que ele voltou e os projetos
+  ficaram. E o `--parar` do `[UninstallRun]` tem `skipifdoesntexist`: uma
+  instalacao que morreu antes do venv (a do 448) nao tem python.exe, e o
+  desinstalador mostraria um erro por isso.
 - **A pasta mudou com o nome** (`%LOCALAPPDATA%\Cortes` ->
   `%LOCALAPPDATA%\VirtuClips`), com o MESMO AppId, para ficar uma entrada so
   em "Aplicativos". Sem `UsePreviousAppDir=no` o Inno instalaria de novo na

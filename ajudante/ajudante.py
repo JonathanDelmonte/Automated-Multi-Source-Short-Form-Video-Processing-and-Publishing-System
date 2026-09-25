@@ -454,6 +454,23 @@ def iniciar_com_o_windows(ligar: bool, c: Caminhos) -> None:
                 pass
 
 
+def desinstalador(c: Caminhos) -> Optional[Path]:
+    """O desinstalador que o Inno deixa na pasta do programa, ou None: rodando
+    do codigo (desenvolvimento) nao ha o que desinstalar, e o menu esconde o
+    item."""
+    caminho = c.base / "unins000.exe"
+    return caminho if caminho.is_file() else None
+
+
+def desinstalar(c: Caminhos) -> None:
+    """O mesmo desinstalador de "Aplicativos" do Windows e do instalador. Ele
+    pede a propria confirmacao e, antes de apagar, pede a ESTE ajudante que
+    saia (o `--parar` do [UninstallRun]) -- entao abri-lo daqui e seguro."""
+    alvo = desinstalador(c)
+    if alvo is not None:
+        subprocess.Popen([str(alvo)], cwd=str(c.base), close_fds=True)
+
+
 def abrir(caminho) -> None:
     if NO_WINDOWS:
         os.startfile(str(caminho))  # noqa: S606 -- pasta/arquivo local
@@ -515,6 +532,8 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
         pystray.MenuItem("Iniciar com o Windows",
                          lambda *_: iniciar_com_o_windows(not inicia_com_o_windows(), c),
                          checked=lambda _i: inicia_com_o_windows()),
+        pystray.MenuItem(f"Desinstalar o {NOME}…", lambda *_: desinstalar(c),
+                         visible=desinstalador(c) is not None),
         pystray.MenuItem("Sair", sair),
     )
     icone = pystray.Icon(NOME, imagem_do_icone(), NOME, menu)

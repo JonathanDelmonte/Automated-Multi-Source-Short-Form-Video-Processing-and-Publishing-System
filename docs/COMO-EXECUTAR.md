@@ -54,6 +54,12 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
 3. Abra o `Instalar-Virtu-Clips.exe` baixado. **Confira:** o Windows mostra "O Windows
    protegeu o computador"? *Mais informações* → *Executar assim mesmo* resolve? O
    instalador é escuro, com a logo.
+
+   O `Cortes-Ajudante.exe` que deu o erro 448 pode ir para a lixeira: é a versão
+   com o defeito. Não precisa desinstalar o que ele deixou antes — o instalador
+   novo reconhece aquela instalação, pergunta **Reinstalar** ou **Desinstalar**
+   (escolha Reinstalar), traz a pasta de projetos para o lugar novo e apaga o
+   resto.
 4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060
    ela baixa também as bibliotecas de CUDA do whisper (~1 GB a mais), então pode
    levar uns 10 minutos. A janela fecha sozinha. A pasta `%LOCALAPPDATA%\Cortes`
@@ -80,8 +86,12 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    minuto o ícone do ajudante passa a dizer "outro motor do Virtu Clips (o Docker) já
    está atendendo". Recarregue o site (F5): ele passa a falar com o Docker.
 
-Para tirar o ajudante: Configurações do Windows → Aplicativos → **Virtu Clips** →
-Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\VirtuClips\dados`.
+Para tirar o ajudante, qualquer um dos três caminhos abre o mesmo desinstalador: abrir
+o instalador de novo e escolher **Desinstalar**; o menu do ícone perto do relógio →
+**Desinstalar o Virtu Clips…**; ou Configurações do Windows → Aplicativos → **Virtu
+Clips** → Desinstalar. Os projetos continuam em `%LOCALAPPDATA%\VirtuClips\dados`.
+E se algo quebrar, abrir o instalador e escolher **Reinstalar** conserta sem perder
+projeto nenhum — o Windows do GitHub testa exatamente isso a cada versão.
 
 **O que me mandar de volta:** o que aconteceu em cada "Confira", e, se algo falhar,
 os arquivos da pasta `%LOCALAPPDATA%\VirtuClips\dados\logs`.

@@ -235,6 +235,46 @@ def test_a_instalacao_do_tempo_do_cortes_vem_para_a_pasta_nova():
     assert "DelTree(Antiga + '\\dados'" not in migrar, "os projetos nunca sao apagados"
 
 
+def test_abrir_o_instalador_de_novo_pergunta_reinstalar_ou_desinstalar():
+    """Com o programa ja instalado, o instalador oferece as duas coisas. O
+    padrao e reinstalar -- e o que uma instalacao sem janela faz, porque ali
+    ninguem escolhe -- e desinstalar roda o MESMO desinstalador de
+    "Aplicativos", achado pela chave do AppId (que e a de antes da marca
+    nova tambem)."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    existente = iss.split("function DesinstaladorExistente", 1)[1].split("\nend;", 1)[0]
+    assert '{#emit SetupSetting("AppId")}_is1' in existente and "HKCU" in existente
+    assert "FileExists(Caminho)" in existente, "registro sem arquivo nao conta"
+    pagina = iss.split("procedure InitializeWizard", 1)[1].split("\nend;", 1)[0]
+    assert "if DesinstaladorExistente = '' then" in pagina
+    assert "SelectedValueIndex := 0" in pagina and pagina.count(".Add(") == 2
+    proximo = iss.split("function NextButtonClick", 1)[1].split("\nend;\n\n", 1)[0]
+    assert "SelectedValueIndex = 1" in proximo and "Exec(DesinstaladorExistente" in proximo
+    assert "WizardForm.Close" in proximo
+    # Fechar para desinstalar nao pode perguntar "quer mesmo cancelar?".
+    cancelar = iss.split("procedure CancelButtonClick", 1)[1].split("\nend;", 1)[0]
+    assert "Confirm := False" in cancelar
+
+
+def test_o_ci_reinstala_por_cima_de_uma_instalacao_quebrada():
+    """Reinstalar e o conserto que a pessoa tenta primeiro: o CI tira uma
+    biblioteca do motor, roda o instalador de novo e confere que ela voltou
+    e que os projetos ficaram."""
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    passo = fluxo.split("- name: Instalar de novo por cima", 1)[1].split("- name:", 1)[0]
+    assert 'Filter "fastapi*"' in passo and "Remove-Item" in passo
+    assert "import fastapi" in passo and "corte.txt" in passo
+    assert fluxo.index("- name: Instalar de novo por cima") < fluxo.index("- name: Desinstalar")
+
+
+def test_desinstalar_uma_instalacao_que_falhou_nao_mostra_erro():
+    """A instalacao do erro 448 morreu antes de criar o venv: o `--parar` do
+    desinstalador apontaria para um python.exe que nao existe."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    parar = iss.split("[UninstallRun]", 1)[1].split("\n[", 1)[0]
+    assert "skipifdoesntexist" in parar
+
+
 def test_o_inicio_com_o_windows_e_o_mesmo_valor_que_o_ajudante_liga():
     """O .iss grava o valor do registro, e o menu do ajudante o liga e
     desliga. Com nomes diferentes, desligar pelo menu deixaria o do

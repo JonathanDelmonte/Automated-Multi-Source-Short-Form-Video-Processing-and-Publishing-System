@@ -373,8 +373,11 @@ def test_o_instalador_roda_o_powershell_de_64_bits():
     CI confere a linha "PowerShell de 64 bits: sim" que o script escreve."""
     iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
     passo = iss.split("procedure CurStepChanged", 1)[1].split("\nend;\n", 1)[0]
-    assert "ExecAndLogOutputWithNativeSysDir(" in passo
-    assert "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe" in passo
+    # {sysnative}, e nao o ExecAndLogOutputWithNativeSysDir: esse so existe
+    # numa versao do Inno posterior a 6.7, e o ISCC do CI o recusou.
+    codigo = "\n".join(l for l in iss.splitlines() if not l.strip().startswith(("//", ";")))
+    assert "ExecAndLogOutput(" in passo and "WithNativeSysDir" not in codigo
+    assert "{sysnative}\\WindowsPowerShell\\v1.0\\powershell.exe" in passo
     assert "SW_HIDE" in passo and "@AoLerLinhaDoMotor" in passo
     assert "Exec('powershell.exe'" not in iss
     ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")

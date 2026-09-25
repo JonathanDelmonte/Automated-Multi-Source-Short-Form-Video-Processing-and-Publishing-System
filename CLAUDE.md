@@ -2075,8 +2075,8 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   de 32 bits (o Inno e) procura no SysWOW64 -- a propria fonte do Inno diz
   isso --, e no PowerShell de 32 bits o `System32\nvidia-smi.exe` nao
   existe. O CI nunca veria: o runner nao tem placa.
-  - **`ExecAndLogOutputWithNativeSysDir`** com `{sys}\WindowsPowerShell\...`:
-    o de 64 bits, e a saida linha a linha num callback. O script escreve
+  - **`ExecAndLogOutput` com `{sysnative}\WindowsPowerShell\...`**: o de
+    64 bits, e a saida linha a linha num callback. O script escreve
     `PowerShell de 64 bits: sim|NAO` no registro, e o CI falha no `NAO`.
   - **A janela azul saiu.** Na pagina de instalacao: o titulo e a linha
     `== Passo k de n: ...` do script (e ELE que numera -- so ele sabe quantos
@@ -2156,6 +2156,10 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     pode gravar: o instalador dele saia com codigo 1 antes de escrever o log.
     O CI usa o `ProcessStartInfo` do .NET sem tocar no `Environment`, e ai o
     Windows monta o ambiente do proprio usuario, como num login;
+  - **a fonte do Inno que vale e a da TAG que o CI instala** (`is-6_7_1`),
+    nao a do `main`: o `main` ja tem funcoes que o 6.7 nao tem, e o
+    `ExecAndLogOutputWithNativeSysDir`, lido la, virou "Unknown identifier"
+    no ISCC (25-set-2026). O mesmo vale para a ajuda do site deles;
   - `net user` com senha de **mais de 14 caracteres** pergunta se pode
     continuar e espera um "S" -- no CI, para sempre;
   - o PowerShell converte inteiro para `IntPtr` sem ambiguidade, e para

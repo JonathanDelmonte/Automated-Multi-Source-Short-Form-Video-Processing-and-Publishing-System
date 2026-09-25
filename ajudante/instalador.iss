@@ -468,13 +468,14 @@ begin
     Parametros := '-NoProfile -ExecutionPolicy Bypass -File "' +
       ExpandConstant('{app}\versoes\{#Versao}\ajudante\instalar.ps1') + '" -Base "' +
       ExpandConstant('{app}') + '" -SemPausa';
-    // O PowerShell de 64 bits (WithNativeSysDir). O Exec comum, num instalador
-    // de 32 bits como este, abre o de 32 (o System32 vira SysWOW64), que nao
-    // ve o nvidia-smi: a placa NVIDIA do notebook de um amigo do autor ficou
-    // de fora assim (25-set-2026).
+    // O PowerShell de 64 bits, pelo Sysnative. O Exec comum, num instalador de
+    // 32 bits como este, abre o de 32 (o System32 vira SysWOW64), que nao ve o
+    // nvidia-smi: a placa NVIDIA do notebook de um amigo do autor ficou de
+    // fora assim (25-set-2026). O {sysnative} e o caminho que o Inno 6.7 tem;
+    // o ExecAndLogOutputWithNativeSysDir so existe numa versao posterior.
     try
-      Rodou := ExecAndLogOutputWithNativeSysDir(
-        ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parametros,
+      Rodou := ExecAndLogOutput(
+        ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe'), Parametros,
         ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Codigo, @AoLerLinhaDoMotor);
     except
       Log(GetExceptionMessage);

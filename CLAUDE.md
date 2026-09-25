@@ -2031,11 +2031,13 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   - o uv cria um atalho de pasta (junction) por versao menor do Python
     (`cpython-3.11-windows-...` apontando para a pasta da versao exata);
   - o Inno Setup 6.7 liga por padrao a **RedirectionGuard** do Windows, que
-    recusa atravessar atalho criado por usuario comum -- e ela estava ativa no
-    processo do uv, neto do instalador (o 448 e a assinatura dela), embora a
-    ajuda do Inno diga que filhos nao a herdam. Herdada ou ligada por politica
-    da maquina, o conserto cobre os dois; a linha "protecao de
-    redirecionamento" do `instalacao.log` diz qual foi;
+    recusa atravessar atalho criado por usuario comum -- e **os filhos do
+    instalador a herdam**, ao contrario do que diz a ajuda do Inno. Medido no
+    CI em 25-set-2026: com `/REDIRECTIONGUARD`, o `instalar.ps1` registra
+    "protecao de redirecionamento do Windows: LIGADA"; com o
+    `RedirectionGuard=no` do `.iss`, "desligada". Foi por ai que ela chegou ao
+    uv, neto do instalador. Nao voltar a diretiva para `yes` confiando na
+    ajuda;
   - o runner do GitHub e administrador, e atalho criado por administrador e
     "confiavel": por isso o CI instalava verde.
 

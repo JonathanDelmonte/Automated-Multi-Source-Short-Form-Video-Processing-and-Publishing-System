@@ -771,9 +771,11 @@ respondeu *"Failed to create Python minor version link directory"*, erro 448
 (*"o caminho não pode ser atravessado porque contém um ponto de montagem não
 confiável"*). O uv cria um atalho de pasta (junction) para cada versão menor do
 Python; o Inno Setup 6.7 liga por padrão a **RedirectionGuard** do Windows, que
-recusa atravessar atalho criado por usuário comum; e ela estava ativa no uv, neto
-do instalador — o 448 é a assinatura dela. O CI nunca viu porque o runner do
-GitHub é administrador — atalho de administrador é "confiável".
+recusa atravessar atalho criado por usuário comum; e ela passa aos programas que o
+instalador abre — ao contrário do que diz a ajuda do Inno, e medido no CI: com a
+proteção forçada, o PowerShell do `instalar.ps1` a registra ligada. Foi assim que
+chegou ao uv. O CI nunca viu porque o runner do GitHub é administrador — atalho de
+administrador é "confiável".
 
 O item 1 muda em uma coisa: **o CPython standalone vem dentro do `.exe`**
 (`empacotar.py --python`), e o `uv` roda com `UV_PYTHON_DOWNLOADS=never` — usa esse

@@ -341,6 +341,23 @@ def test_o_zip_nao_leva_a_marca_e_o_conteudo_nao_depende_da_versao(tmp_path):
     assert json.loads((tmp_path / "s1" / "versao.json").read_text())["versao"] == "11"
 
 
+def test_mudanca_so_no_instalador_tambem_vira_versao_nova(tmp_path):
+    """O CI publica quando a impressao digital muda. Ela e do motor -- mas o
+    .iss nao vai no motor, e sem ele uma mudanca so no instalador nao seria
+    publicada: o site continuaria oferecendo o instalador de antes."""
+    import empacotar
+    assert empacotar.AQUI / "instalador.iss" in empacotar.SO_DO_INSTALADOR
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    (motor / "app.py").write_text("# motor\n")
+    iss = tmp_path / "instalador.iss"
+    iss.write_text("[Setup]\nAppName=Virtu Clips\n")
+    antes = empacotar.impressao_do_conteudo(motor, (iss,))
+    assert empacotar.impressao_do_conteudo(motor, (iss,)) == antes
+    iss.write_text("[Setup]\nAppName=Virtu Clips\nWizardStyle=modern dark\n")
+    assert empacotar.impressao_do_conteudo(motor, (iss,)) != antes
+
+
 def test_o_python_vai_no_instalador_e_nao_na_atualizacao(tmp_path):
     """O Python embutido (desde 24-set-2026, o erro 448) vai em pacote/python,
     que o .iss copia; o motor.zip da atualizacao nao o leva -- a instalacao ja

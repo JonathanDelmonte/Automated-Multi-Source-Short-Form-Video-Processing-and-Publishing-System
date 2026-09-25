@@ -2017,7 +2017,10 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   de ninguem -- e por isso o pacote nao leva `.md`, Dockerfile, compose,
   `.env.example`, `cli/` nem `skills/` (`empacotar.FORA*`). A primeira
   versao, `ajudante-523`, levava o `CLAUDE.md`: cada commit de texto seria uma
-  versao nova. `LICENSE` e `NOTICE` ficam, porque a licenca manda.
+  versao nova. `LICENSE` e `NOTICE` ficam, porque a licenca manda. **O
+  `.iss` entra na conta** (`empacotar.SO_DO_INSTALADOR`), embora nao va no
+  motor: sem ele, uma mudanca so no instalador nunca viraria versao, e o site
+  continuaria oferecendo o instalador de antes.
 - **`CORTES_ORIGEM_ESTRITA=1` sob o ajudante**: POST/PUT/PATCH/DELETE com
   `Origin` fora de `origens.py` e 403 antes do endpoint. Sem `Origin` passa --
   e programa, nao navegador.

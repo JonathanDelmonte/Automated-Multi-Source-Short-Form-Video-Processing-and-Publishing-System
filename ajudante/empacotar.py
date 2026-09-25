@@ -77,15 +77,26 @@ def rastreados() -> list:
     return [linha for linha in saida.splitlines() if linha]
 
 
-def impressao_do_conteudo(motor: Path) -> str:
+# O que so o INSTALADOR leva, fora do motor. Sem isto na impressao digital,
+# uma mudanca so no .iss (um conserto na pagina "reinstalar ou desinstalar",
+# por exemplo) nao viraria versao nova -- e quem baixasse pelo site pegaria o
+# instalador de antes.
+SO_DO_INSTALADOR = (AQUI / "instalador.iss",)
+
+
+def impressao_do_conteudo(motor: Path, extras=()) -> str:
     """O motor inteiro menos o que muda a cada empacotamento (a versao, a
-    marca de completa): duas versoes com o mesmo codigo dao o mesmo numero."""
+    marca de completa), mais os `extras`: duas versoes com o mesmo codigo dao
+    o mesmo numero."""
     h = hashlib.sha256()
     for arquivo in sorted(motor.rglob("*")):
         rel = arquivo.relative_to(motor).as_posix()
         if not arquivo.is_file() or rel in ("VERSAO", MARCA_COMPLETA):
             continue
         h.update(rel.encode() + b"\0" + hashlib.sha256(arquivo.read_bytes()).digest())
+    for arquivo in extras:
+        h.update(b"instalador:" + Path(arquivo).name.encode() + b"\0"
+                 + hashlib.sha256(Path(arquivo).read_bytes()).digest())
     return h.hexdigest()
 
 
@@ -136,7 +147,7 @@ def empacotar(versao: str, pasta_bin: Path, commit: str = "",
         "versao": versao,
         "tag": f"ajudante-{versao}",
         "commit": commit,
-        "conteudo": impressao_do_conteudo(motor),
+        "conteudo": impressao_do_conteudo(motor, SO_DO_INSTALADOR),
         "dependencias": assinatura_das_dependencias(motor),
         "motor_zip_sha256": hashlib.sha256((saida / "motor.zip").read_bytes()).hexdigest(),
     }

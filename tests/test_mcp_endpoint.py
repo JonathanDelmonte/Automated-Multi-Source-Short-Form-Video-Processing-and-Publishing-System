@@ -33,7 +33,7 @@ class TestTransport:
         resp = _post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                       "params": {"protocolVersion": "2025-06-18"}})
         assert resp.status_code == 200
-        assert resp.json()["result"]["serverInfo"]["name"] == "openshorts"
+        assert resp.json()["result"]["serverInfo"]["name"] == "virtu-clips"
 
     def test_notification_gets_202(self):
         resp = _post({"jsonrpc": "2.0", "method": "notifications/initialized"})

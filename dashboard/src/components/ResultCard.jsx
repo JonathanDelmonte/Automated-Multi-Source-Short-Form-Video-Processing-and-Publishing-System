@@ -594,7 +594,7 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
                     {Number.isFinite(clip.predicted_score) && (
                         <span
                             className="bg-black/70 font-mono text-micro uppercase px-2 py-1 rounded-full flex items-center gap-1"
-                            title="openshorts' prediction of how well this clip will perform, from 0 to 100"
+                            title="A nota que a IA deu a este corte: quanto ela acha que ele pode render, de 0 a 100"
                         >
                             <TrendingUp size={11} className="shrink-0 text-muted" />
                             <span className="text-muted">viral</span>

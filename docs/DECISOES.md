@@ -758,6 +758,12 @@ Instalar exige internet (o Python e as bibliotecas vêm na hora). E a pessoa ain
 precisa de uma chave de IA: hoje, a do Gemini colada em Configurações, ou um
 `dados\.env` com as da cascata — pendente de uma forma mais simples.
 
+> **Nota de 25-set-2026:** as duas pendências fecharam. O Python passou a vir
+> DENTRO do instalador (24-set, depois do erro 448; só as bibliotecas vêm na
+> hora), e as chaves de todas as IAs da cascata se colam em Configurações →
+> Chaves de IA: o motor confere cada uma com a IA e a guarda (`chaves_ia.py`),
+> sem arquivo para editar.
+
 **Revisão se:** o `uv` deixar de publicar o CPython standalone para Windows; o
 tamanho das bibliotecas tornar a instalação inviável em conexão lenta (aí um
 instalador "completo", com tudo dentro, como segunda opção); ou o Mac e o Linux

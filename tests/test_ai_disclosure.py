@@ -41,7 +41,7 @@ class TestTheFileIsMarked:
         # XMP, so the two together survive more pipelines than either alone.
         with Image.open(saved) as img:
             exif = img.getexif()
-            assert "OpenShorts" in str(exif.get(0x0131, ""))
+            assert "Virtu Clips" in str(exif.get(0x0131, ""))
             assert "AI-generated" in str(exif.get(0x010E, ""))
 
 
@@ -66,7 +66,7 @@ class TestItStaysAThumbnail:
         thumbnail.finalize_thumbnail(Image.new("RGB", (1600, 900)), out)
         assert os.path.getsize(out) > 0
         with Image.open(out) as img:
-            assert "OpenShorts" in str(img.getexif().get(0x0131, ""))
+            assert "Virtu Clips" in str(img.getexif().get(0x0131, ""))
 
 
 def test_the_packet_is_well_formed_xml():

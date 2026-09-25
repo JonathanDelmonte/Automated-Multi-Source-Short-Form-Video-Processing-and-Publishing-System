@@ -14,14 +14,15 @@ Self-host keeps its BYOK semantics: no key required, ``X-Gemini-Key`` /
 env fallbacks apply unchanged.
 
 Connect with any MCP client, e.g.:
-    claude mcp add --transport http openshorts https://mcp.openshorts.app/mcp \
-        --header "Authorization: Bearer osk_..."
+    claude mcp add --transport http virtu-clips http://localhost:8000/mcp
 
-(mcp.openshorts.app is a domain alias of the API app; api.openshorts.app/mcp
-serves the identical endpoint.)
+(Neste fork o endereco e o do motor de quem usa: 8000 no Docker, 8001 no
+ajudante. O `mcp.openshorts.app` e as chaves `osk_` eram do produto em nuvem
+do upstream e sairam com o `cloud/`, no ADR-001.)
 """
 import json
 import os
+from contextvars import ContextVar
 from typing import Optional
 
 import httpx
@@ -33,12 +34,17 @@ import mcp_ui
 router = APIRouter()
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "openshorts", "title": "OpenShorts", "version": "1.0.0"}
+# O nome e o que o agente mostra e repete a quem usa. Era "OpenShorts", que
+# falava do video sendo analisado "nos servidores dele": aqui o motor roda no
+# computador de quem usa, e dizer o contrario e informacao falsa sobre para
+# onde o video vai.
+SERVER_INFO = {"name": "virtu-clips", "title": "Virtu Clips", "version": "1.0.0"}
 INSTRUCTIONS = (
-    "OpenShorts turns long videos (YouTube URLs or direct video files) into "
+    "Virtu Clips turns long videos (YouTube URLs or direct video files) into "
     "viral-ready vertical clips. When the user gives you a video URL, hand it "
-    "to process_video exactly as written: OpenShorts downloads, transcribes "
-    "and analyses the video on its own servers. Do NOT try to open, fetch, "
+    "to process_video exactly as written: Virtu Clips downloads, transcribes "
+    "and analyses the video on the user's own computer, where this server "
+    "runs. Do NOT try to open, fetch, "
     "search for, summarise or transcribe the URL yourself first; you cannot "
     "reach the video and it is not needed. Typical flow: process_video -> "
     "poll get_job_status until 'completed' (a job takes minutes; poll every "
@@ -60,7 +66,7 @@ TOOLS = [
         "name": "process_video",
         "title": "Process a video into short clips",
         "description": (
-            "Start clipping a video from its URL. OpenShorts downloads the "
+            "Start clipping a video from its URL. Virtu Clips downloads the "
             "source itself, transcribes it, finds the most viral moments with AI "
             "and renders vertical (9:16) clips. Captions and the AI hook line are "
             "burned by default; pass captions=false or auto_hook=false to skip either. "
@@ -372,8 +378,23 @@ async def _tool_get_job_status(client, args):
     return out, data.get("status") == "failed"
 
 
+# O endereco por onde o agente chegou ao motor (http://localhost:8000, no
+# Docker). Sem ele os links dos cortes saiam relativos ("/videos/..."), que o
+# agente repassa e ninguem consegue abrir: o `PUBLIC_API_URL` que os tornava
+# absolutos era do deploy em nuvem do upstream. Vazio no stdio, onde nao ha
+# servidor web para servir o arquivo.
+_BASE_DE_QUEM_CHAMOU: ContextVar[str] = ContextVar("_base_de_quem_chamou", default="")
+
+
+def _base_de(request: Request) -> str:
+    if request.scope.get("mcp_stdio"):
+        return ""
+    u = request.base_url
+    return f"{u.scheme}://{u.netloc}"
+
+
 def _clip_summaries(job_id, result):
-    base = os.environ.get("PUBLIC_API_URL", "").rstrip("/")
+    base = (os.environ.get("PUBLIC_API_URL", "") or _BASE_DE_QUEM_CHAMOU.get()).rstrip("/")
     out = []
     for i, clip in enumerate(result.get("clips") or []):
         rel = clip.get("video_url") or ""
@@ -468,6 +489,7 @@ async def call_tool(request: Request, name: str, args: dict) -> tuple[dict, bool
     impl = _TOOL_IMPLS.get(name)
     if impl is None:
         return {"error": f"Unknown tool: {name}"}, True
+    marca = _BASE_DE_QUEM_CHAMOU.set(_base_de(request))
     try:
         async with _client(request) as client:
             return await impl(client, args or {})
@@ -475,6 +497,8 @@ async def call_tool(request: Request, name: str, args: dict) -> tuple[dict, bool
         return {"error": f"Missing required argument: {e}"}, True
     except Exception as e:
         return {"error": f"Tool failed: {e}"}, True
+    finally:
+        _BASE_DE_QUEM_CHAMOU.reset(marca)
 
 
 # --------------------------------------------------------------------------- #
@@ -525,7 +549,7 @@ async def handle_message(msg, tool_caller) -> Optional[dict]:
         return _rpc_result(msg_id, {"resourceTemplates": []})
     if method == "resources/read":
         uri = (msg.get("params") or {}).get("uri") or ""
-        # Per-call URIs (ui://openshorts/clip-picker/<job>) resolve to the same
+        # Per-call URIs (ui://virtu-clips/clip-picker/<job>) resolve to the same
         # template; the data those carried was baked into the tool result.
         if uri == mcp_ui.CLIP_PICKER_URI or uri.startswith(mcp_ui.CLIP_PICKER_URI + "/"):
             return _rpc_result(msg_id, {"contents": [{

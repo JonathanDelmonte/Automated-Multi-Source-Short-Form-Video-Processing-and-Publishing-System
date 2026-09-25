@@ -546,15 +546,18 @@ AI_XMP_PACKET = (
     ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
     ' Iptc4xmpExt:DigitalSourceType='
     '"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"'
-    ' xmp:CreatorTool="OpenShorts (openshorts.app)">'
+    ' xmp:CreatorTool="Virtu Clips">'
     '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">'
-    'AI-generated image produced with OpenShorts (openshorts.app)'
+    'AI-generated image produced with Virtu Clips'
     '</rdf:li></rdf:Alt></dc:description>'
     '</rdf:Description></rdf:RDF></x:xmpmeta>'
     '<?xpacket end="w"?>'
 ).encode("utf-8")
 
-AI_SOFTWARE_TAG = "OpenShorts (openshorts.app) — AI-generated image"
+# Era "OpenShorts (openshorts.app)": toda miniatura do YouTube Studio saia
+# dizendo, nas propriedades do arquivo, que foi feita pelo produto do upstream.
+# O aviso de imagem gerada por IA fica; so o nome da ferramenta e o nosso.
+AI_SOFTWARE_TAG = "Virtu Clips — AI-generated image"
 
 
 def _ai_save_kwargs(img):

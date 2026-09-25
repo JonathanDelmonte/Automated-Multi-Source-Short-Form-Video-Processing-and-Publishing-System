@@ -1240,10 +1240,23 @@ portrait clip cannot reproduce the shrink either.
 > conhece o motor deste computador e diz que nada ali le a conta de ninguem --
 > foi a primeira pergunta do autor ao ve-lo. A lista de ferramentas que ele
 > mostra e comparada com o `mcp_server.TOOLS` (`tests/test_cartao_do_agente.py`).
-> Ficou para a proxima mudanca de motor: o `SERVER_INFO` ainda se apresenta
-> como `openshorts` (tres testes prendem o nome) e as `INSTRUCTIONS` dizem ao
-> agente que o video e analisado "on its own servers" -- aqui e o computador
-> de quem usa.
+>
+> E o motor, na mudanca seguinte (mesmo dia; o autor: "senao a gente esquece"):
+> - **se apresenta como `virtu-clips`** e diz ao agente que o video e analisado
+>   no computador de quem usa. Era `openshorts`, "on its own servers" -- e o
+>   agente repete o que le;
+> - **os links dos cortes saem absolutos pelo endereco por onde o agente
+>   chegou** (`_BASE_DE_QUEM_CHAMOU`, posto em `call_tool`). Sairiam relativos
+>   (`/videos/...`): so o `PUBLIC_API_URL` da nuvem os completava, e ele ainda
+>   vence quando existe. No stdio ficam relativos: la nao ha servidor web, e o
+>   `mcp_stdio` marca o proprio escopo (`"mcp_stdio": True`) em vez de o
+>   `_base_de` adivinhar pelo nome do host;
+> - **o quadro de cortes (`mcp_ui.py`) so mostra**: a barra de publicar chamava
+>   a `publish_clip`, que saiu na Fase 0.3, e o agente recebia "Unknown tool".
+>   Um teste falha se o quadro voltar a chamar ferramenta que o motor nao tem.
+>
+> `tests/test_mcp_sem_o_upstream.py` cobre os tres, e cada teste foi conferido
+> contra o defeito de volta.
 
 - **API keys** (`cloud/api_keys.py`): `osk_...` tokens, sha256-stored, created in
   the dashboard account page. `cloud/auth.get_current_user_optional` accepts
@@ -1399,6 +1412,25 @@ preto por baixo.
   - o template semeado "Padrao Cortes": o seed procura pelo NOME, e renomear
     criaria uma segunda linha em todo banco que ja existe. E "cortes" ali e o
     substantivo comum.
+- **O "OpenShorts" saiu de tudo o que alguem ve** (25-set-2026): o agente
+  (secao "Agent access"), as propriedades de toda miniatura do YouTube Studio
+  (`thumbnail.AI_SOFTWARE_TAG` e o XMP: o aviso de imagem gerada por IA fica, o
+  nome da ferramenta e o nosso), o ZIP do "baixar tudo" (`cortes_<id>.zip`,
+  como o pacote do dia), o erro de video sem audio e a dica da nota "viral" de
+  cada corte. **Ficou, de proposito**, e pelos mesmos motivos da lista acima:
+  - o `X-OpenShorts-Signature` (e o User-Agent) do webhook e o
+    `OPENSHORTS_API_KEY` do stdio: sao contrato de quem esta do outro lado, e
+    renomea-los quebra a conferencia dele sem erro nenhum aqui;
+  - os nomes internos (`openshorts.internal`, `__OPENSHORTS_DATA__`) e as
+    chaves de localStorage `openshorts_*`;
+  - `fonts/openshorts-fontmap.conf`: o Dockerfile o copia, e mexer ali e
+    reconstruir a imagem (40 min) por um nome de arquivo;
+  - `server.json` e `glama.json`, os registros do MCP do upstream: ja ficam
+    fora do instalador, e apaga-los daria conflito em todo `git fetch
+    upstream` que mudasse a versao deles;
+  - a marca d'agua (`assets/make_watermark.py`) e a UI de cobranca: so ligam no
+    plano gratuito da nuvem do upstream, inalcancavel aqui;
+  - `LICENSE` e `NOTICE`: a licenca MIT manda manter o credito.
 
 ### GPU: sao dois passos, e os atalhos dao os dois
 

@@ -3735,7 +3735,7 @@ async def download_all_clips(job_id: str, request: Request):
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"openshorts_clips_{job_id[:8]}.zip",
+        filename=f"cortes_{job_id[:8]}.zip",
         background=BackgroundTask(os.remove, zip_path),
     )
 

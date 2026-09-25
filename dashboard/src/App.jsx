@@ -204,7 +204,7 @@ function EsperandoServidor() {
         <div className="max-w-md text-center space-y-4">
           {/* A primeira coisa que quem chega pelo site vê: a marca, antes de
               qualquer explicação. */}
-          <img src="/virtu-clips.png" alt="Virtu Clips" className="mx-auto h-24 w-auto mb-2" />
+          <img src="/virtu-clips.png" alt="Virtu Clips" className="mx-auto h-20 w-auto mb-2" />
           <p className="flex items-center justify-center gap-2 text-sm text-ink2">
             <Loader2 size={15} className="animate-spin text-brass" /> procurando o Virtu Clips neste computador…
           </p>
@@ -1077,7 +1077,7 @@ function App() {
           no trilho estreito (md), onde a logo seria um borrão de 32 px. */}
       <a href="#app" className="p-6 pb-4 flex items-center" title="início">
         <img src="/favicon.png" alt="Virtu Clips" className="w-8 h-8 rounded-input shrink-0 lg:hidden" />
-        <img src="/virtu-clips.png" alt="Virtu Clips" className="hidden lg:block h-16 w-auto" />
+        <img src="/virtu-clips.png" alt="Virtu Clips" className="hidden lg:block h-12 w-auto" />
       </a>
 
       <nav className="flex-1 px-4 py-4 space-y-1">
@@ -1129,7 +1129,7 @@ function App() {
       <div className="relative w-[17rem] max-w-[82vw] h-full bg-paper2 border-r border-rule flex flex-col animate-slide-in-left">
         <div className="flex items-center justify-between px-5 h-14 border-b border-rule shrink-0">
           <a href="#app" className="flex items-center" onClick={() => setNavOpen(false)}>
-            <img src="/virtu-clips.png" alt="Virtu Clips" className="h-10 w-auto" />
+            <img src="/virtu-clips.png" alt="Virtu Clips" className="h-8 w-auto" />
           </a>
           <button
             onClick={() => setNavOpen(false)}
@@ -1342,7 +1342,7 @@ function App() {
           </div>
         )}
 
-        {/* O motor do Docker atrás do site (o ajudante se atualiza sozinho). */}
+        {/* O motor atrás do site, com o botão que o atualiza (Docker e ajudante). */}
         <AvisoDoMotor motor={motor} />
 
         {/* Session Recovery Banner */}

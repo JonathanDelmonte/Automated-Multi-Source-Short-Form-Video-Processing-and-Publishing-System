@@ -77,6 +77,14 @@ ninguem reler. O bind mount do Windows nao repassa evento de arquivo (ver
 modulos do Vite percebem sozinhos. Ja aconteceu por eu ter mandado `git pull` +
 `subir-gpu.bat`: o painel abriu **em preto**, sem erro e sem log.
 
+**Desde 25-set-2026 ha o botao "atualizar agora" no site**, no aviso de motor
+atras do site: para mudanca de CODIGO ele faz o mesmo que o atalho, pelo
+navegador (ver "O motor se atualiza pelo botao do site"). Quando a versao nova
+mexe no que mora na imagem (dependencias, Dockerfile, compose), ele recusa e
+manda o atalho -- entao o atalho continua sendo a resposta completa, e o botao
+a curta. A primeira vez ainda e pelo atalho: o motor que roda precisa ja ter o
+endpoint.
+
 ### Idioma
 
 Documentacao, mensagens de commit e comentarios novos em portugues. Codigo
@@ -1216,6 +1224,7 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
+| POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -2010,8 +2019,8 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
 - **A versao e a contagem de commits da `main`.** O `empacotar.py` grava
   `VERSAO`; o Docker calcula pelo git ao subir (`versao_do_motor.py`, com
   `safe.directory` e recusando clone raso). O `/api/config` manda `motor`, e o
-  `AvisoDoMotor` do painel avisa -- so no Docker -- quando a publicada e mais
-  nova.
+  `AvisoDoMotor` do painel avisa quando a publicada e mais nova -- no Docker e
+  no ajudante, com o botao que atualiza (secao seguinte).
 - **O CI so publica quando o motor muda** (`conteudo` do `versao.json`, a
   impressao digital sem a versao). Commit de documentacao nao reinicia o motor
   de ninguem -- e por isso o pacote nao leva `.md`, Dockerfile, compose,
@@ -2175,6 +2184,77 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     volta dele publica, e as versoes saem em ordem.
 - **O que o CI nao prova**: placa, YouTube, IA de verdade, o icone e o
   SmartScreen. O roteiro para o PC do autor esta no `COMO-EXECUTAR.md`.
+
+### O motor se atualiza pelo botao do site (`atualizar_motor.py`, 25-set-2026)
+
+O aviso "o motor deste computador esta atras do site" mandava rodar o
+`atalhos\atualizar.bat`, e so aparecia no Docker. O autor pediu, para ele e para
+o amigo do ajudante, "clicar em atualizar e atualizava, pelo proprio navegador".
+`POST /api/motor/atualizar`, e o botao no `AvisoDoMotor.jsx`.
+
+- **No ajudante o motor so deixa o pedido** (`dados\.atualizar-agora`, caminho
+  em `CORTES_PEDIDO_DE_ATUALIZACAO`, que esta em `PROTEGIDAS`), e quem troca e
+  a bandeja, pelo caminho de sempre -- verificacao na porta de teste e volta
+  atras. Duas maneiras de trocar de versao seriam duas maneiras de errar. O
+  `vigiar` olha o pedido a cada 10 s (`PASSO_DO_PEDIDO_S`) em vez de esperar as
+  6 h, e com ele o `pode_trocar_agora(urgente=True)` dispensa os 5 min de
+  ocioso -- quem apertou o botao esta no painel, e o proprio pedido conta como
+  atividade. Video na fila continua segurando a troca.
+  - O prazo e contado em PASSOS do `parar.wait`, nao pelo relogio
+    (`_esperar`): e o que deixa os testes rodarem com um Event falso.
+- **No Docker o motor avanca o checkout e reinicia o container.** `git fetch`
+  + `merge --ff-only` sobre o repositorio montado em `/app`; depois, SIGTERM ao
+  processo 1 (o reloader do uvicorn), e o `restart: unless-stopped` o sobe com
+  o codigo novo. O `--reload` nao serviria: o bind mount nao repassa evento.
+  - **So com o uvicorn do NOSSO compose** (`subiu_pelo_compose`: `uvicorn` e
+    `--reload` no `/proc/1/cmdline`). Sem a politica de restart, parar o
+    processo 1 DESLIGARIA o motor, e de dentro do container nao da para
+    pergunta-la ao Docker. Um teste congela a politica nos dois servicos.
+  - **O reinicio nao espera os 20 s do proxy** (`_reinicio_pedido` ->
+    `proxy_grace=0` no `on_sigterm`): aquilo e do deploy em nuvem. Medido com
+    o reloader de verdade: o processo 1 sai 2,6 s depois do clique.
+  - **O painel reinicia pela marca `dashboard/.reiniciar-painel`**, gravada so
+    quando algum arquivo de `dashboard/` mudou, e vigiada por `fs.watchFile` no
+    `vite.config.js` (enxerga a escrita de outro container no mesmo mount).
+    **No Docker o Vite SAI** e o restart policy o sobe: o `server.restart()` do
+    Vite 4 fecha o servidor antes de criar o novo, e foi medido -- se a troca
+    cai na pre-otimizacao das dependencias, o novo nunca sobe e o processo fica
+    vivo sem ouvir a porta. Nao trocar de volta.
+- **O que mora na imagem o botao recusa** (`fica_na_imagem`, `e_do_compose`):
+  `requirements.txt` da raiz, todo `package.json`/lock, todo `Dockerfile*`,
+  `.dockerignore`, `render-service/`, `remotion/`, o mapa de fontes (o
+  Dockerfile o poe no fontconfig) e os `docker-compose*`. Avancar o codigo sem
+  a imagem subiria um motor importando o que ela nao tem. Responde
+  `precisa_do_atalho` com os arquivos e **nao toca no checkout** -- metade de
+  uma versao e o pior dos dois mundos. As fontes `.ttf` NAO entram: a legenda
+  as le da pasta montada (`fontsdir`), e ha teste amarrando isso.
+  `test_tudo_o_que_as_imagens_copiam_fica_para_o_atalho` le os `COPY` dos
+  Dockerfiles e falha se um novo nao estiver coberto.
+- **A distancia e do commit com que o motor SUBIU** (`_MOTOR_COMMIT`), nao do
+  disco: um pull pelo GitHub Desktop sem reinicio deixa o disco em dia e o
+  motor para tras -- e, se trouxe uma dependencia, reiniciar sem reconstruir e
+  o mesmo erro por outro caminho.
+- **O git do container repete a configuracao do git do Windows**, que ele nao
+  le (fica na configuracao do SISTEMA do git para Windows): `core.autocrlf`
+  detectado pelo CRLF em `app.py`/`main.py`/`README.md`, `core.filemode=false`
+  (o NTFS montado parece todo executavel). Sem o primeiro, medido no teste, o
+  merge e RECUSADO ("mudancas locais" em tudo) -- ou, com o stat em dia, grava
+  LF no meio de uma pasta CRLF, e `.bat` com LF faz o cmd.exe errar o `goto`.
+  Tambem `credential.helper=` e `GIT_TERMINAL_PROMPT=0`: pedir senha e erro,
+  nunca espera.
+- **So fast-forward, nunca mistura**: commit local, outra branch, mudanca a mao
+  no caminho da versao nova ou arquivo solto com o nome de um que chega viram
+  recusa com a causa, e o arquivo fica intacto.
+- **So aceita `Content-Type: application/json`, conferido a mao.** Pedido JSON
+  de outra origem exige preflight, que o CORS so deixa as paginas do painel
+  passarem. Mas o FastAPI le como JSON um corpo SEM tipo -- e um `fetch`
+  `no-cors` de qualquer site manda exatamente isso, sem preflight. Com a auth
+  ativa, so o dono (o motor e um so para todas as contas).
+- **O site espera o motor voltar** perguntando `/api/config` a cada 3 s, e
+  recarrega quando a versao muda. Dois prazos: sair do ar (Docker 1 min,
+  ajudante 5 min -- se o ajudante nao comecou, ou ha video na fila ou nao
+  havia o que trocar) e voltar (3 e 20 min). Motor de antes do botao responde
+  404, e o aviso explica o caminho de cada um.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

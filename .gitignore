@@ -66,3 +66,7 @@ skills-lock.json
 # O que o ajudante/empacotar.py monta para o instalador (CI do Windows).
 ajudante/pacote/
 ajudante/saida/
+
+# A marca que o motor grava quando se atualiza pelo botao do site, e o dev
+# server do painel vigia para se reiniciar (atualizar_motor.py).
+/dashboard/.reiniciar-painel

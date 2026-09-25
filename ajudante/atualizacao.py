@@ -3,7 +3,9 @@
 O CI do Windows publica no GitHub Releases, a cada mudanca no motor que passa
 pela instalacao de verdade, tres arquivos: o instalador, o `motor.zip` e o
 `versao.json`. O ajudante confere de 6 em 6 horas e, quando ha versao nova,
-prepara-a sem parar nada; so troca quando o motor esta livre.
+prepara-a sem parar nada; so troca quando o motor esta livre. O botao
+"atualizar agora" do site (25-set-2026) so encurta a espera: o motor deixa o
+pedido na pasta de dados, e o `vigiar` confere na hora, pelo mesmo caminho.
 
 **Cada versao mora na sua pasta** (`versoes/<versao>/`), e a que vale e a que
 o `atual.txt` nomeia. Trocar de versao e reescrever esse arquivo -- um
@@ -56,6 +58,10 @@ RELEASES = f"https://github.com/{REPO}/releases"
 
 INTERVALO_S = 6 * 3600
 PRIMEIRA_CONFERENCIA_S = 120
+# De quanto em quanto a bandeja olha se o site pediu "Atualizar agora" (o motor
+# deixa `aj.PEDIDO_DE_ATUALIZACAO` em `dados\`). Um `exists()` a cada 10 s nao
+# custa nada, e e o quanto a pessoa espera o botao comecar a agir.
+PASSO_DO_PEDIDO_S = 10
 # Ninguem mexendo no painel ha 5 minutos. Uma legenda sendo queimada e um
 # pedido sincrono, que nao aparece como job: e o ocioso que a protege.
 OCIOSO_MINIMO_S = 300
@@ -273,22 +279,63 @@ def saude(porta: int = aj.PORTA) -> Optional[dict]:
         return None
 
 
-def pode_trocar_agora(estado_do_ajudante: str, saude_fn: Callable[[], Optional[dict]] = saude) -> bool:
+def pode_trocar_agora(estado_do_ajudante: str, saude_fn: Callable[[], Optional[dict]] = saude,
+                      urgente: bool = False) -> bool:
     """So com o NOSSO motor de pe ha o que proteger. Com o Docker atendendo,
     o motor parado ou quebrado, a troca nao interrompe ninguem -- e pode ser
-    justamente o conserto."""
+    justamente o conserto.
+
+    `urgente` e o botao "Atualizar agora" do site: quem pediu esta no painel,
+    entao os 5 minutos sem ninguem mexer nunca chegariam -- o proprio pedido
+    conta como atividade. Um video na fila continua segurando a troca.
+    """
     if estado_do_ajudante != aj.PRONTO:
         return True
     s = saude_fn()
     if not s or "jobs_ativos" not in s:
         return True  # motor sem resposta: reiniciar nao tira nada de ninguem
-    return s.get("jobs_ativos", 0) == 0 and s.get("ocioso_s", 0) >= OCIOSO_MINIMO_S
+    if s.get("jobs_ativos", 0) != 0:
+        return False
+    return urgente or s.get("ocioso_s", 0) >= OCIOSO_MINIMO_S
+
+
+def consumir_pedido(c) -> bool:
+    """Se o site pediu "Atualizar agora" (o motor deixou a marca). Apaga a
+    marca: um pedido e uma conferencia, nao uma a cada volta."""
+    marca = c.dados / aj.PEDIDO_DE_ATUALIZACAO
+    if not marca.exists():
+        return False
+    try:
+        marca.unlink()
+    except OSError:
+        pass
+    return True
+
+
+def _esperar(parar, segundos: float, pedido_fn: Callable[[], bool],
+             passo_s: float) -> Optional[bool]:
+    """Espera `segundos` olhando o pedido do site a cada `passo_s`. Devolve
+    True se chegou um pedido, False se o prazo acabou, None se mandaram parar.
+
+    Conta o prazo em passos, e nao pelo relogio: e o `parar.wait` que dorme.
+    """
+    resta = segundos
+    while True:
+        if pedido_fn():
+            return True
+        if resta <= 0:
+            return False
+        passo = resta if passo_s <= 0 else min(passo_s, resta)
+        if parar.wait(passo):
+            return None
+        resta -= passo
 
 
 def vigiar(c, estado_fn: Callable[[], str], parar, lancar_fn, sair_fn, log,
            preparar_fn=preparar_se_houver, pode_fn=pode_trocar_agora,
            primeira_s: float = PRIMEIRA_CONFERENCIA_S, intervalo_s: float = INTERVALO_S,
-           espera_s: float = 60) -> None:
+           espera_s: float = 60, pedido_fn: Callable[[], bool] = lambda: False,
+           passo_s: float = PASSO_DO_PEDIDO_S) -> None:
     """O laco da bandeja: prepara a versao nova sem parar nada, espera o motor
     ficar livre, e so entao entrega a troca a outro processo e sai.
 
@@ -296,18 +343,28 @@ def vigiar(c, estado_fn: Callable[[], str], parar, lancar_fn, sair_fn, log,
     carregados, e o Windows nao deixaria o uv substitui-los se a versao nova
     mudar as dependencias. Se esse processo nao conseguir nem comecar, o
     ajudante FICA -- sair ali deixaria a pessoa sem ajudante nenhum.
+
+    O pedido do site (`pedido_fn`) encurta as esperas: confere na hora, em vez
+    de daqui a ate 6 horas, e troca sem esperar o painel ficar ocioso. O
+    caminho e o MESMO da troca sozinha -- verificacao e volta atras inclusas.
     """
-    if parar.wait(primeira_s):
+    urgente = _esperar(parar, primeira_s, pedido_fn, passo_s)
+    if urgente is None:
         return
     while not parar.is_set():
+        if urgente:
+            log("o site pediu para atualizar agora")
         try:
             nova = preparar_fn(c, log)
         except Exception as e:  # sem internet, GitHub fora do ar: tenta depois
             log(f"conferir atualizacao: {e!r}")
             nova = None
+        if nova is None and urgente:
+            log("o site pediu, mas nao ha versao nova que se possa trocar agora")
         if nova is not None:
-            while not parar.is_set() and not pode_fn(estado_fn()):
-                parar.wait(espera_s)
+            while not parar.is_set() and not pode_fn(estado_fn(), urgente=urgente):
+                if _esperar(parar, espera_s, pedido_fn, passo_s):
+                    urgente = True
             if parar.is_set():
                 return
             log(f"trocando para a versao {nova.name}: o ajudante sai e volta")
@@ -318,7 +375,9 @@ def vigiar(c, estado_fn: Callable[[], str], parar, lancar_fn, sair_fn, log,
             else:
                 sair_fn()
                 return
-        parar.wait(intervalo_s)
+        urgente = _esperar(parar, intervalo_s, pedido_fn, passo_s)
+        if urgente is None:
+            return
 
 
 # --- a troca (o processo `--aplicar`) ---------------------------------------------------

@@ -44,7 +44,7 @@ export default function Tranca() {
     <div className="min-h-screen bg-paper flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
-          <img src="/virtu-clips.png" alt="" className="mx-auto h-24 w-auto" />
+          <img src="/virtu-clips.png" alt="" className="mx-auto h-20 w-auto" />
           <h1 className="sr-only">Virtu Clips</h1>
           <p className="text-muted text-[13px] leading-snug">
             {primeiroAcesso

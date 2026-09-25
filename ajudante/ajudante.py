@@ -190,7 +190,12 @@ def ler_env_da_pessoa(c: Caminhos) -> dict:
 PROTEGIDAS = frozenset({
     "PATH", "OUTPUT_DIR", "UPLOAD_DIR", "DATA_DIR", "HF_HOME",
     "PYTHONUTF8", "PYTHONIOENCODING", "PROXY_DRAIN_SECONDS", "CORTES_ORIGEM_ESTRITA",
+    "CORTES_PEDIDO_DE_ATUALIZACAO",
 })
+
+#: Onde o motor deixa o pedido do botao "Atualizar agora" do site, e a bandeja
+#: o apanha (atualizacao.vigiar). Ver atualizar_motor.py.
+PEDIDO_DE_ATUALIZACAO = ".atualizar-agora"
 
 
 def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
@@ -229,6 +234,8 @@ def ambiente_do_motor(c: Caminhos, placa: bool, base: Mapping[str, str],
         # sem isto, qualquer site aberto no navegador poderia mandar o motor
         # desta maquina baixar e processar o que quisesse. Ver app.py.
         "CORTES_ORIGEM_ESTRITA": "1",
+        # O botao do site so deixa o pedido; quem troca de versao e a bandeja.
+        "CORTES_PEDIDO_DE_ATUALIZACAO": str(c.dados / PEDIDO_DE_ATUALIZACAO),
     })
     env.update({k: v for k, v in (da_pessoa or {}).items() if k not in PROTEGIDAS})
     if pastas_em is not None:
@@ -591,7 +598,8 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
 
     def vigiar_atualizacoes():
         at.vigiar(c, lambda: ajudante.estado, parar, at.lancar_aplicacao,
-                  lambda: sair(icone), at.registro(c))
+                  lambda: sair(icone), at.registro(c),
+                  pedido_fn=lambda: at.consumir_pedido(c))
 
     def ao_abrir(icone_):
         icone_.visible = True

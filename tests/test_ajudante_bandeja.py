@@ -176,6 +176,17 @@ def test_o_env_copiado_do_docker_nao_muda_as_pastas(tmp_path):
     assert env["GROQ_API_KEY"] == "gsk_x" and env["WHISPER_DEVICE"] == "cuda"
 
 
+def test_o_motor_sabe_onde_deixar_o_pedido_de_atualizacao(tmp_path):
+    """O botao "Atualizar agora" do site: o motor deixa o pedido onde a
+    bandeja o procura (atualizacao.consumir_pedido). Um `.env` que apontasse
+    para outro lugar faria o botao girar sem ninguem ler o pedido."""
+    c = aj.Caminhos(tmp_path)
+    env = aj.ambiente_do_motor(c, False, {}, {"CORTES_PEDIDO_DE_ATUALIZACAO": "C:/outro"})
+    assert env["CORTES_PEDIDO_DE_ATUALIZACAO"] == str(c.dados / aj.PEDIDO_DE_ATUALIZACAO)
+    # E o nome que o app.py le.
+    assert "CORTES_PEDIDO_DE_ATUALIZACAO" in (RAIZ / "app.py").read_text(encoding="utf-8")
+
+
 # --- quem atende a porta -------------------------------------------------------
 
 def _servidor(corpo: bytes, status=200):

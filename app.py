@@ -5,6 +5,7 @@ import job_registry
 import llm_backend
 import llm_cascade
 import versao_do_motor
+import atualizar_motor
 import sources
 import publishers
 import publish_queue
@@ -942,7 +943,10 @@ def _install_drain_signal_handler():
         global _stopping
         _stopping = True
         _begin_drain("SIGTERM")
-        asyncio.ensure_future(_drain_then_exit(previous))
+        # O reinicio pedido pelo botao do site (`_reiniciar_o_container`) nao
+        # tem proxy nenhum a esperar.
+        asyncio.ensure_future(_drain_then_exit(
+            previous, proxy_grace=0 if _reinicio_pedido else None))
 
     try:
         loop.add_signal_handler(signal.SIGTERM, on_sigterm)
@@ -2398,10 +2402,112 @@ async def get_config():
         "localLlm": None if BILLING_ENABLED else (
             llm_backend.describe() or _cascade_config()),
         # A versao deste motor e de onde ele roda (ajudante, docker, codigo).
-        # O site compara com a versao publicada e, no Docker, que so se
-        # atualiza pelo atualizar.bat, avisa quando ficou para tras.
+        # O site compara com a versao publicada e avisa quando ficou para
+        # tras, com o botao que chama `/api/motor/atualizar`.
         "motor": _MOTOR,
     }
+
+
+# --- O motor se atualiza pelo botao do site (25-set-2026) ------------------------
+#: O commit com que este motor SUBIU. So no Docker, que tem o git: o botao mede
+#: a distancia entre o que RODA e o publicado, e nao entre o disco e o
+#: publicado (ver atualizar_motor.py).
+_MOTOR_COMMIT = (atualizar_motor.commit_de(versao_do_motor.RAIZ)
+                 if _MOTOR.get("origem") == "docker" else None)
+_TRAVA_DA_ATUALIZACAO = asyncio.Lock()
+#: Posto quando o motor se atualizou e vai reiniciar: o SIGTERM que vem a
+#: seguir nao espera os 20 s do proxy (`_install_drain_signal_handler`), que
+#: sao do deploy em nuvem -- aqui so ha a pessoa esperando o painel voltar.
+_reinicio_pedido = False
+
+
+def _sinal_ao_processo_1() -> None:
+    try:
+        os.kill(1, signal.SIGTERM)
+    except OSError as e:
+        print(f"⚠️ Nao consegui reiniciar o motor ({e}). Rode atalhos\\atualizar.bat "
+              f"na pasta do projeto.", flush=True)
+
+
+def _reiniciar_o_container() -> None:
+    """Pede ao processo 1 (o uvicorn do compose, ver
+    `atualizar_motor.subiu_pelo_compose`) que pare. O `restart: unless-stopped`
+    sobe o container de novo, com o codigo novo. Um segundo de folga para a
+    resposta chegar ao navegador antes."""
+    global _reinicio_pedido
+    _reinicio_pedido = True
+    print("🔄 Motor atualizado pelo site: reiniciando para valer o codigo novo.", flush=True)
+    asyncio.get_running_loop().call_later(1.0, _sinal_ao_processo_1)
+
+
+def _recusa_da_atualizacao(situacao: str, causa: str, motivo: str, **extra) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": {
+        "situacao": situacao, "causa": causa, "motivo": motivo, **extra}})
+
+
+@app.post("/api/motor/atualizar")
+async def atualizar_o_motor(request: Request):
+    """O botao "Atualizar agora" do aviso de motor desatualizado.
+
+    No Docker, baixa a `main`, avanca o checkout e reinicia o container; no
+    ajudante, deixa o pedido para a bandeja, que troca de versao do jeito de
+    sempre (verificacao e volta atras). Ver `atualizar_motor.py`.
+
+    **So aceita JSON, e a conferencia e explicita.** Um pedido JSON de outra
+    origem exige o preflight do CORS, que so as paginas do painel passam
+    (`origens.py`). Mas o FastAPI le como JSON um corpo SEM tipo -- e um
+    `fetch` `no-cors` de qualquer site consegue manda-lo, sem preflight --,
+    entao declarar um corpo nao bastaria.
+    """
+    tipo = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if tipo != "application/json":
+        raise HTTPException(status_code=415, detail="Mande o pedido como JSON.")
+    # O motor e um so para todas as contas da instalacao: reinicia-lo e do dono.
+    if await _auth_ativa():
+        await exigir_dono(request)
+
+    origem = _MOTOR.get("origem")
+    if origem == "ajudante":
+        caminho = os.environ.get("CORTES_PEDIDO_DE_ATUALIZACAO")
+        if not caminho:
+            return _recusa_da_atualizacao(
+                "recusado", "sem_bandeja", "este motor nao foi aberto pelo ajudante")
+        try:
+            atualizar_motor.pedir_ao_ajudante(caminho)
+        except OSError as e:
+            return _recusa_da_atualizacao(
+                "recusado", "sem_pedido", f"nao consegui deixar o pedido ({e})")
+        print("🔄 O site pediu para atualizar: o ajudante troca de versao assim que "
+              "nenhum video estiver sendo processado.", flush=True)
+        return JSONResponse(status_code=202, content={"situacao": "pedido"})
+    if origem != "docker":
+        return _recusa_da_atualizacao(
+            "recusado", "codigo", "este motor roda direto do codigo: atualize com "
+            "git pull e reinicie")
+
+    if _reinicio_pedido:
+        return JSONResponse(status_code=202, content={"situacao": "reiniciando"})
+    if _jobs_ativos():
+        return _recusa_da_atualizacao(
+            "ocupado", "jobs", "ha video sendo processado; espere terminar")
+    if _TRAVA_DA_ATUALIZACAO.locked():
+        return _recusa_da_atualizacao(
+            "ocupado", "atualizando", "o motor ja esta se atualizando")
+    if not atualizar_motor.subiu_pelo_compose():
+        return _recusa_da_atualizacao(
+            "recusado", "fora_do_compose", "este motor nao foi aberto pelos atalhos do "
+            "projeto, e o botao nao sabe reinicia-lo")
+    async with _TRAVA_DA_ATUALIZACAO:
+        resultado = await asyncio.to_thread(
+            atualizar_motor.atualizar_docker, versao_do_motor.RAIZ, _MOTOR_COMMIT)
+    situacao = resultado.get("situacao")
+    print(f"🔄 Atualizar pelo site: {resultado}", flush=True)
+    if situacao == "atualizou":
+        _reiniciar_o_container()
+        return JSONResponse(status_code=202, content=resultado)
+    if situacao == "atualizado":
+        return resultado
+    return JSONResponse(status_code=409, content={"detail": resultado})
 
 @app.post("/api/asr/aquecer")
 async def aquecer_transcricao():

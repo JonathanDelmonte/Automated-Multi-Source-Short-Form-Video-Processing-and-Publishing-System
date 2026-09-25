@@ -1,9 +1,9 @@
 // O ajudante e a versão publicada do motor (Fase 6.2).
 //
 // O site é só a tela; quem processa é o motor no computador de quem usa. Quem
-// ainda não tem o motor baixa o ajudante daqui, e quem roda pelo Docker fica
-// sabendo quando o motor dele ficou para trás do site -- o ajudante se
-// atualiza sozinho, o Docker só pelo `atalhos\atualizar.bat`.
+// ainda não tem o motor baixa o ajudante daqui, e quem já tem fica sabendo
+// quando o motor ficou para trás do site, com o botão que o atualiza
+// (AvisoDoMotor.jsx) -- o ajudante também se atualiza sozinho, em até 6 horas.
 //
 // A versão publicada vem do GitHub Releases, o mesmo lugar de onde o ajudante
 // se atualiza. É a contagem de commits da `main` (ver versao_do_motor.py), e

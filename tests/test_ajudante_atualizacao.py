@@ -351,6 +351,25 @@ def test_so_reinicia_com_a_fila_vazia_e_ninguem_no_painel(estado, saude, pode):
     assert at.pode_trocar_agora(estado, lambda: saude) is pode
 
 
+@pytest.mark.parametrize("saude, pode", [
+    # Quem apertou o botao esta no painel: o ocioso nunca chegaria.
+    ({"jobs_ativos": 0, "ocioso_s": 0}, True),
+    # Um video na fila continua segurando a troca, com ou sem pedido.
+    ({"jobs_ativos": 1, "ocioso_s": 9999}, False),
+])
+def test_o_pedido_do_site_nao_espera_o_ocioso_mas_espera_a_fila(saude, pode):
+    assert at.pode_trocar_agora(aj.PRONTO, lambda: saude, urgente=True) is pode
+
+
+def test_o_pedido_do_site_e_consumido_uma_vez(tmp_path):
+    c = aj.Caminhos(tmp_path)
+    assert at.consumir_pedido(c) is False  # sem pasta de dados ainda
+    c.dados.mkdir(parents=True)
+    (c.dados / aj.PEDIDO_DE_ATUALIZACAO).write_text("1\n")
+    assert at.consumir_pedido(c) is True
+    assert at.consumir_pedido(c) is False, "um pedido, uma conferencia"
+
+
 # --- o pacote ---------------------------------------------------------------------------
 
 def test_o_zip_nao_leva_a_marca_e_o_conteudo_nao_depende_da_versao(tmp_path):
@@ -461,6 +480,7 @@ class _Laco:
         self.lancar_falha = lancar_falha
         self.parar = threading.Event()
         self.lancadas, self.saidas, self.perguntas, self.log = [], 0, 0, []
+        self.urgencias = []
 
     def preparar(self, _c, _log):
         if not self.preparos:
@@ -471,8 +491,9 @@ class _Laco:
             raise item
         return item
 
-    def pode(self, _estado):
+    def pode(self, _estado, urgente=False):
         self.perguntas += 1
+        self.urgencias.append(urgente)
         return self.perguntas > self.livre_depois
 
     def lancar(self, _c, nova):
@@ -521,3 +542,92 @@ def test_laco_para_quando_pedem():
     threading.Timer(0.2, laco.parar.set).start()
     laco.rodar()
     assert laco.lancadas == [] and laco.saidas == 0
+
+
+class _ParadaFalsa:
+    """Um `threading.Event` que nao dorme: anota quanto pediram para esperar."""
+
+    def __init__(self):
+        self.esperas, self._posto = [], False
+
+    def wait(self, segundos):
+        self.esperas.append(segundos)
+        return self._posto
+
+    def set(self):
+        self._posto = True
+
+    def is_set(self):
+        return self._posto
+
+
+def _pedidos(*respostas):
+    """O `pedido_fn`: devolve as respostas em ordem, e depois False."""
+    fila = list(respostas)
+    return lambda: fila.pop(0) if fila else False
+
+
+def test_o_pedido_do_site_confere_na_hora_e_troca_sem_esperar_o_ocioso():
+    """O botao "Atualizar agora": a bandeja o ve no passo seguinte (10 s),
+    e nao depois dos 2 minutos da primeira conferencia -- nem das 6 horas das
+    seguintes. E pergunta se pode trocar dizendo que e urgente."""
+    laco = _Laco([Path("versoes/11")])
+    parar = _ParadaFalsa()
+    laco.parar = parar
+    at.vigiar(None, lambda: aj.PRONTO, parar, laco.lancar, laco.sair, laco.log.append,
+              preparar_fn=laco.preparar, pode_fn=laco.pode, primeira_s=120,
+              intervalo_s=6 * 3600, espera_s=60, pedido_fn=_pedidos(False, False, True),
+              passo_s=10)
+    assert laco.lancadas == ["11"] and laco.saidas == 1
+    assert parar.esperas == [10, 10], "conferiu no terceiro passo, sem esperar os 120 s"
+    assert laco.urgencias == [True]
+    assert any("o site pediu" in linha for linha in laco.log)
+
+
+def test_o_pedido_do_site_ainda_espera_o_video_terminar():
+    laco = _Laco([Path("versoes/11")], livre_depois=2)
+    parar = _ParadaFalsa()
+    laco.parar = parar
+    at.vigiar(None, lambda: aj.PRONTO, parar, laco.lancar, laco.sair, laco.log.append,
+              preparar_fn=laco.preparar, pode_fn=laco.pode, primeira_s=0,
+              intervalo_s=0, espera_s=60, pedido_fn=_pedidos(True), passo_s=10)
+    assert laco.urgencias == [True, True, True]
+    assert laco.lancadas == ["11"]
+    # Duas esperas de 60 s pela fila, olhando o pedido de 10 em 10.
+    assert parar.esperas == [10] * 12
+
+
+def test_o_pedido_que_chega_durante_a_espera_torna_a_troca_urgente():
+    """A versao nova ja estava pronta e esperando o painel ficar ocioso; a
+    pessoa aperta o botao: dali em diante o ocioso nao conta mais."""
+    laco = _Laco([Path("versoes/11")], livre_depois=1)
+    parar = _ParadaFalsa()
+    laco.parar = parar
+    at.vigiar(None, lambda: aj.PRONTO, parar, laco.lancar, laco.sair, laco.log.append,
+              preparar_fn=laco.preparar, pode_fn=laco.pode, primeira_s=0,
+              intervalo_s=0, espera_s=60, pedido_fn=_pedidos(False, False, True),
+              passo_s=10)
+    assert laco.urgencias == [False, True]
+    assert laco.lancadas == ["11"]
+
+
+def test_o_pedido_sem_versao_nova_fica_no_registro():
+    laco = _Laco([None])
+    parar = _ParadaFalsa()
+    laco.parar = parar
+    at.vigiar(None, lambda: aj.PRONTO, parar, laco.lancar, laco.sair, laco.log.append,
+              preparar_fn=laco.preparar, pode_fn=laco.pode, primeira_s=0,
+              intervalo_s=0, pedido_fn=_pedidos(True), passo_s=10)
+    assert laco.lancadas == [] and laco.saidas == 0
+    assert any("nao ha versao nova" in linha for linha in laco.log)
+
+
+def test_esperar_para_quando_mandam_parar():
+    parar = _ParadaFalsa()
+    parar.set()
+    assert at._esperar(parar, 60, lambda: False, 10) is None
+    assert at._esperar(_ParadaFalsa(), 0, lambda: False, 10) is False
+    # Passo zero nao vira laco infinito: espera o prazo de uma vez.
+    parada = _ParadaFalsa()
+    assert at._esperar(parada, 30, lambda: False, 0) is False
+    assert parada.esperas == [30]

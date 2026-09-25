@@ -36,6 +36,15 @@ fica como ícone perto do relógio, liga com o Windows e se atualiza sozinho. Os
 projetos ficam em `%LOCALAPPDATA%\VirtuClips\dados`, e desinstalar não os apaga. As
 decisões estão no ADR-012.
 
+Quando sai uma versão nova, o site mostra **"O motor deste computador está atrás do
+site"** com o botão **atualizar agora**: o ajudante troca na hora, em vez de esperar
+as até 6 horas da conferência sozinha — pelo mesmo caminho de sempre, que sobe a
+versão nova numa porta de teste e volta atrás se ela não passar. Se houver vídeo
+sendo processado, ele espera terminar. O motor para por um ou dois minutos (mais,
+quando as dependências mudam) e a página recarrega sozinha quando ele volta.
+Um ajudante instalado até a versão 540 é de antes do botão: nele o aviso explica
+isso, e a atualização sozinha o traz na próxima volta.
+
 O resto deste guia é o caminho do Docker, que continua valendo no seu computador. Os
 dois convivem: o Docker usa a porta 8000 e o ajudante a 8001, e quando o Docker está
 de pé o ajudante para o motor dele e deixa o site falar com o Docker.
@@ -316,7 +325,7 @@ responder, até 3 minutos.
 |---|---|
 | **`subir.bat`** | **o do dia a dia.** Sobe em segundos, sem reconstruir. Usa a placa NVIDIA sozinho quando há uma |
 | `parar.bat` | para tudo de verdade (`docker compose down`) |
-| `atualizar.bat` | `git pull` + sobe. Avisa se as dependências mudaram |
+| `atualizar.bat` | `git pull` + sobe. Avisa se as dependências mudaram. Para mudança de código, o botão **atualizar agora** do site faz o mesmo (veja abaixo) |
 | `reconstruir.bat` | só quando muda `requirements.txt`, `package.json` ou o `Dockerfile`. Com placa, já constrói com as libs de CUDA |
 | `subir-gpu.bat`, `reconstruir-gpu.bat` | ficaram pelo costume: fazem o mesmo que os dois de cima |
 | `abrir-painel.bat` | abre `localhost:5175` no navegador |
@@ -359,6 +368,33 @@ abaixo). Quando o log for de fato necessário, ele tem um atalho próprio:
 **O `--build` não é o normal, é a exceção.** Ele reconstrói a imagem inteira —
 os 15 a 40 minutos. Só faz sentido quando muda a *lista de dependências*, e isso
 acontece raramente. O resto do tempo é `atalhos\subir.bat`.
+
+#### Atualizar pelo site: o botão
+
+Quando o motor fica para trás do que está publicado, o site mostra **"O motor deste
+computador está atrás do site"** com o botão **atualizar agora**. Ele faz, pelo
+navegador, o que o `atualizar.bat` faz quando só o código mudou: baixa a `main`,
+avança a pasta do projeto (só para a frente — nunca mistura com mudança sua),
+reinicia o backend e, se o painel mudou, o painel. Em uns 10 a 20 segundos a
+página recarrega sozinha, já na versão nova.
+
+**Ele recusa, dizendo por quê, quando a atualização não é só código:**
+
+| O que a versão nova muda | O que o aviso manda |
+|---|---|
+| `requirements.txt`, algum `package.json`, algum `Dockerfile`, `render-service/`, `remotion/` ou o mapa de fontes | `atualizar.bat` e depois `reconstruir.bat` (15 a 40 min): isso mora *dentro* da imagem, e subir o código novo sem ela quebraria o motor |
+| `docker-compose.yml` | `atualizar.bat`: é a configuração dos containers, e só o `docker compose up` a aplica |
+| arquivo que você mexeu à mão, commit seu que a `main` não tem, outra branch | resolver pelo GitHub Desktop; o botão não sobrescreve nada |
+| vídeo sendo processado | esperar terminar |
+
+**A primeira vez ainda é pelo atalho**: o motor que está rodando precisa já ter o
+botão. Rode `atalhos\atualizar.bat` uma vez; daí em diante, é pelo site.
+
+O botão reinicia o container **saindo** e deixando o `restart: unless-stopped` do
+`docker-compose.yml` subi-lo de novo — é o `docker compose restart` do atalho, feito
+de dentro. Por isso ele só funciona no motor subido pelos atalhos (o
+`docker-compose.yml` deste projeto): subido de outro jeito, pode não haver quem o
+levante de volta, e aí o aviso manda o atalho.
 
 #### Depois do `git pull`, o que é preciso rodar
 

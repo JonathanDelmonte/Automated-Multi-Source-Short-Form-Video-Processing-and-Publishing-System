@@ -1225,6 +1225,7 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
+| GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (6 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -2255,6 +2256,62 @@ o amigo do ajudante, "clicar em atualizar e atualizava, pelo proprio navegador".
   ajudante 5 min -- se o ajudante nao comecou, ou ha video na fila ou nao
   havia o que trocar) e voltar (3 e 20 min). Motor de antes do botao responde
   404, e o aviso explica o caminho de cada um.
+- **A resposta do clique tem de ser impossivel de perder.** Na primeira vez, o
+  motor do autor era de antes do botao e respondeu 404 em milesimos: a
+  explicacao saiu numa linha cinza, o botao ficou igual, e "nao aconteceu
+  nada". Agora o clique mostra "verificando..." por pelo menos 600 ms, a
+  resposta vem numa caixa destacada (refeita a cada clique) e o botao so fica
+  na tela quando clicar de novo pode dar outro resultado (`valeTentarDeNovo`).
+
+### As chaves de IA pelas Configuracoes do site (`chaves_ia.py`, 25-set-2026)
+
+O pedido do autor: "o mais facil possivel" para o amigo, sem editar arquivo.
+**Configuracoes -> Chaves de IA** tem um bloco por IA gratuita da cascata, com o
+botao que abre a pagina de criar a chave (`dashboard/src/lib/provedoresDeIA.js`,
+componente `ChavesDeIA.jsx`). `GET/POST /api/chaves`.
+
+- **A chave mora no MOTOR, nao no navegador.** Era o `X-Gemini-Key`: so cobria
+  o Gemini, sumia ao trocar de navegador e nao chegava a um job retomado depois
+  de um reinicio. Agora fica em `DATA_DIR/chaves.json` (fora do git e da imagem:
+  os dois ignoram `data/`; 0600, criado assim desde o `os.open`), e vale para
+  todo navegador da maquina, para os jobs e para depois de reinstalar o
+  ajudante (`dados\` fica).
+- **Entra no `os.environ` do processo** (`Chaves._aplicar`, chamado logo depois
+  do `load_dotenv()` do `app.py`): a cascata, o `resolve_gemini` e o
+  `/api/config` ja liam o ambiente, e o `main.py` o herda pelo
+  `os.environ.copy()`. Nenhum sitio de chamada mudou.
+- **A colada vence o `.env`, e remove-la devolve a do `.env`** (`originais`,
+  fotografado no boot, antes de aplicar as do arquivo).
+- **Lista fechada** (`VARIAVEIS`): o site escreve no ambiente do PROCESSO, e um
+  nome livre trocaria `PATH` ou `OUTPUT_DIR`. `limpar` recusa espaco, quebra de
+  linha e nao-ASCII -- a chave vai parar num cabecalho `Authorization`, e uma
+  quebra de linha ali e cabecalho injetado -- e conserta os jeitos comuns de
+  colar errado (aspas, `VAR=` na frente, `Bearer `).
+- **Nunca sai inteira**: o estado leva os 4 ultimos caracteres (so de chave com
+  16 ou mais) e a origem; o log leva o NOME da variavel. Ha teste com `capsys`.
+- **O motor confere cada chave nova com a IA antes de guardar** (`testar`), e a
+  recusada (401, ou o "API key not valid" do Google -- a regra do
+  `llm_cascade.chave_recusada`) NAO entra. Qualquer outra resposta guarda e diz
+  que nao deu para confirmar: provedor fora do ar nao pode impedir alguem de
+  colar a chave. O Gemini e conferido no endpoint NATIVO listando modelos (as
+  chaves `AQ.` dao 401 no compativel com OpenAI, e listar nao gasta cota); os
+  outros, com uma pergunta de uma palavra ao mesmo endereco e modelo da cascata.
+- **O painel escreve as frases**; o motor devolve codigos (`curta`,
+  `caracteres`, `recusada`...). E ele que fala portugues com acento, e o
+  `artigo` de cada provedor deixa "aceita pela NVIDIA" certo.
+- **A chave do navegador vai para o motor sozinha** na primeira vez que a tela
+  abre, se o motor ainda nao tiver uma -- e ai o navegador a esquece (o
+  `localStorage` passou a ser APAGADO quando a chave e esquecida; antes so era
+  escrito). Se os dois tiverem, a tela avisa que a do navegador vale por cima e
+  oferece esquece-la.
+- **`/api/config.geminiNoMotor`** destrava o YouTube Studio e a edicao por IA,
+  que bloqueavam no NAVEGADOR sem chave. Sem ele, quem colou o Gemini nas
+  Configuracoes veria "falta a chave" no Studio.
+- **Tela, motor e cascata falam das mesmas chaves**, e tres testes cobram:
+  toda `key_env` da cascata gratuita tem campo (menos Cerebras, pago, e Ollama
+  local, que tem endereco), o `provedoresDeIA.js` lista exatamente as
+  `VARIAVEIS`, o aviso "pode usar o que voce manda para treinar" e o
+  `trains_on_data` da cascata, e os links sao os do `.env.example`.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

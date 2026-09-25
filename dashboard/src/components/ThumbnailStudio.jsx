@@ -70,11 +70,13 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon }) {
   );
 }
 
-export default function ThumbnailStudio({ geminiApiKey, managed = false, onCreateClips = null }) {
+export default function ThumbnailStudio({ geminiApiKey, geminiNoMotor = false, managed = false, onCreateClips = null }) {
   // Managed (hosted plan): Gemini runs server-side via the bearer token, no BYOK key.
   // Only send X-Gemini-Key for self-host BYOK. apiFetch attaches the bearer token.
   const keyHeader = geminiApiKey ? { 'X-Gemini-Key': geminiApiKey } : {};
-  const needsKey = !geminiApiKey && !managed;
+  // A chave pode estar no navegador (a de antes) ou no programa deste
+  // computador (colada nas Configurações, chaves_ia.py).
+  const needsKey = !geminiApiKey && !geminiNoMotor && !managed;
   // Step management
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'video' or 'manual'
@@ -149,7 +151,7 @@ export default function ThumbnailStudio({ geminiApiKey, managed = false, onCreat
 
   // --- Step 1: Analyze Video ---
   const handleAnalyze = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
+    if (needsKey) return alert('Coloque uma chave do Google Gemini nas Configurações primeiro.');
     setIsAnalyzing(true);
 
     try {
@@ -262,7 +264,7 @@ export default function ThumbnailStudio({ geminiApiKey, managed = false, onCreat
 
   // --- Step 3: Generate Thumbnails ---
   const handleGenerate = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
+    if (needsKey) return alert('Coloque uma chave do Google Gemini nas Configurações primeiro.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('Please select or enter a title first.');
 
@@ -341,7 +343,7 @@ export default function ThumbnailStudio({ geminiApiKey, managed = false, onCreat
 
   // --- Description Generation ---
   const handleGenerateDescription = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
+    if (needsKey) return alert('Coloque uma chave do Google Gemini nas Configurações primeiro.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('Please select a title first.');
     if (!sessionId) return alert('No session available.');
@@ -429,8 +431,8 @@ export default function ThumbnailStudio({ geminiApiKey, managed = false, onCreat
           <div className="mb-6 p-5 bg-warn/10 rounded-card flex items-start gap-3">
             <AlertCircle size={18} className="text-warn shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-medium text-warn lowercase">Gemini API Key Required</p>
-              <p className="text-xs text-muted mt-1">YouTube Studio requires a Google Gemini API key to function. Please configure it in the <strong>Settings</strong> tab before using this feature. Gemini's free tier includes 1,500 requests per day.</p>
+              <p className="text-sm font-medium text-warn lowercase">falta a chave do Google Gemini</p>
+              <p className="text-xs text-muted mt-1">O YouTube Studio usa o Gemini para ler o vídeo e desenhar as miniaturas. A chave é grátis: coloque-a em <strong>Configurações</strong> e volte aqui.</p>
             </div>
           </div>
         )}

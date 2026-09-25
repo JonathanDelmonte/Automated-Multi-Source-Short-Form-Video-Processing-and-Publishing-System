@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { maisNova, URL_DO_INSTALADOR, versaoPublicada } from '../lib/ajudante';
 
@@ -18,6 +18,14 @@ import { maisNova, URL_DO_INSTALADOR, versaoPublicada } from '../lib/ajudante';
 //
 // Fechar vale até sair uma versão mais nova que a que foi dispensada: o aviso
 // que volta a cada F5 vira paisagem, e o que nunca volta esconde o problema.
+//
+// **A resposta do clique tem de ser impossível de perder** (25-set-2026). O
+// autor clicou num motor de antes do botão, que respondeu 404 em milésimos: a
+// explicação apareceu como uma linha cinza e o botão continuou igual, e "não
+// aconteceu nada". Agora o clique mostra "verificando…" por pelo menos meio
+// segundo, a resposta vem numa caixa destacada (que reaparece a cada clique), e
+// o botão só fica quando tentar de novo pode dar outro resultado.
+const MINIMO_VERIFICANDO_MS = 600;
 const CHAVE_FECHADO = 'cortes_aviso_motor_fechado';
 
 const INTERVALO_MS = 3000;
@@ -112,6 +120,19 @@ function textoDaRecusa(status, d, origem) {
   }
 }
 
+// Clicar de novo muda alguma coisa? Não, quando o motor é de antes do botão,
+// quando a versão pede o atalho ou quando o motor não é dos atalhos: ali o
+// botão continuar na tela é o convite para o clique que "não faz nada".
+const SEM_VOLTA = new Set(['fora_do_compose', 'codigo', 'sem_bandeja', 'ramo', 'divergiu']);
+function valeTentarDeNovo(status, d) {
+  if (status === 404 || status === 405 || status === 401 || status === 403) return false;
+  if (d && typeof d === 'object') {
+    if (d.situacao === 'precisa_do_atalho') return false;
+    if (SEM_VOLTA.has(d.causa)) return false;
+  }
+  return true;
+}
+
 function textoDoPrazo(origem, saiu) {
   if (origem === 'ajudante') {
     return saiu
@@ -128,7 +149,11 @@ export default function AvisoDoMotor({ motor }) {
   const [fechado, setFechado] = useState(lerFechado);
   // null | 'pedindo' | 'esperando' (o motor reinicia ou o ajudante troca)
   const [fase, setFase] = useState(null);
-  const [problema, setProblema] = useState(null);
+  // { texto, deNovo, n }: `deNovo` diz se clicar de novo pode mudar alguma
+  // coisa; `n` refaz a animação a cada clique, mesmo com o mesmo texto.
+  const [problema, setProblemaCru] = useState(null);
+  const setProblema = (texto, deNovo = true) => setProblemaCru(
+    texto ? { texto, deNovo, n: Date.now() } : null);
   const origem = motor?.origem;
   const versao = motor?.versao;
   const atualizavel = (origem === 'docker' || origem === 'ajudante') && !!versao;
@@ -166,7 +191,7 @@ export default function AvisoDoMotor({ motor }) {
       const prazo = (saiu ? PRAZO_MS : SEM_COMECAR_MS)[origem] || PRAZO_MS.docker;
       if (Date.now() - inicio > prazo) {
         setFase(null);
-        setProblema(textoDoPrazo(origem, saiu));
+        setProblema(textoDoPrazo(origem, saiu), true);
         return;
       }
       timer = setTimeout(olhar, INTERVALO_MS);
@@ -189,6 +214,10 @@ export default function AvisoDoMotor({ motor }) {
   const atualizar = async () => {
     setFase('pedindo');
     setProblema(null);
+    const inicio = Date.now();
+    const esperarOMinimo = () => new Promise((r) => {
+      setTimeout(r, Math.max(0, MINIMO_VERIFICANDO_MS - (Date.now() - inicio)));
+    });
     try {
       const res = await apiFetch('/api/motor/atualizar', {
         method: 'POST',
@@ -197,19 +226,22 @@ export default function AvisoDoMotor({ motor }) {
       });
       let corpo = null;
       try { corpo = await res.json(); } catch { /* sem corpo */ }
+      await esperarOMinimo();
       if (res.status === 202) {
         setFase('esperando');
         return;
       }
       setFase(null);
       if (res.ok && corpo?.situacao === 'atualizado') {
-        setProblema('O código desta pasta já é o mais novo da main, e o motor já roda ele. Dê um Ctrl+F5 nesta aba.');
+        setProblema('O código desta pasta já é o mais novo da main, e o motor já roda ele. Dê um Ctrl+F5 nesta aba.', false);
         return;
       }
-      setProblema(textoDaRecusa(res.status, corpo?.detail ?? corpo, origem));
+      const d = corpo?.detail ?? corpo;
+      setProblema(textoDaRecusa(res.status, d, origem), valeTentarDeNovo(res.status, d));
     } catch {
+      await esperarOMinimo();
       setFase(null);
-      setProblema('Não consegui falar com o motor deste computador. Ele está ligado?');
+      setProblema('Não consegui falar com o motor deste computador. Ele está ligado?', true);
     }
   };
 
@@ -230,15 +262,23 @@ export default function AvisoDoMotor({ motor }) {
             </span>
           </div>
           {andamento && <p className="text-muted">{andamento}</p>}
-          {problema && <p className="text-muted">{problema}</p>}
-          {fase !== 'esperando' && (
+          {problema && (
+            <div
+              key={problema.n}
+              className="flex items-start gap-2 rounded-input border border-warn/40 bg-warn/10 px-3 py-2 text-ink2 animate-fade"
+            >
+              <AlertTriangle size={14} className="text-warn shrink-0 mt-0.5" />
+              <div className="min-w-0">{problema.texto}</div>
+            </div>
+          )}
+          {fase !== 'esperando' && (!problema || problema.deNovo) && (
             <button
               onClick={atualizar}
               disabled={ocupado}
               className="btn-primary px-4 py-2 text-xs"
             >
               {fase === 'pedindo' && <Loader2 size={14} className="animate-spin" />}
-              atualizar agora
+              {fase === 'pedindo' ? 'verificando…' : (problema ? 'tentar de novo' : 'atualizar agora')}
             </button>
           )}
         </div>

@@ -48,8 +48,15 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel
 import recut
 import layout_ranges
+import chaves_ia
 
 load_dotenv()
+
+# As chaves de IA coladas nas Configuracoes do site, por cima das do .env (ver
+# chaves_ia.py). Logo depois do .env, antes de qualquer outra coisa ler o
+# ambiente: a cascata, o `resolve_gemini` e o `main.py` de cada job as veem
+# pelo `os.environ`, sem saber de onde vieram.
+CHAVES = chaves_ia.Chaves((os.environ.get("DATA_DIR") or "").strip() or "data")
 
 # Constants
 # Relativas por padrao, como sempre foram (no Docker, dentro de /app). O
@@ -2405,7 +2412,69 @@ async def get_config():
         # O site compara com a versao publicada e avisa quando ficou para
         # tras, com o botao que chama `/api/motor/atualizar`.
         "motor": _MOTOR,
+        # Se o motor tem chave do Gemini (do .env ou colada nas
+        # Configuracoes). O painel bloqueava o YouTube Studio e a edicao por IA
+        # quando o NAVEGADOR nao tinha a chave -- e desde as chaves no motor
+        # (chaves_ia.py) ela pode morar so aqui.
+        "geminiNoMotor": bool((os.environ.get("GEMINI_API_KEY") or "").strip()),
     }
+
+
+# --- As chaves de IA pelas Configuracoes do site (25-set-2026) -------------------
+@app.get("/api/chaves")
+async def ver_chaves():
+    """Que chaves o motor tem, de onde vieram e os ultimos 4 caracteres --
+    nunca a chave inteira. Ver `chaves_ia.py`."""
+    return {"variaveis": CHAVES.estado()}
+
+
+@app.post("/api/chaves")
+async def trocar_chaves(request: Request):
+    """Guarda as chaves coladas no site (texto) e tira as removidas (null).
+
+    Cada chave nova e conferida com o provedor ANTES de ser guardada: a que ele
+    recusa (401) nao entra, e o painel diz qual foi. Qualquer outra resposta --
+    fila cheia, sem internet, resposta estranha -- guarda mesmo assim e diz que
+    nao deu para confirmar: um provedor fora do ar nao pode impedir alguem de
+    colar a chave. So JSON (`_exigir_json`); com a auth ativa, so o dono.
+    """
+    _exigir_json(request)
+    if await _auth_ativa():
+        await exigir_dono(request)
+    try:
+        corpo = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Corpo invalido.")
+    mudancas = corpo.get("chaves") if isinstance(corpo, dict) else None
+    if not isinstance(mudancas, dict) or not mudancas:
+        return JSONResponse(status_code=422, content={"detail": {"erro": "vazio"}})
+    try:
+        limpas = chaves_ia.limpar_pedido(mudancas)
+    except chaves_ia.ChaveInvalida as e:
+        return JSONResponse(status_code=422, content={"detail": {
+            "erro": e.codigo, "variavel": e.variavel}})
+
+    como_vao_ficar = {v: CHAVES.valor(v) for v in chaves_ia.VARIAVEIS}
+    como_vao_ficar.update({v: (x or "") for v, x in limpas.items()})
+    testes = {}
+    for variavel in chaves_ia.provedores_a_testar(limpas):
+        testes[variavel] = await asyncio.to_thread(
+            chaves_ia.testar, variavel, como_vao_ficar)
+        if testes[variavel]["resultado"] == "recusada":
+            return JSONResponse(status_code=422, content={"detail": {
+                "erro": "recusada", "variavel": variavel,
+                "status": testes[variavel]["status"]}})
+    try:
+        CHAVES.trocar(limpas)
+    except OSError as e:
+        print(f"⚠️ [chaves] nao consegui gravar {CHAVES.arquivo}: {type(e).__name__}", flush=True)
+        return JSONResponse(status_code=500, content={"detail": {"erro": "gravar"}})
+    guardadas = sorted(v for v, x in limpas.items() if x)
+    tiradas = sorted(v for v, x in limpas.items() if not x)
+    # Os NOMES das variaveis, nunca os valores.
+    print(f"🔑 Chaves de IA pelo site: guardadas {guardadas or '-'}, tiradas {tiradas or '-'}.",
+          flush=True)
+    return {"variaveis": CHAVES.estado(), "testes": testes}
 
 
 # --- O motor se atualiza pelo botao do site (25-set-2026) ------------------------
@@ -2440,6 +2509,18 @@ def _reiniciar_o_container() -> None:
     asyncio.get_running_loop().call_later(1.0, _sinal_ao_processo_1)
 
 
+def _exigir_json(request: Request) -> None:
+    """So `Content-Type: application/json`, conferido a mao.
+
+    Um pedido JSON de outra origem exige o preflight do CORS, que so as paginas
+    do painel passam (`origens.py`). Mas o FastAPI le como JSON um corpo SEM
+    tipo -- e um `fetch` `no-cors` de qualquer site consegue manda-lo, sem
+    preflight --, entao declarar um corpo nao bastaria."""
+    tipo = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if tipo != "application/json":
+        raise HTTPException(status_code=415, detail="Mande o pedido como JSON.")
+
+
 def _recusa_da_atualizacao(situacao: str, causa: str, motivo: str, **extra) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": {
         "situacao": situacao, "causa": causa, "motivo": motivo, **extra}})
@@ -2451,17 +2532,10 @@ async def atualizar_o_motor(request: Request):
 
     No Docker, baixa a `main`, avanca o checkout e reinicia o container; no
     ajudante, deixa o pedido para a bandeja, que troca de versao do jeito de
-    sempre (verificacao e volta atras). Ver `atualizar_motor.py`.
-
-    **So aceita JSON, e a conferencia e explicita.** Um pedido JSON de outra
-    origem exige o preflight do CORS, que so as paginas do painel passam
-    (`origens.py`). Mas o FastAPI le como JSON um corpo SEM tipo -- e um
-    `fetch` `no-cors` de qualquer site consegue manda-lo, sem preflight --,
-    entao declarar um corpo nao bastaria.
+    sempre (verificacao e volta atras). Ver `atualizar_motor.py`. So aceita
+    JSON (`_exigir_json`).
     """
-    tipo = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
-    if tipo != "application/json":
-        raise HTTPException(status_code=415, detail="Mande o pedido como JSON.")
+    _exigir_json(request)
     # O motor e um so para todas as contas da instalacao: reinicia-lo e do dono.
     if await _auth_ativa():
         await exigir_dono(request)

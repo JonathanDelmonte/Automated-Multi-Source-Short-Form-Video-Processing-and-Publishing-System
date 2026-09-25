@@ -244,6 +244,9 @@ export function AuthProvider({ children }) {
   const value = {
     billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
+    // O programa deste computador tem chave do Gemini (do .env ou colada nas
+    // Configurações): o navegador não precisa ter a dele.
+    geminiNoMotor: !!config.geminiNoMotor,
     // Versão e origem do motor (ajudante, docker, codigo): o AvisoDoMotor
     // compara com a publicada.
     motor: config.motor || null,

@@ -93,12 +93,15 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    %LOCALAPPDATA%\VirtuClips\dados\logs\instalacao.log
    ```
 
-6. **A chave de IA: o site pede, e você cola.** Na primeira vez aparece "Required API
-   keys missing" → *go to settings* → cole a chave do Gemini (a mesma da linha
-   `GEMINI_API_KEY=` do seu `.env`; quem não tem, cria de graça em
-   aistudio.google.com). Ela fica guardada no navegador. Ninguém precisa copiar
-   arquivo nenhum — e os campos para as outras chaves gratuitas (Groq e as demais
-   da cascata) são o próximo passo.
+6. **As chaves de IA: o site pede, e você cola.** Na primeira vez aparece "Falta uma
+   chave de IA" → *colocar a chave* → **Configurações → Chaves de IA**. Cada IA
+   gratuita tem um bloco com o botão **criar chave grátis**, que abre a página onde
+   ela é criada: copie e cole no campo, e **salvar**. O programa confere a chave com
+   a IA antes de guardar — "Funcionou" ou "recusou esta chave" aparece embaixo do
+   campo. As recomendadas são a do Gemini e a do Groq; as outras ficam em "mais IAs
+   gratuitas, de reserva". A chave fica guardada no programa deste computador (não
+   no navegador), então vale para qualquer navegador daqui e sobrevive a atualizar
+   e a reinstalar. Ninguém precisa copiar arquivo nenhum.
 7. Cole um link do YouTube e processe. **Confira:** o download funciona (sem cookies),
    e no log do job a linha do whisper diz `cuda`. O tempo total deve ficar perto do
    que o Docker faz com o mesmo vídeo.
@@ -471,6 +474,13 @@ dependências*, nunca quando muda só o código.
 
 ## Passo 1 — As chaves
 
+> **O caminho mais fácil agora é pelo site** (25-set-2026): **Configurações → Chaves
+> de IA**, um bloco por IA gratuita, com o botão que abre a página de criar a chave.
+> Colar ali vale igual ao `.env`, sem arquivo nenhum — e a chave colada vence a do
+> `.env` (tirá-la pelo botão **remover** devolve a do `.env`). O `.env` continua
+> valendo, e este passo continua explicando cada chave; só não é mais o único
+> jeito.
+
 ### 1a. Groq — esta destrava o painel
 
 > ### Groq com **Q** não é Grok com **K**
@@ -775,8 +785,9 @@ ele vem parecido com isto:
 "localLlm": { "provider": "cascade", "model": "openai/gpt-oss-120b", ... }
 ```
 
-**Se vier `"localLlm": null`, a chave não chegou ao container.** Quase sempre é
-uma destas três:
+**Se vier `"localLlm": null`, a chave não chegou ao container.** Pelo site
+(**Configurações → Chaves de IA**) isso não acontece: o bloco diz na hora se a chave
+foi guardada e se a IA a aceitou. Pelo `.env`, quase sempre é uma destas três:
 
 1. o arquivo virou `.env.txt` (veja o passo 2);
 2. tem `#` no começo da linha — **espaço em volta do `=` não atrapalha**, isso

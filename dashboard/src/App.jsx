@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { FolderOpen, ArrowLeft, Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
-import KeyInput from './components/KeyInput';
+import ChavesDeIA from './components/ChavesDeIA';
 import MediaInput from './components/MediaInput';
 import ProjectsList from './components/ProjectsList';
 import ProjectsGrid from './components/ProjectsGrid';
@@ -273,7 +273,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
+  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, geminiNoMotor, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
   // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   // Só depois da config, e só com sessão quando a instalação tem senha: antes
   // disso o servidor responderia 401 a cada dois minutos.
@@ -627,9 +627,13 @@ function App() {
   }, [jobId, status, results, activeTab, noSource, projectState]);
 
   useEffect(() => {
-    // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
-    // For now keeping gemini plain for compatibility unless requested.
-    if (apiKey) localStorage.setItem('gemini_key', apiKey);
+    // A chave do Gemini no NAVEGADOR é a de antes das chaves no programa
+    // (ChavesDeIA): a tela a leva para lá e a esquece aqui -- e esquecer tem de
+    // apagar, ou ela voltaria no próximo F5 e seguiria indo no `X-Gemini-Key`.
+    try {
+      if (apiKey) localStorage.setItem('gemini_key', apiKey);
+      else localStorage.removeItem('gemini_key');
+    } catch { /* localStorage bloqueado: vale só nesta aba */ }
   }, [apiKey]);
 
   // For managed users, fetch the durable R2 URLs of the current job's clips. The
@@ -826,7 +830,9 @@ function App() {
   // `keysMissing` now means "self-host BYOK keys missing" — it never fires on hosted.
   // A self-hosted server running the moment picker on a local LLM
   // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
-  const geminiOk = !!apiKey || !!localLlm;
+  // `geminiNoMotor`: a chave colada nas Configurações mora no programa deste
+  // computador, e não no navegador (chaves_ia.py).
+  const geminiOk = !!apiKey || !!localLlm || geminiNoMotor;
   // So com a config em mãos: antes dela, `localLlm` nulo quer dizer "ainda não
   // sei", não "não tem". Confundir os dois era o aviso de chave que aparecia
   // logo depois do atualizar.bat e sumia no F5.
@@ -1033,7 +1039,7 @@ function App() {
     { id: 'thumbnails', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     { id: 'publicar', icon: Share2, label: 'Publicação', short: 'publicar', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', icon: History, label: 'History', short: 'history' }] : []),
-    { id: 'settings', icon: Settings, label: 'Settings', short: 'settings' },
+    { id: 'settings', icon: Settings, label: 'Configurações', short: 'config' },
   ].map((item, i) => ({ ...item, ord: String(i + 1).padStart(2, '0') }));
   const activeNav = navItems.find((n) => n.id === activeTab);
 
@@ -1309,13 +1315,13 @@ function App() {
               <button
                 onClick={() => (billingEnabled && !isSignedIn ? setShowLogin(true) : goToTab('settings'))}
                 className="badge-warn hover:brightness-125 transition-all hidden sm:inline-flex"
-                title="Configure API keys or choose a plan"
+                title="Colocar uma chave de IA"
               >
                 <AlertTriangle size={12} />
                 <span className="hidden md:inline">
-                  Gemini API Key Missing
+                  falta a chave de IA
                 </span>
-                <span className="md:hidden">keys missing</span>
+                <span className="md:hidden">sem chave</span>
               </button>
             )}
           </div>
@@ -1327,9 +1333,9 @@ function App() {
             <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 text-sm text-ink2 min-w-0 flex-1">
               <KeyRound size={16} className="shrink-0 text-warn mt-0.5 sm:mt-0" />
               <div className="min-w-0">
-                <span className="font-medium text-ink">Required API keys missing.</span>{' '}
+                <span className="font-medium text-ink">Falta uma chave de IA.</span>{' '}
                 <span className="text-muted">
-                  Defina uma chave de API para usar o Virtu Clips.
+                  O Virtu Clips usa IAs gratuitas para achar os melhores momentos. A chave é grátis e leva um minuto.
                 </span>
               </div>
             </div>
@@ -1337,7 +1343,7 @@ function App() {
               onClick={() => goToTab('settings')}
               className="btn-quiet px-3 py-1.5 text-xs shrink-0 w-full sm:w-auto"
             >
-              Go to Settings
+              colocar a chave
             </button>
           </div>
         )}
@@ -1374,13 +1380,17 @@ function App() {
             <div className="h-full overflow-y-auto p-4 sm:p-8 max-w-2xl mx-auto animate-fade">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">
                 <div>
-                  <p className="eyebrow mb-1.5">07 · SETTINGS</p>
-                  <h1 className="font-display uppercase tracking-wide text-2xl text-ink">Settings</h1>
+                  <p className="eyebrow mb-1.5">{activeNav?.ord} · CONFIGURAÇÕES</p>
+                  <h1 className="font-display uppercase tracking-wide text-2xl text-ink">Configurações</h1>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted mt-1">
-                  <Shield size={12} className="text-ok shrink-0" /> Privacy: keys only live in your browser (sent to backend just to process)
+                  <Shield size={12} className="text-ok shrink-0" /> As chaves ficam no programa deste computador, não no site
                 </div>
               </div>
+              {/* As chaves primeiro: sem elas nada processa. */}
+              {!billingEnabled && !isManaged && (
+                <ChavesDeIA chaveDoNavegador={apiKey} esquecerChaveDoNavegador={() => setApiKey('')} />
+              )}
               {/* Self-hosted installs have no account page, so the agent
                   how-to lives here; cloud users get it (with OAuth) in Account. */}
               {!billingEnabled && <div className="mb-6"><McpConnectCard cloud={false} /></div>}
@@ -1418,13 +1428,7 @@ function App() {
                     <Sparkles size={16} /> Choose a plan
                   </button>
                 </div>
-              ) : (
-                <>
-              <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
-
-
-                </>
-              )}
+              ) : null}
 
 
             </div>
@@ -1510,6 +1514,7 @@ function App() {
           {activeTab === 'thumbnails' && (
             <ThumbnailStudio
               geminiApiKey={apiKey}
+              geminiNoMotor={geminiNoMotor}
               managed={isManaged}
               onCreateClips={(sessionId) => {
                 setActiveTab('dashboard');
@@ -1797,6 +1802,7 @@ function App() {
                           onStateChange={handleClipStateChange}
                           durable={durableClips[i]}
                           geminiApiKey={apiKey}
+                          geminiNoMotor={geminiNoMotor}
                           isManaged={isManaged}
                           onPlay={(time) => handleClipPlay(time)}
                           onPause={handleClipPause}
@@ -1835,62 +1841,39 @@ function App() {
 
       </main>
 
-      {/* Missing API Key Modal */}
+      {/* Falta a chave de IA: o caminho é colar nas Configurações (ChavesDeIA). */}
       <Modal
         isOpen={showKeyModal}
         onClose={() => setShowKeyModal(false)}
-        eyebrow="SETUP"
-        title="Gemini API Key Required"
+        eyebrow="PRIMEIRO PASSO"
+        title="Falta a chave de IA"
         footer={
           <div className="flex gap-3">
             <button
               onClick={() => setShowKeyModal(false)}
               className="btn-ghost flex-1 px-4 py-2 text-sm"
             >
-              Cancel
+              agora não
             </button>
             <button
               onClick={() => { setShowKeyModal(false); goToTab('settings'); }}
               className="btn-primary flex-1 px-4 py-2 text-sm"
             >
-              Go to Settings
+              colocar a chave
             </button>
           </div>
         }
       >
-        <div className="space-y-4">
-          <p className="text-sm text-muted">
-            O Virtu Clips precisa de uma chave de <strong className="text-ink2">LLM</strong>. Groq e Gemini têm camada gratuita.
+        <div className="space-y-3 text-sm text-muted leading-relaxed">
+          <p>
+            O Virtu Clips usa IAs gratuitas para achar os melhores momentos do vídeo, e cada uma
+            pede uma chave. É grátis e leva um minuto: nas Configurações, clique em
+            <span className="text-ink2"> criar chave grátis</span>, copie e cole.
           </p>
-
-          {/* Gemini block */}
-          <div className={`rounded-input p-4 space-y-2 border ${!apiKey ? 'border-rule2' : 'border-rule opacity-70'}`}>
-            <p className="text-xs font-medium text-ink flex items-center gap-2">
-              {apiKey ? <Check size={12} className="text-ok" /> : <AlertTriangle size={12} className="text-warn" />}
-              Gemini API Key {apiKey && <span className="text-ok">— set</span>}
-            </p>
-            {!apiKey && (
-              <>
-                <ol className="text-xs text-muted space-y-1 list-decimal list-inside">
-                  <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-brass underline">aistudio.google.com/app/apikey</a></li>
-                  <li>Sign in with your Google account</li>
-                  <li>Click "Create API Key"</li>
-                  <li>Copy the key and paste it below</li>
-                </ol>
-                <input
-                  type="text"
-                  placeholder="Paste your Gemini API key here..."
-                  className="input-field"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      setApiKey(e.target.value.trim());
-                    }
-                  }}
-                />
-              </>
-            )}
-          </div>
-
+          <p>
+            As recomendadas são a do <span className="text-ink2">Google Gemini</span> e a do
+            <span className="text-ink2"> Groq</span>. Uma só já basta para começar.
+          </p>
         </div>
       </Modal>
 

@@ -29,7 +29,7 @@ function formatDuration(clip) {
     return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
 }
 
-export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, isManaged, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, onEditClip = null, onReframeClip = null }) {
+export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, geminiNoMotor = false, isManaged, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, onEditClip = null, onReframeClip = null }) {
     const [showDescModal, setShowDescModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showWatermarkModal, setShowWatermarkModal] = useState(false);
@@ -227,9 +227,10 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
             const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
 
             // Managed (paid) users get the Gemini key resolved server-side;
-            // only BYOK/self-host needs a local key.
-            if (!apiKey && !isManaged) {
-                throw new Error("Gemini API Key is missing. Please set it in Settings.");
+            // only BYOK/self-host needs a local key -- ou a do programa deste
+            // computador, colada nas Configurações (chaves_ia.py).
+            if (!apiKey && !isManaged && !geminiNoMotor) {
+                throw new Error("Falta a chave do Google Gemini: coloque-a nas Configurações.");
             }
             const geminiHeaders = apiKey ? { 'X-Gemini-Key': apiKey } : {};
 

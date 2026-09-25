@@ -95,6 +95,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | Arquivo | Papel |
 |---|---|
 | `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
+| `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante (proposta de 25-set-2026): a plataforma organizada por canal -- mapa das telas, modelo de dados, etapas 7.1 a 7.10 |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
 | `docs/DECISOES.md` | ADR-001 a 012 |
@@ -526,6 +527,11 @@ driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
 - **6 uploads por dia**: 1600 unidades por `videos.insert` contra 10.000/dia, o
   numero exato que o plano manda respeitar. O contador existe para que o 7o
   **caia na fila manual**, nao para virar `quotaExceeded` e um job vermelho.
+  **O numero esta desatualizado** (conferido na documentacao do Google em
+  25-set-2026): o envio ganhou cota propria, de 100 por dia, e o `search.list`
+  outra de 100. O codigo ainda segura em 6, e isso erra para o lado de segurar;
+  a correcao, com o teste que congela o numero, e a etapa 7.3 do
+  `docs/PLANO-DA-PLATAFORMA.md`. Nao "defender" o 6 como regra do YouTube.
 - **O dia do contador e o do Pacifico**, que e quando a quota do YouTube zera.
   Contar em UTC daria 7-8 horas por dia de discordancia com a API. Sem `tzdata`
   no sistema, cai para UTC-8 fixo -- o horario mais tarde, entao erra para o
@@ -761,7 +767,7 @@ projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
 - **Os numeros:** 3/dia, janelas 11h/15h/19h, espacamento minimo de 3 h, jitter
   de ±25 min. O 3/dia e o unico que o plano corrobora duas vezes (a conta do §1
   e a proposta do ADR-007). O teto duro e 6/dia, da quota, e o agendador nunca o
-  ultrapassa. Os tres primeiros sao **defaults configuraveis** -- calibrar
+  ultrapassa (o 6 vem da cota antiga: ver a nota no driver `youtube-api`). Os tres primeiros sao **defaults configuraveis** -- calibrar
   horario exige retencao medida, que e a Fase 5.
 - **`JITTER_MINIMO_MIN` (5) e piso NAO configuravel.** Pedir zero nao desliga o
   jitter, so o reduz ao piso, com uma linha no log. A alternativa e um

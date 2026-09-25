@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fases 0 a 4 completas, e a 4 foi verificada em execução real** (16-set-2026, vídeo de 10 min, na máquina do autor). O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Fase 5 em andamento.** Item aberto com prioridade: a execução é lenta demais — ver abaixo. **Fase 6 (no ar) começou em 24-set-2026**: o painel está no Cloudflare, e o ajudante (instalador para Windows, sem Docker, que se atualiza sozinho) passou no Windows do GitHub; falta o teste no PC do autor |
+| Fase | **Fases 0 a 4 completas, e a 4 foi verificada em execução real** (16-set-2026, vídeo de 10 min, na máquina do autor). O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Fase 5 em andamento.** Item aberto com prioridade: a execução é lenta demais — ver abaixo. **Fase 6 (no ar) começou em 24-set-2026**: o painel está no Cloudflare, e o ajudante (instalador para Windows, sem Docker, que se atualiza sozinho) passou no Windows do GitHub; falta o teste no PC do autor. **Fase 7 (a plataforma organizada por canal) proposta em 25-set-2026**: `docs/PLANO-DA-PLATAFORMA.md` |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -969,6 +969,26 @@ dois instalados, o ajudante cede: quando o Docker atende, ele para o motor dele.
 
 ---
 
+## Fase 7 — a plataforma organizada por canal · proposta em 25-set-2026
+
+Pedido do autor depois do primeiro vídeo inteiro pelo site: estruturar o
+aplicativo antes de melhorar os cortes. O centro deixa de ser o vídeo e passa a
+ser o **canal** (nicho, identidade, contas ligadas de YouTube e TikTok), com duas
+formas de criar (cortes de vídeo real e vídeo criado por IA), automação por
+canal, análises por plataforma e, por último, a frota de aparelhos.
+
+O plano inteiro, com o mapa das telas, o modelo de dados, as dez etapas e os
+critérios de pronto, está em **`docs/PLANO-DA-PLATAFORMA.md`**. A primeira etapa
+(7.1) é só estrutura: telas e dados com lugar para tudo, sem quebrar nada do que
+funciona hoje.
+
+**Um achado que muda este documento também:** o Google mudou a cota de envio do
+YouTube. Hoje são 100 envios por dia numa cota só de envio, e não os 6 que a
+Fase 3 calculou (1.600 unidades contra 10.000). O código ainda segura em 6 — erra
+para o lado de segurar — e a correção está na 7.3.
+
+---
+
 ## Cronograma
 
 | Fase | Original §9 | Ajustado | Delta |
@@ -1008,5 +1028,6 @@ sobre o `clippyme` economiza na Fase 2.
 | `docs/COMO-EXECUTAR.md` | passo a passo para fechar as três execuções pendentes na sua máquina |
 | `docs/PLANO-TECNICO.md` | documento de origem, v2 — o *que* e o *porquê*. Preservado íntegro. |
 | `docs/AUDITORIA-VERIFICACAO.md` | o que a verificação confirmou e o que divergiu, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 010 — decisões travadas e o que faria revê-las |
+| `docs/DECISOES.md` | ADR-001 a 012 — decisões travadas e o que faria revê-las |
 | `docs/PLANO-DE-ACAO.md` | este — ordem de execução e critérios de pronto |
+| `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante: a plataforma organizada por canal |

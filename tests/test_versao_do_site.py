@@ -47,7 +47,7 @@ def _versao(pasta, **extra):
     env.update(extra)
     saida = subprocess.run(
         [NODE, str(SCRIPT), str(pasta)], env=env, check=True,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, encoding="utf-8", timeout=120,
     ).stdout
     return json.loads(saida)
 
@@ -139,8 +139,10 @@ def _navegador(expressao):
         f"const r = await ({expressao});\n"
         "console.log(JSON.stringify(r));\n"
     )
+    # O node escreve UTF-8 em cano; sem isto, um Windows fora do modo UTF-8
+    # do Python leria "Â·" no lugar de "·".
     saida = subprocess.run([NODE, "--input-type=module", "-e", codigo],
-                           capture_output=True, text=True, check=True, timeout=60).stdout
+                           capture_output=True, encoding="utf-8", check=True, timeout=60).stdout
     return json.loads(saida)
 
 

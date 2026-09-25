@@ -58,12 +58,16 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    O `Cortes-Ajudante.exe` que deu o erro 448 pode ir para a lixeira: é a versão
    com o defeito. Não precisa desinstalar o que ele deixou antes — o instalador
    novo reconhece aquela instalação, pergunta **Reinstalar** ou **Desinstalar**
-   (escolha Reinstalar), traz a pasta de projetos para o lugar novo e apaga o
-   resto.
+   (escolha Reinstalar), traz a pasta de projetos para o lugar novo e, antes de
+   copiar qualquer arquivo, apaga o resto: a pasta `%LOCALAPPDATA%\Cortes` (com o
+   Python pela metade que deu o erro), os atalhos "Cortes" e a entrada antiga em
+   *Aplicativos*, que passa a se chamar Virtu Clips. O Windows do GitHub parte de
+   uma cópia dessa instalação quebrada a cada versão. Ali, **Desinstalar** rodaria o
+   desinstalador *antigo*, que mostra um erro inofensivo sobre um `python.exe` que
+   nunca chegou a existir — por isso, Reinstalar.
 4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060
    ela baixa também as bibliotecas de CUDA do whisper (~1 GB a mais), então pode
-   levar uns 10 minutos. A janela fecha sozinha. A pasta `%LOCALAPPDATA%\Cortes`
-   da tentativa que deu o erro 448 é limpa sozinha nesse passo.
+   levar uns 10 minutos. A janela fecha sozinha.
 5. No fim, o site abre sozinho. **Confira:** o ícone "V" perto do relógio (talvez na
    setinha ^); passando o mouse, **"Virtu Clips: pronto (placa de vídeo)"**. Se
    disser "(processador)", me mande o arquivo abaixo.

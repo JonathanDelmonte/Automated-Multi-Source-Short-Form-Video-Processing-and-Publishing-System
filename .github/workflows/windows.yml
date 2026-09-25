@@ -134,16 +134,38 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersao=$env:VERSAO" "/DPacote=C:\vc\pacote" ajudante\instalador.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem ajudante\saida | Format-Table Name, Length
-      # Antes, uma instalacao do tempo em que o programa se chamava Cortes
-      # (%LOCALAPPDATA%\Cortes): o instalador novo tem de trazer os projetos
-      # para a pasta nova e levar o resto -- programa e atalho.
+      # Antes, o que a instalacao do erro 448 deixou no PC do autor
+      # (24-set-2026), quando o programa se chamava Cortes: o codigo, os
+      # binarios, o desinstalador e a entrada dele em "Aplicativos", os
+      # atalhos, o inicio com o Windows e o Python do uv -- com o atalho de
+      # pasta (junction) da versao menor, que foi o que o Windows recusou. Sem
+      # venv: a instalacao morreu antes dele. O instalador novo tem de trazer
+      # os projetos para a pasta nova e levar todo o resto.
       - name: Instalar sem janela
         run: |
           $antiga = "$env:LOCALAPPDATA\Cortes"
-          New-Item -ItemType Directory -Force "$antiga\versoes\527\ajudante", "$antiga\dados\output\projeto" | Out-Null
+          New-Item -ItemType Directory -Force "$antiga\versoes\527\ajudante", "$antiga\dados\output\projeto", "$antiga\dados\logs", "$antiga\bin", "$antiga\cache-uv" | Out-Null
           Set-Content "$antiga\iniciar.py" "# o iniciar.py de uma instalacao antiga"
           Set-Content "$antiga\dados\output\projeto\corte.txt" "um corte de antes da marca nova"
-          New-Item -ItemType File -Force "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cortes.lnk" | Out-Null
+          foreach ($f in "atual.txt", "cortes.ico", "unins000.exe", "unins000.dat", "bin\uv.exe", "cache-uv\CACHEDIR.TAG", "dados\logs\instalacao.log") {
+            Set-Content "$antiga\$f" "da instalacao antiga"
+          }
+          $py = "$antiga\python\cpython-3.11.16-windows-x86_64-none"
+          New-Item -ItemType Directory -Force "$py\Lib" | Out-Null
+          Set-Content "$py\python.exe" "da instalacao antiga"
+          New-Item -ItemType Junction -Path "$antiga\python\cpython-3.11-windows-x86_64-none" -Target $py | Out-Null
+          $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+          $mesa = [Environment]::GetFolderPath("DesktopDirectory")
+          New-Item -ItemType File -Force "$menu\Cortes.lnk", "$mesa\Cortes.lnk" | Out-Null
+          Set-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes -Value "`"$antiga\venv\Scripts\pythonw.exe`" `"$antiga\iniciar.py`""
+          # A entrada em "Aplicativos", com a pasta antiga no "App Path": e ela
+          # que abre a pagina "reinstalar ou desinstalar" (sem janela, vale
+          # reinstalar), e e ela que o UsePreviousAppDir=no tem de ignorar.
+          $chave = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1"
+          New-Item -Force $chave | Out-Null
+          Set-ItemProperty $chave -Name DisplayName -Value "Cortes"
+          Set-ItemProperty $chave -Name UninstallString -Value "`"$antiga\unins000.exe`""
+          Set-ItemProperty $chave -Name "Inno Setup: App Path" -Value $antiga
           $p = Start-Process ajudante\saida\Instalar-Virtu-Clips.exe -Wait -PassThru `
                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
           "codigo do instalador: $($p.ExitCode)"
@@ -170,10 +192,16 @@ jobs:
           if ($run -notmatch "VirtuClips\\venv\\Scripts\\pythonw\.exe" -or $run -notmatch "iniciar\.py") { exit 1 }
           $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
           if (-not (Test-Path "$menu\Virtu Clips.lnk")) { "faltou o atalho do menu Iniciar"; exit 1 }
-          # A instalacao antiga: os projetos vieram, o resto saiu.
+          # A instalacao antiga: os projetos vieram, o resto saiu -- inclusive o
+          # Python do uv com o atalho de pasta dentro.
           if (-not (Test-Path "$base\dados\output\projeto\corte.txt")) { "os projetos da pasta Cortes nao vieram"; exit 1 }
-          if (Test-Path "$env:LOCALAPPDATA\Cortes") { "a pasta Cortes ficou:"; Get-ChildItem -Recurse "$env:LOCALAPPDATA\Cortes"; exit 1 }
+          if (Test-Path "$env:LOCALAPPDATA\Cortes") { "a pasta Cortes ficou:"; Get-ChildItem -Recurse -Force "$env:LOCALAPPDATA\Cortes"; exit 1 }
           if (Test-Path "$menu\Cortes.lnk") { "o atalho antigo ficou"; exit 1 }
+          if (Test-Path "$([Environment]::GetFolderPath('DesktopDirectory'))\Cortes.lnk") { "o atalho antigo da area de trabalho ficou"; exit 1 }
+          # "Aplicativos" continua com uma entrada so, agora a nova.
+          $app = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1"
+          "em Aplicativos: $($app.DisplayName) -> $($app.UninstallString)"
+          if ($app.DisplayName -ne "Virtu Clips" -or $app.UninstallString -notmatch "VirtuClips\\unins000\.exe") { exit 1 }
           "versao instalada: $atual"
       - name: O motor instalado sobe
         run: |

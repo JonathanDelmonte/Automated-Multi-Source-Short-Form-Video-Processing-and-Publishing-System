@@ -235,6 +235,23 @@ def test_a_instalacao_do_tempo_do_cortes_vem_para_a_pasta_nova():
     assert "DelTree(Antiga + '\\dados'" not in migrar, "os projetos nunca sao apagados"
 
 
+def test_o_ci_parte_do_que_a_instalacao_do_erro_448_deixou():
+    """A instalacao antiga do CI e uma copia do que ficou no PC do autor: o
+    Python do uv com o atalho de pasta da versao menor e a entrada em
+    "Aplicativos" apontando para a pasta antiga. Sem a entrada, o
+    `UsePreviousAppDir=no` nunca seria posto a prova contra uma que existe;
+    sem o atalho de pasta, a limpeza nunca atravessaria o que o Windows
+    recusou."""
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    antes = fluxo.split("- name: Instalar sem janela", 1)[1].split("- name:", 1)[0]
+    assert "-ItemType Junction" in antes and "cpython-3.11-windows-x86_64-none" in antes
+    assert "{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1" in antes
+    assert '"Inno Setup: App Path" -Value $antiga' in antes
+    depois = fluxo.split("- name: Atalhos, inicio com o Windows e a pasta antiga", 1)[1].split("- name:", 1)[0]
+    assert 'Test-Path "$env:LOCALAPPDATA\\Cortes"' in depois
+    assert "VirtuClips\\\\unins000" in depois, "a entrada em Aplicativos tem de ser a nova"
+
+
 def test_abrir_o_instalador_de_novo_pergunta_reinstalar_ou_desinstalar():
     """Com o programa ja instalado, o instalador oferece as duas coisas. O
     padrao e reinstalar -- e o que uma instalacao sem janela faz, porque ali

@@ -2074,8 +2074,14 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   em "Aplicativos". Sem `UsePreviousAppDir=no` o Inno instalaria de novo na
   pasta antiga. O `MigrarDoCortes` do `[Code]` desliga o ajudante antigo, traz
   `dados\` (os projetos) para a pasta nova e apaga o resto dela e os atalhos
-  `Cortes.lnk`; o CI monta uma instalacao antiga falsa antes de instalar e
-  confere as tres coisas. E o `caminhos_padrao` do ajudante tira a pasta de
+  `Cortes.lnk`. O CI parte de uma COPIA do que a instalacao do 448 deixou no
+  PC do autor: o Python do uv com o atalho de pasta da versao menor, e a
+  entrada em "Aplicativos" com a pasta antiga no `Inno Setup: App Path` --
+  sem ela, o `UsePreviousAppDir=no` nunca seria posto a prova contra uma
+  chave que existe. O `DelTree` do Inno nao entra em atalho de pasta: remove
+  o atalho e segue (`IsDirectoryAndNotReparsePoint`, conferido na fonte do
+  Inno em 25-set-2026), entao a limpeza nao atravessa o que o Windows
+  recusou. E o `caminhos_padrao` do ajudante tira a pasta de
   ONDE O ARQUIVO ESTA (`<base>/versoes/<v>/ajudante/`), e nao do nome: uma
   instalacao antiga que se atualiza sozinha recebe o codigo novo na pasta
   `Cortes`, e procurar o venv em `VirtuClips` a deixaria sem subir.

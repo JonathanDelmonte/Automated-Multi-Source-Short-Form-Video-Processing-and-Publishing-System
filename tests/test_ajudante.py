@@ -246,7 +246,10 @@ def test_o_ci_parte_do_que_a_instalacao_do_erro_448_deixou():
     antes = fluxo.split("- name: Instalar sem janela", 1)[1].split("- name:", 1)[0]
     assert "-ItemType Junction" in antes and "cpython-3.11-windows-x86_64-none" in antes
     assert "{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1" in antes
-    assert '"Inno Setup: App Path" -Value $antiga' in antes
+    assert 'SetValue("Inno Setup: App Path", $antiga)' in antes
+    # O CI nao supoe chave que a conta do runner talvez nao tenha.
+    codigo = "\n".join(l for l in antes.splitlines() if not l.strip().startswith("#"))
+    assert "Set-ItemProperty" not in codigo and "CreateSubKey" in codigo
     depois = fluxo.split("- name: Atalhos, inicio com o Windows e a pasta antiga", 1)[1].split("- name:", 1)[0]
     assert 'Test-Path "$env:LOCALAPPDATA\\Cortes"' in depois
     assert "VirtuClips\\\\unins000" in depois, "a entrada em Aplicativos tem de ser a nova"

@@ -168,17 +168,23 @@ jobs:
           [IO.File]::WriteAllBytes("$bin\python3.11.exe", [byte[]]($mz + [Text.Encoding]::UTF8.GetBytes("$antiga\python\cpython-3.11-windows-x86_64-none\python.exe") + $mz))
           [IO.File]::WriteAllBytes("$bin\python3.99.exe", [byte[]]($mz + [Text.Encoding]::UTF8.GetBytes("C:\vc\outro-python\python.exe") + $mz))
           $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
-          $mesa = [Environment]::GetFolderPath("DesktopDirectory")
+          # "Create": sem ele, o .NET devolve "" para uma pasta que ainda nao
+          # existe, e o atalho iria parar na raiz do disco.
+          $mesa = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory, [Environment+SpecialFolderOption]::Create)
           New-Item -ItemType File -Force "$menu\Cortes.lnk", "$mesa\Cortes.lnk" | Out-Null
-          Set-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name Cortes -Value "`"$antiga\venv\Scripts\pythonw.exe`" `"$antiga\iniciar.py`""
+          # CreateSubKey, e nao Set-ItemProperty: numa conta em que nada liga
+          # com o Windows, a chave Run nem existe (25-set-2026, uma volta em
+          # duas) -- e o CreateSubKey cria o que faltar no caminho.
+          $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Microsoft\Windows\CurrentVersion\Run")
+          $k.SetValue("Cortes", "`"$antiga\venv\Scripts\pythonw.exe`" `"$antiga\iniciar.py`""); $k.Close()
           # A entrada em "Aplicativos", com a pasta antiga no "App Path": e ela
           # que abre a pagina "reinstalar ou desinstalar" (sem janela, vale
           # reinstalar), e e ela que o UsePreviousAppDir=no tem de ignorar.
-          $chave = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1"
-          New-Item -Force $chave | Out-Null
-          Set-ItemProperty $chave -Name DisplayName -Value "Cortes"
-          Set-ItemProperty $chave -Name UninstallString -Value "`"$antiga\unins000.exe`""
-          Set-ItemProperty $chave -Name "Inno Setup: App Path" -Value $antiga
+          $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1")
+          $k.SetValue("DisplayName", "Cortes")
+          $k.SetValue("UninstallString", "`"$antiga\unins000.exe`"")
+          $k.SetValue("Inno Setup: App Path", $antiga)
+          $k.Close()
           $p = Start-Process ajudante\saida\Instalar-Virtu-Clips.exe -Wait -PassThru `
                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
           "codigo do instalador: $($p.ExitCode)"
@@ -210,7 +216,7 @@ jobs:
           if (-not (Test-Path "$base\dados\output\projeto\corte.txt")) { "os projetos da pasta Cortes nao vieram"; exit 1 }
           if (Test-Path "$env:LOCALAPPDATA\Cortes") { "a pasta Cortes ficou:"; Get-ChildItem -Recurse -Force "$env:LOCALAPPDATA\Cortes"; exit 1 }
           if (Test-Path "$menu\Cortes.lnk") { "o atalho antigo ficou"; exit 1 }
-          if (Test-Path "$([Environment]::GetFolderPath('DesktopDirectory'))\Cortes.lnk") { "o atalho antigo da area de trabalho ficou"; exit 1 }
+          if (Test-Path "$([Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory, [Environment+SpecialFolderOption]::Create))\Cortes.lnk") { "o atalho antigo da area de trabalho ficou"; exit 1 }
           # Os restos do uv: sai o que apontava para a pasta antiga, e so isso.
           $astral = "HKCU:\Software\Python\Astral"
           if (Test-Path "$astral\CPython3.11.16") { "o registro do Python da instalacao antiga ficou"; exit 1 }

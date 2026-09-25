@@ -262,13 +262,92 @@ begin
   DeleteFile(ExpandConstant('{userdesktop}\Cortes.lnk'));
 end;
 
+// O `uv python install` da instalacao do erro 448 foi alem da pasta dela
+// antes de morrer: registrou o Python no Windows (PEP 514) e pos um
+// python3.11.exe na pasta de executaveis do uv -- e so depois tentou o atalho
+// de pasta que o Windows recusou. Os dois apontam para Cortes\python, que o
+// MigrarDoCortes apaga. `Alvo` e essa pasta, em minusculas; so sai o que
+// aponta para ela, e um Python que a pessoa instalou pelo uv fica.
+procedure ApagarRegistroDoUv(const Alvo: String);
+var
+  Empresa, Caminho: String;
+  Versoes: TArrayOfString;
+  I: Integer;
+begin
+  Empresa := 'Software\Python\Astral';
+  if not RegGetSubkeyNames(HKCU, Empresa, Versoes) then
+    Exit;
+  for I := 0 to GetArrayLength(Versoes) - 1 do
+    if RegQueryStringValue(HKCU, Empresa + '\' + Versoes[I] + '\InstallPath', '', Caminho) then
+    begin
+      if Pos('\\?\', Caminho) = 1 then
+        Delete(Caminho, 1, 4);
+      if Pos(Alvo, Lowercase(AddBackslash(Caminho))) = 1 then
+      begin
+        RegDeleteKeyIncludingSubkeys(HKCU, Empresa + '\' + Versoes[I]);
+        Log('Registro do Python da instalacao antiga removido: ' + Versoes[I]);
+      end;
+    end;
+  // A chave da empresa so tem nome e endereco: sem nenhum Python, sai.
+  if RegGetSubkeyNames(HKCU, Empresa, Versoes) and (GetArrayLength(Versoes) = 0) then
+    RegDeleteKeyIncludingSubkeys(HKCU, Empresa);
+end;
+
+// O lancador do uv e um .exe pequeno com o caminho do Python que ele abre
+// escrito dentro: e por esse caminho que se sabe de quem ele e.
+procedure ApagarLancadoresDoUv(const Pasta, Alvo: String);
+var
+  Nomes: TArrayOfString;
+  Conteudo: AnsiString;
+  Texto: String;
+  I: Integer;
+begin
+  if Pasta = '' then
+    Exit;
+  SetArrayLength(Nomes, 3);
+  Nomes[0] := 'python3.11.exe';
+  Nomes[1] := 'python3.exe';
+  Nomes[2] := 'python.exe';
+  for I := 0 to GetArrayLength(Nomes) - 1 do
+    if LoadStringFromFile(AddBackslash(Pasta) + Nomes[I], Conteudo) then
+    begin
+      Texto := String(Conteudo);
+      if Pos(Alvo, Lowercase(Texto)) > 0 then
+      begin
+        DeleteFile(AddBackslash(Pasta) + Nomes[I]);
+        Log('Lancador do Python da instalacao antiga removido: ' + AddBackslash(Pasta) + Nomes[I]);
+      end;
+    end;
+end;
+
+procedure LimparRestosDoUv;
+var
+  Alvo, PastaLocal: String;
+begin
+  Alvo := Lowercase(ExpandConstant('{localappdata}\Cortes\python\'));
+  ApagarRegistroDoUv(Alvo);
+  // Onde o uv poe os executaveis: a variavel dele, a do XDG ou a pasta
+  // padrao. Olhar numa pasta a mais nao custa nada, pelo mesmo criterio.
+  ApagarLancadoresDoUv(GetEnv('UV_PYTHON_BIN_DIR'), Alvo);
+  ApagarLancadoresDoUv(GetEnv('XDG_BIN_HOME'), Alvo);
+  if GetEnv('USERPROFILE') = '' then
+    Exit;
+  PastaLocal := GetEnv('USERPROFILE') + '\.local';
+  ApagarLancadoresDoUv(PastaLocal + '\bin', Alvo);
+  // So se ficaram vazias: quem as criou foi o uv da instalacao antiga.
+  RemoveDir(PastaLocal + '\bin');
+  RemoveDir(PastaLocal);
+end;
+
 // Instalar por cima de um ajudante aberto: desliga-o (e o motor) antes de a
-// pasta de versoes ser apagada.
+// pasta de versoes ser apagada. Os restos do uv nao dependem da pasta antiga
+// existir: quem desinstalou o Cortes pelo desinstalador dele ainda os tem.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   PararAjudante(ExpandConstant('{app}'));
   MigrarDoCortes;
+  LimparRestosDoUv;
 end;
 
 // O `instalar.ps1` num console visivel: a pessoa ve o que esta baixando, e a

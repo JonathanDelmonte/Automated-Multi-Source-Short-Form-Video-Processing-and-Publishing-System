@@ -2081,8 +2081,20 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   chave que existe. O `DelTree` do Inno nao entra em atalho de pasta: remove
   o atalho e segue (`IsDirectoryAndNotReparsePoint`, conferido na fonte do
   Inno em 25-set-2026), entao a limpeza nao atravessa o que o Windows
-  recusou. E o `caminhos_padrao` do ajudante tira a pasta de
-  ONDE O ARQUIVO ESTA (`<base>/versoes/<v>/ajudante/`), e nao do nome: uma
+  recusou.
+- **O uv daquela instalacao passou da pasta dela antes de morrer**
+  (`LimparRestosDoUv`, 25-set-2026). No `uv python install`, o registro do
+  Python no Windows (PEP 514, `HKCU\Software\Python\Astral`) e o lancador
+  `python3.11.exe` em `%USERPROFILE%\.local\bin` vem ANTES do atalho de pasta
+  da versao menor -- lido na fonte do uv --, entao os dois ficaram, apontando
+  para `Cortes\python`. Sai so o que aponta para la: o registro pelo
+  `InstallPath` (prefixo, nunca "contem"), o lancador pelo caminho escrito
+  dentro dele. Um Python que a pessoa instalou pelo uv fica, e o CI poe um ao
+  lado para provar. Roda mesmo sem a pasta antiga: quem desinstalou o Cortes
+  pelo desinstalador dele ainda tem os dois.
+- **O ajudante acha a propria pasta pelo lugar do arquivo**: o
+  `caminhos_padrao` a tira de ONDE O ARQUIVO ESTA
+  (`<base>/versoes/<v>/ajudante/`), e nao do nome: uma
   instalacao antiga que se atualiza sozinha recebe o codigo novo na pasta
   `Cortes`, e procurar o venv em `VirtuClips` a deixaria sem subir.
 - **Armadilhas que ja morderam:**

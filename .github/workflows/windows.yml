@@ -154,6 +154,19 @@ jobs:
           New-Item -ItemType Directory -Force "$py\Lib" | Out-Null
           Set-Content "$py\python.exe" "da instalacao antiga"
           New-Item -ItemType Junction -Path "$antiga\python\cpython-3.11-windows-x86_64-none" -Target $py | Out-Null
+          # O que aquele uv fez FORA da pasta antes de morrer: o registro do
+          # Python no Windows (PEP 514) e o lancador python3.11.exe, os dois
+          # apontando para a pasta antiga. Ao lado, os de um Python que a
+          # pessoa instalou (3.99, noutra pasta): esses ficam.
+          foreach ($r in @(@("CPython3.11.16", $py), @("CPython3.99.0", "C:\vc\outro-python"))) {
+            $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Python\Astral\$($r[0])\InstallPath")
+            $k.SetValue("", $r[1]); $k.Close()
+          }
+          $bin = "$env:USERPROFILE\.local\bin"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          $mz = [byte[]](0x4D, 0x5A, 0x90, 0, 3, 0, 0, 0)
+          [IO.File]::WriteAllBytes("$bin\python3.11.exe", [byte[]]($mz + [Text.Encoding]::UTF8.GetBytes("$antiga\python\cpython-3.11-windows-x86_64-none\python.exe") + $mz))
+          [IO.File]::WriteAllBytes("$bin\python3.99.exe", [byte[]]($mz + [Text.Encoding]::UTF8.GetBytes("C:\vc\outro-python\python.exe") + $mz))
           $menu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
           $mesa = [Environment]::GetFolderPath("DesktopDirectory")
           New-Item -ItemType File -Force "$menu\Cortes.lnk", "$mesa\Cortes.lnk" | Out-Null
@@ -198,6 +211,13 @@ jobs:
           if (Test-Path "$env:LOCALAPPDATA\Cortes") { "a pasta Cortes ficou:"; Get-ChildItem -Recurse -Force "$env:LOCALAPPDATA\Cortes"; exit 1 }
           if (Test-Path "$menu\Cortes.lnk") { "o atalho antigo ficou"; exit 1 }
           if (Test-Path "$([Environment]::GetFolderPath('DesktopDirectory'))\Cortes.lnk") { "o atalho antigo da area de trabalho ficou"; exit 1 }
+          # Os restos do uv: sai o que apontava para a pasta antiga, e so isso.
+          $astral = "HKCU:\Software\Python\Astral"
+          if (Test-Path "$astral\CPython3.11.16") { "o registro do Python da instalacao antiga ficou"; exit 1 }
+          if (-not (Test-Path "$astral\CPython3.99.0")) { "sumiu o registro de um Python que nao era da instalacao antiga"; exit 1 }
+          $bin = "$env:USERPROFILE\.local\bin"
+          if (Test-Path "$bin\python3.11.exe") { "o python3.11.exe da instalacao antiga ficou"; exit 1 }
+          if (-not (Test-Path "$bin\python3.99.exe")) { "sumiu um python3.99.exe que nao era da instalacao antiga"; exit 1 }
           # "Aplicativos" continua com uma entrada so, agora a nova.
           $app = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F3B2C1E-8D4A-4E7B-9C21-5A0D3E9F7B64}_is1"
           "em Aplicativos: $($app.DisplayName) -> $($app.UninstallString)"

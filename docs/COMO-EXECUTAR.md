@@ -60,9 +60,12 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    novo reconhece aquela instalação, pergunta **Reinstalar** ou **Desinstalar**
    (escolha Reinstalar), traz a pasta de projetos para o lugar novo e, antes de
    copiar qualquer arquivo, apaga o resto: a pasta `%LOCALAPPDATA%\Cortes` (com o
-   Python pela metade que deu o erro), os atalhos "Cortes" e a entrada antiga em
-   *Aplicativos*, que passa a se chamar Virtu Clips. O Windows do GitHub parte de
-   uma cópia dessa instalação quebrada a cada versão. Ali, **Desinstalar** rodaria o
+   Python pela metade que deu o erro), os atalhos "Cortes", a entrada antiga em
+   *Aplicativos* (que passa a se chamar Virtu Clips) e as duas coisas que aquela
+   tentativa fez fora da pasta antes de falhar — o registro do Python dela no
+   Windows e um `python3.11.exe` em `%USERPROFILE%\.local\bin`. Um Python que
+   você tenha instalado por conta própria não é tocado. O Windows do GitHub parte
+   de uma cópia dessa instalação quebrada a cada versão. Ali, **Desinstalar** rodaria o
    desinstalador *antigo*, que mostra um erro inofensivo sobre um `python.exe` que
    nunca chegou a existir — por isso, Reinstalar.
 4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060

@@ -252,6 +252,33 @@ def test_o_ci_parte_do_que_a_instalacao_do_erro_448_deixou():
     assert "VirtuClips\\\\unins000" in depois, "a entrada em Aplicativos tem de ser a nova"
 
 
+def test_os_restos_do_uv_fora_da_pasta_saem_e_so_eles():
+    """O `uv python install` da instalacao do 448 registrou o Python no
+    Windows e pos um python3.11.exe na pasta de executaveis ANTES de morrer
+    no atalho de pasta. A limpeza apaga so o que aponta para a pasta antiga
+    -- um Python que a pessoa instalou pelo uv fica -- e roda mesmo sem a
+    pasta antiga, que o desinstalador do Cortes pode ja ter levado."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    preparar = iss.split("function PrepareToInstall", 1)[1].split("\nend;", 1)[0]
+    assert "LimparRestosDoUv" in preparar
+    registro = iss.split("procedure ApagarRegistroDoUv", 1)[1].split("\nend;", 1)[0]
+    assert "'Software\\Python\\Astral'" in registro and "HKCU" in registro
+    # Prefixo do InstallPath, e nao "contem": outro Python nunca sai.
+    assert "Pos(Alvo, Lowercase(AddBackslash(Caminho))) = 1" in registro
+    # A empresa so sai vazia.
+    assert "GetArrayLength(Versoes) = 0" in registro
+    lancadores = iss.split("procedure ApagarLancadoresDoUv", 1)[1].split("\nend;", 1)[0]
+    assert "LoadStringFromFile" in lancadores and "Pos(Alvo, Lowercase(Texto)) > 0" in lancadores
+    assert lancadores.index("Pos(Alvo") < lancadores.index("DeleteFile(")
+    limpar = iss.split("procedure LimparRestosDoUv", 1)[1].split("\nend;", 1)[0]
+    assert "{localappdata}\\Cortes\\python\\" in limpar
+    assert "DelTree" not in limpar, "fora da pasta antiga, so arquivo por arquivo"
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    antes = fluxo.split("- name: Instalar sem janela", 1)[1].split("- name:", 1)[0]
+    assert "Software\\Python\\Astral" in antes and "python3.11.exe" in antes
+    assert "CPython3.99.0" in antes and "python3.99.exe" in antes, "o CI prova que o alheio fica"
+
+
 def test_abrir_o_instalador_de_novo_pergunta_reinstalar_ou_desinstalar():
     """Com o programa ja instalado, o instalador oferece as duas coisas. O
     padrao e reinstalar -- e o que uma instalacao sem janela faz, porque ali

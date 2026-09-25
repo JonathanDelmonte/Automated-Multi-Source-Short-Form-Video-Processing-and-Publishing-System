@@ -119,15 +119,31 @@ def caminhos_padrao(env: Mapping[str, str] = os.environ, aqui: Path = AQUI) -> C
 
 # --- placa de video -----------------------------------------------------------
 
-def tem_placa_nvidia(executar: Callable = subprocess.run) -> bool:
+def _nvidia_smis(env: Mapping[str, str]) -> list:
+    """Onde procurar o `nvidia-smi`: o PATH (os drivers de hoje o poem no
+    System32) e a pasta NVSMI dos drivers antigos, que fica fora do PATH."""
+    candidatos = ["nvidia-smi"]
+    for base in (env.get("ProgramW6432"), env.get("ProgramFiles")):
+        if base:
+            smi = str(Path(base) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe")
+            if smi not in candidatos:
+                candidatos.append(smi)
+    return candidatos
+
+
+def tem_placa_nvidia(executar: Callable = subprocess.run,
+                     env: Mapping[str, str] = os.environ) -> bool:
     """O driver da NVIDIA traz o `nvidia-smi`; sem ele, nao ha placa que o
-    whisper ou o NVENC possam usar. `-L` so lista, e rapido."""
-    try:
-        r = executar(["nvidia-smi", "-L"], capture_output=True, text=True,
-                     timeout=15, creationflags=_SEM_JANELA)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return r.returncode == 0 and "GPU" in (r.stdout or "")
+    whisper ou o NVENC possam usar. `-L` so lista, e rapido. O primeiro que
+    RESPONDE decide: um que existe e diz que nao ha placa nao e ignorado."""
+    for smi in _nvidia_smis(env):
+        try:
+            r = executar([smi, "-L"], capture_output=True, text=True,
+                         timeout=15, creationflags=_SEM_JANELA)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return r.returncode == 0 and "GPU" in (r.stdout or "")
+    return False
 
 
 def libs_da_placa(c: Caminhos) -> list:
@@ -135,6 +151,18 @@ def libs_da_placa(c: Caminhos) -> list:
     (requirements-windows-gpu.txt). O ctranslate2 as carrega pelo PATH."""
     raiz = c.venv / "Lib" / "site-packages" / "nvidia"
     return [p for p in (raiz / "cublas" / "bin", raiz / "cudnn" / "bin") if p.is_dir()]
+
+
+def onde_roda_o_whisper(c: Caminhos, placa: bool) -> str:
+    """O que o icone diz. A placa so conta quando o whisper a usa de fato: com
+    placa e sem as DLLs de CUDA ele fica no processador (ver
+    ambiente_do_motor), e dizer "placa de video" ali escondia justamente o
+    caso que o instalador de 32 bits deixou ate a versao 538."""
+    if placa and libs_da_placa(c):
+        return "placa de vídeo"
+    if placa:
+        return "processador; faltam as bibliotecas da placa"
+    return "processador"
 
 
 def ler_env_da_pessoa(c: Caminhos) -> dict:
@@ -512,7 +540,7 @@ def rodar_bandeja(c: Caminhos, aviso: Optional[str] = None) -> None:
     def titulo() -> str:
         extra = ""
         if ajudante.estado == PRONTO:
-            extra = " (placa de vídeo)" if placa else " (processador)"
+            extra = f" ({onde_roda_o_whisper(c, placa)})"
         return f"{NOME}: {TEXTO_DO_ESTADO[ajudante.estado]}{extra}"
 
     def sair(icone, _item=None):
@@ -671,7 +699,7 @@ def verificar(c: Caminhos, porta: int = PORTA, temporario: bool = False,
         if not ok:
             print("o servidor subiu, mas o pipeline (main.py) nao importa:\n" + saida)
             return 1
-        print(f"motor pronto ({'placa de video' if placa else 'processador'})", flush=True)
+        print(f"motor pronto ({onde_roda_o_whisper(c, placa)})", flush=True)
         return 0
     finally:
         motor.parar()

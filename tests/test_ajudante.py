@@ -188,7 +188,7 @@ def test_o_python_vem_no_instalador_e_o_uv_nao_baixa_outro():
     assert '$env:UV_PYTHON_DOWNLOADS = "never"' in ps1
     assert 'Rodar $uv @("venv", $venv, "--python", $pythonBase' in ps1
     assert 'Source: "{#Pacote}\\python\\*"; DestDir: "{app}\\python"' in iss
-    assert "requirements-windows-gpu.txt" in ps1 and "TemPlacaNvidia" in ps1
+    assert "requirements-windows-gpu.txt" in ps1 and "function PlacaNvidia" in ps1
     # A atualizacao tambem instala com o uv: la tambem, nada de baixar Python.
     fonte = (AJUDANTE / "atualizacao.py").read_text(encoding="utf-8")
     assert 'UV_PYTHON_DOWNLOADS="never"' in fonte and "UV_PYTHON_INSTALL_DIR" not in fonte
@@ -356,13 +356,82 @@ def test_motor_quebrado_nao_termina_como_instalado():
 
 
 def test_sem_janela_o_script_nao_espera_um_enter():
-    """No /VERYSILENT ninguem aperta Enter: a pausa do erro travaria o CI (e a
-    instalacao por linha de comando) ate o prazo acabar."""
+    """O instalador roda o script ESCONDIDO, sempre: ninguem apertaria o Enter
+    da pausa do erro -- ela travaria a instalacao ate o prazo acabar."""
     iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
     ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
-    assert "if WizardSilent then" in iss and "-SemPausa" in iss
+    assert "-SemPausa';" in iss
+    assert "WizardSilent" not in iss, "-SemPausa nao depende mais de janela"
     assert "[switch]$SemPausa" in ps1
     assert re.search(r"if \(-not \$SoDependencias -and -not \$SemPausa\)\s*\{\s*Read-Host", ps1)
+
+
+def test_o_instalador_roda_o_powershell_de_64_bits():
+    """O Exec comum, num instalador de 32 bits, abre o PowerShell de 32 (o
+    System32 vira SysWOW64) -- e ali o nvidia-smi nao existe: a placa NVIDIA
+    do notebook de um amigo do autor ficou de fora assim (25-set-2026). O
+    CI confere a linha "PowerShell de 64 bits: sim" que o script escreve."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    passo = iss.split("procedure CurStepChanged", 1)[1].split("\nend;\n", 1)[0]
+    assert "ExecAndLogOutputWithNativeSysDir(" in passo
+    assert "{sys}\\WindowsPowerShell\\v1.0\\powershell.exe" in passo
+    assert "SW_HIDE" in passo and "@AoLerLinhaDoMotor" in passo
+    assert "Exec('powershell.exe'" not in iss
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    assert "Is64BitProcess" in ps1 and "PowerShell de 64 bits" in ps1
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    instalar = fluxo.split("- name: Instalar sem janela", 1)[1].split("- name:", 1)[0]
+    assert "PowerShell de 64 bits: sim" in instalar
+    amigo = fluxo.split("- name: Um usuario comum instala", 1)[1].split("- name:", 1)[0]
+    assert "PowerShell de 64 bits: sim" in amigo
+
+
+def test_o_nvidia_smi_e_procurado_onde_um_powershell_de_32_bits_o_ve():
+    """Mesmo rodando de 32 bits (a atualizacao de uma instalacao antiga pode),
+    o script acha o nvidia-smi pelo Sysnative; e o dos drivers antigos, em
+    NVSMI. Sem placa, o motivo vai para o registro."""
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    achar = ps1.split("function AcharNvidiaSmi", 1)[1].split("\n}\n", 1)[0]
+    for lugar in ('"Sysnative\\nvidia-smi.exe"', '"System32\\nvidia-smi.exe"',
+                  '"NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"'):
+        assert lugar in achar, lugar
+    placa = ps1.split("function PlacaNvidia", 1)[1].split("\n}\n", 1)[0]
+    # O stderr do nvidia-smi, com Stop, derrubaria o script no PowerShell 5.1.
+    assert '$ErrorActionPreference = "Continue"' in placa
+
+
+def test_faltar_a_placa_nao_derruba_a_instalacao():
+    """Sem as bibliotecas de CUDA o motor funciona, no processador: um
+    download que cai nelas nao pode ser "a instalacao nao terminou". A
+    atualizacao tenta de novo (atualizacao.falta_a_placa)."""
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    bloco = ps1.split("$placa = PlacaNvidia", 1)[1].split('Passo "conferindo"', 1)[0]
+    assert "try {" in bloco and "} catch {" in bloco
+    assert bloco.index("try {") < bloco.index("requirements-windows-gpu.txt") < bloco.index("} catch {")
+
+
+def test_o_instalador_mostra_o_progresso_na_propria_janela():
+    """Nada de janela do PowerShell: o script roda escondido, e a pagina de
+    instalacao mostra o passo (a linha "== Passo k de n"), uma barra que
+    anda sem inventar porcentagem, e as linhas numa caixa de terminal. A
+    pagina final diz se o motor vai usar a placa ou o processador."""
+    iss = (AJUDANTE / "instalador.iss").read_text(encoding="utf-8")
+    inicio = iss.split("procedure InitializeWizard", 1)[1].split("\nend;", 1)[0]
+    # Antes do Exit da pagina "reinstalar": numa instalacao nova ela nao existe.
+    assert inicio.index("CriarTerminal;") < inicio.index("Exit;")
+    passo = iss.split("procedure CurStepChanged", 1)[1].split("\nend;\n", 1)[0]
+    assert "npbstMarquee" in passo and "MostrarTerminal;" in passo
+    ler = iss.split("procedure AoLerLinhaDoMotor", 1)[1].split("\nend;\n", 1)[0]
+    assert "'== '" in ler and "'Pronto: '" in ler and "StatusLabel" in ler
+    assert "Terminal.Lines.Add" in ler
+    assert "procedure CurPageChanged" in iss and "Resumo" in iss
+    assert "Check: MotorInstalado" in iss
+    ps1 = (AJUDANTE / "instalar.ps1").read_text(encoding="utf-8")
+    assert '"== Passo $($script:passo) de $($script:passos): $texto"' in ps1
+    assert '"== Pronto: $resumo"' in ps1
+    fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    instalar = fluxo.split("- name: Instalar sem janela", 1)[1].split("- name:", 1)[0]
+    assert "motor: == Pronto:" in instalar, "o CI confere que as linhas chegam a janela"
 
 
 def test_o_progresso_do_uv_no_stderr_nao_derruba_o_script():

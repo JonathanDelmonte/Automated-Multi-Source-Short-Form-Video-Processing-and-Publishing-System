@@ -68,12 +68,17 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    de uma cópia dessa instalação quebrada a cada versão. Ali, **Desinstalar** rodaria o
    desinstalador *antigo*, que mostra um erro inofensivo sobre um `python.exe` que
    nunca chegou a existir — por isso, Reinstalar.
-4. A instalação abre uma janela azul do PowerShell baixando o motor. Com a RTX 3060
-   ela baixa também as bibliotecas de CUDA do whisper (~1 GB a mais), então pode
-   levar uns 10 minutos. A janela fecha sozinha.
+4. O motor é baixado **dentro da própria janela do instalador** — não abre mais
+   janela do PowerShell. Acima da barra aparece o passo ("Passo 2 de 4: bibliotecas
+   do motor…"), a barra anda enquanto trabalha, e a caixa escura embaixo mostra cada
+   linha do que está sendo baixado. Com a RTX 3060 ele baixa também as bibliotecas de
+   CUDA do whisper (~1 GB a mais), então pode levar uns 10 minutos. **Confira:** o
+   passo 3 diz "placa NVIDIA encontrada (NVIDIA GeForce RTX 3060)", e a última tela
+   do instalador termina com "O motor vai usar a placa NVIDIA (…)".
 5. No fim, o site abre sozinho. **Confira:** o ícone "V" perto do relógio (talvez na
    setinha ^); passando o mouse, **"Virtu Clips: pronto (placa de vídeo)"**. Se
-   disser "(processador)", me mande o arquivo abaixo.
+   disser "(processador)" ou "(processador; faltam as bibliotecas da placa)", me mande
+   o arquivo abaixo.
 
    ```
    %LOCALAPPDATA%\VirtuClips\dados\logs\instalacao.log
@@ -92,6 +97,14 @@ processador, a atualização sozinha e a desinstalação. Não prova a placa, o 
    **Confira:** os containers sobem (agora com o nome `virtu-clips-*`), e em até um
    minuto o ícone do ajudante passa a dizer "outro motor do Virtu Clips (o Docker) já
    está atendendo". Recarregue o site (F5): ele passa a falar com o Docker.
+
+**Quem instalou até a versão 538 num computador com placa NVIDIA** ficou com o motor
+no processador, e sem saber: aquele instalador abria o PowerShell de 32 bits, que não
+enxerga o `nvidia-smi`, e concluía "sem placa". Não é preciso fazer nada — a próxima
+atualização sozinha (o ajudante confere de 6 em 6 horas e troca quando ninguém está
+usando) refaz as dependências pelo PowerShell de 64 bits, acha a placa e baixa as
+bibliotecas dela. Para ter a placa na hora, basta abrir o instalador novo e escolher
+**Reinstalar**: os projetos ficam, e o que já foi baixado não é baixado de novo.
 
 Para tirar o ajudante, qualquer um dos três caminhos abre o mesmo desinstalador: abrir
 o instalador de novo e escolher **Desinstalar**; o menu do ícone perto do relógio →

@@ -381,8 +381,16 @@ def atualizar_ytdlp(c, log) -> None:
         shutil.rmtree(c.base / "cache-uv", ignore_errors=True)
 
 
+def falta_a_placa(c) -> bool:
+    """Placa NVIDIA sem as DLLs de CUDA: o whisper roda no processador. Foi o
+    que o instalador deixou ate a versao 538, quando abria o PowerShell de 32
+    bits -- que nao ve o nvidia-smi -- e decidia que nao havia placa."""
+    return aj.tem_placa_nvidia() and not aj.libs_da_placa(c)
+
+
 def aplicar(c, nova: Path, log, verificar_fn=verificar_versao,
-            dependencias_fn=instalar_dependencias, ytdlp_fn=atualizar_ytdlp) -> bool:
+            dependencias_fn=instalar_dependencias, ytdlp_fn=atualizar_ytdlp,
+            falta_a_placa_fn=falta_a_placa) -> bool:
     """Troca para `nova` se ela passar na verificacao; senao, deixa tudo como
     estava. `c.motor` e a versao que roda este codigo -- a atual."""
     atual, versao = c.motor, versao_de(nova)
@@ -393,6 +401,12 @@ def aplicar(c, nova: Path, log, verificar_fn=verificar_versao,
     ok = True
     if mudaram:
         ok = dependencias_fn(c, nova, log)
+    elif falta_a_placa_fn(c):
+        # A troca e o momento em que o motor esta parado com certeza. O
+        # instalar.ps1 poe as bibliotecas quando acha a placa -- e o resultado
+        # nao decide a troca: sem elas, o motor continua no processador.
+        log("placa NVIDIA sem as bibliotecas de CUDA: instalando junto com esta versao")
+        dependencias_fn(c, nova, log)
     else:
         ytdlp_fn(c, log)
     if ok:

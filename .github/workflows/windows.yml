@@ -194,6 +194,13 @@ jobs:
           }
           if (Test-Path "$env:RUNNER_TEMP\inno.log") { Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "RedirectionGuard|Cortes" }
           if ($p.ExitCode -ne 0) { exit 1 }
+          # O PowerShell de 64 bits: o de 32, que o Exec comum abria, nao ve o
+          # nvidia-smi -- e a placa do notebook de um amigo do autor ficou de
+          # fora (25-set-2026). E as linhas dele chegando a janela do
+          # instalador, com o resumo do fim.
+          if (-not (Select-String -Path "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Pattern "PowerShell de 64 bits: sim" -SimpleMatch -Quiet)) { "o instalador abriu o PowerShell de 32 bits"; exit 1 }
+          Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "motor: == " -SimpleMatch
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "motor: == Pronto:" -SimpleMatch -Quiet)) { "as linhas do instalar.ps1 nao chegaram a janela do instalador"; exit 1 }
       # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
       # pythonw.exe do venv com o iniciar.py; se um dos dois faltar, o icone
       # nao faz nada.
@@ -398,6 +405,7 @@ jobs:
             Select-String -Path "$pub\inno-amigo.log" -Pattern "RedirectionGuard|User privileges|Temp"
           } else { "o instalador nao escreveu o log" }
           if ($codigo -ne 0) { exit 1 }
+          if (-not (Select-String -Path "$base\dados\logs\instalacao.log" -Pattern "PowerShell de 64 bits: sim" -SimpleMatch -Quiet)) { "o instalador do usuario comum abriu o PowerShell de 32 bits"; exit 1 }
           $codigo = ComoAmigo "$base\venv\Scripts\python.exe" "`"$base\iniciar.py`" --verificar" $base
           if ($codigo -ne 0) { "o motor do usuario comum nao subiu"; exit 1 }
       - name: Guardar o instalador

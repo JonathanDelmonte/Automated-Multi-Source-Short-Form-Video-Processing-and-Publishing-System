@@ -72,6 +72,42 @@ def test_placa_pelo_nvidia_smi(executar, esperado):
     assert aj.tem_placa_nvidia(executar) is esperado
 
 
+def test_o_nvidia_smi_dos_drivers_antigos_tambem_serve():
+    """Os drivers antigos deixam o nvidia-smi em NVSMI, fora do PATH."""
+    vistos = []
+
+    def executar(cmd, **kw):
+        vistos.append(cmd[0])
+        if cmd[0] == "nvidia-smi":
+            raise FileNotFoundError()
+        return SimpleNamespace(returncode=0, stdout="GPU 0: NVIDIA GeForce RTX 3050 Laptop GPU")
+
+    assert aj.tem_placa_nvidia(executar, {"ProgramFiles": "C:/Program Files"})
+    assert vistos[0] == "nvidia-smi" and "NVSMI" in vistos[1]
+
+
+def test_o_primeiro_nvidia_smi_que_responde_decide():
+    """Um nvidia-smi que existe e diz que nao ha placa e a resposta -- nao um
+    motivo para perguntar a outro."""
+    vistos = []
+
+    def executar(cmd, **kw):
+        vistos.append(cmd[0])
+        return SimpleNamespace(returncode=6, stdout="No devices were found")
+
+    assert not aj.tem_placa_nvidia(executar, {"ProgramFiles": "C:/Program Files"})
+    assert vistos == ["nvidia-smi"]
+
+
+def test_o_icone_so_diz_placa_quando_o_whisper_a_usa(tmp_path):
+    c = aj.Caminhos(tmp_path)
+    assert aj.onde_roda_o_whisper(c, False) == "processador"
+    # Placa sem as DLLs de CUDA: o whisper esta no processador, e o icone diz.
+    assert aj.onde_roda_o_whisper(c, True) == "processador; faltam as bibliotecas da placa"
+    _com_libs(c)
+    assert aj.onde_roda_o_whisper(c, True) == "placa de vídeo"
+
+
 def _com_libs(c):
     for nome in ("cublas", "cudnn"):
         (c.venv / "Lib" / "site-packages" / "nvidia" / nome / "bin").mkdir(parents=True)

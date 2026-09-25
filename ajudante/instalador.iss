@@ -7,7 +7,9 @@
 ;
 ; O .exe traz o que nao depende do computador (o codigo do motor, o Python,
 ; o uv, o ffmpeg e o deno); o `instalar.ps1` baixa o que depende (as
-; bibliotecas, e as de CUDA so onde ha placa NVIDIA).
+; bibliotecas, e as de CUDA so onde ha placa NVIDIA). Ele roda escondido, no
+; PowerShell de 64 bits, e a saida dele aparece na propria janela do
+; instalador (CriarTerminal, no [Code]).
 ;
 ; O Python vem DENTRO do .exe. Ate 24-set-2026 o `instalar.ps1` o baixava com
 ; `uv python install`, que cria um atalho de pasta (junction) por versao -- e
@@ -119,9 +121,12 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   Flags: uninsdeletevalue
 
 [Run]
+; So com o motor instalado: abrir um motor que nao terminou de instalar so
+; mostraria um erro a mais.
 Filename: "{app}\venv\Scripts\pythonw.exe"; \
   Parameters: """{app}\iniciar.py"""; WorkingDir: "{app}"; \
-  Description: "Abrir o Virtu Clips agora"; Flags: postinstall nowait skipifsilent
+  Description: "Abrir o Virtu Clips agora"; Flags: postinstall nowait skipifsilent; \
+  Check: MotorInstalado
 
 [UninstallRun]
 ; Desliga o ajudante (e o motor) antes de apagar os arquivos dele. Numa
@@ -143,10 +148,98 @@ Type: filesandordirs; Name: "{app}\bin"
 Type: filesandordirs; Name: "{app}\cache-uv"
 
 [Code]
+const
+  WM_VSCROLL = $0115;
+  SB_BOTTOM = 7;
+  // O terminal guarda so as ultimas: a instalacao inteira ficaria pesada de
+  // redesenhar a cada linha.
+  LINHAS_NO_TERMINAL = 400;
+
 var
   MotorFalhou: Boolean;
   PaginaDoQueFazer: TInputOptionWizardPage;
   Desinstalando: Boolean;
+  Terminal: TNewMemo;
+  Resumo: String;
+
+// A janela do PowerShell, dentro do instalador. O instalar.ps1 roda
+// escondido e cada linha dele aparece aqui, numa caixa escura de letra fixa;
+// a linha "== Passo 2 de 4: ..." vira o titulo acima da barra. A janela azul
+// de verdade assustava quem instalava e nao dizia em que passo estava
+// (25-set-2026, pedido do autor).
+procedure CriarTerminal;
+begin
+  Terminal := TNewMemo.Create(WizardForm);
+  Terminal.Parent := WizardForm.InstallingPage;
+  Terminal.ReadOnly := True;
+  Terminal.ScrollBars := ssVertical;
+  Terminal.WordWrap := True;
+  Terminal.TabStop := False;
+  Terminal.Color := clBlack;
+  Terminal.Font.Name := 'Consolas';
+  Terminal.Font.Size := 8;
+  Terminal.Font.Color := $00D0D0D0;
+  Terminal.Visible := False;
+end;
+
+procedure MostrarTerminal;
+begin
+  Terminal.Left := WizardForm.ProgressGauge.Left;
+  Terminal.Top := WizardForm.ProgressGauge.Top + WizardForm.ProgressGauge.Height + ScaleY(12);
+  Terminal.Width := WizardForm.ProgressGauge.Width;
+  Terminal.Height := WizardForm.InstallingPage.Height - Terminal.Top;
+  if Terminal.Height < ScaleY(60) then
+    Terminal.Height := ScaleY(60);
+  Terminal.Anchors := [akLeft, akTop, akRight, akBottom];
+  Terminal.Visible := True;
+end;
+
+// Cada linha do instalar.ps1. As "== " sao os passos; a "== Pronto: ..." e o
+// resumo que a pagina final mostra (placa ou processador).
+procedure AoLerLinhaDoMotor(const S: String; const Error, FirstLine: Boolean);
+var
+  Linha: String;
+begin
+  Linha := TrimRight(S);
+  Log('motor: ' + Linha);
+  if Linha = '' then
+    Exit;
+  if Copy(Linha, 1, 3) = '== ' then
+  begin
+    if Copy(Linha, 4, 8) = 'Pronto: ' then
+    begin
+      Resumo := Copy(Linha, 12, Length(Linha));
+      Resumo := Uppercase(Copy(Resumo, 1, 1)) + Copy(Resumo, 2, Length(Resumo)) + '.';
+    end
+    else
+      WizardForm.StatusLabel.Caption := Copy(Linha, 4, Length(Linha));
+    WizardForm.FilenameLabel.Caption := '';
+  end
+  else
+    WizardForm.FilenameLabel.Caption := Linha;
+  Terminal.Lines.Add(Linha);
+  while Terminal.Lines.Count > LINHAS_NO_TERMINAL do
+    Terminal.Lines.Delete(0);
+  SendMessage(Terminal.Handle, WM_VSCROLL, SB_BOTTOM, 0);
+end;
+
+function MotorInstalado: Boolean;
+begin
+  Result := not MotorFalhou;
+end;
+
+// A pagina final diz o que o motor vai usar -- a pergunta que ficava sem
+// resposta ("achou a minha placa?"). A lista de "abrir agora" desce junto,
+// como o proprio Inno faz quando o texto cresce.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (Resumo <> '') then
+  begin
+    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 + Resumo;
+    WizardForm.IncTopDecHeight(WizardForm.RunList,
+      WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel));
+  end;
+end;
 
 // O desinstalador de uma instalacao que ja existe neste computador -- desta
 // ou do tempo em que o programa se chamava Cortes (o AppId e o mesmo, entao a
@@ -172,6 +265,7 @@ end;
 // caractere: este arquivo e ASCII de proposito (ver o teste).
 procedure InitializeWizard;
 begin
+  CriarTerminal;
   if DesinstaladorExistente = '' then
     Exit;
   PaginaDoQueFazer := CreateInputOptionPage(wpWelcome,
@@ -350,28 +444,49 @@ begin
   LimparRestosDoUv;
 end;
 
-// O `instalar.ps1` num console visivel: a pessoa ve o que esta baixando, e a
+// O `instalar.ps1`, escondido, com a saida no terminal da pagina de
+// instalacao: a pessoa ve o passo, a barra andando e o que esta baixando. A
 // instalacao so se declara pronta se o script terminou bem.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Codigo: Integer;
   Parametros: String;
+  Rodou: Boolean;
 begin
   if CurStep = ssPostInstall then
   begin
     // A versao que o `iniciar.py` roda.
     SaveStringToFile(ExpandConstant('{app}\atual.txt'), '{#Versao}' + #13#10, False);
     WizardForm.StatusLabel.Caption :=
-      'Baixando o motor (algumas centenas de MB). Pode levar alguns minutos...';
+      'Instalando o motor: baixa algumas centenas de MB e leva alguns minutos.';
+    WizardForm.FilenameLabel.Caption := '';
+    // Sem porcentagem: o uv nao diz quanto falta. A barra so mostra que esta
+    // andando; quanto falta, quem diz e o "Passo k de n".
+    WizardForm.ProgressGauge.Style := npbstMarquee;
+    MostrarTerminal;
+    // -SemPausa sempre: escondido, ninguem apertaria o Enter da pausa do erro.
     Parametros := '-NoProfile -ExecutionPolicy Bypass -File "' +
       ExpandConstant('{app}\versoes\{#Versao}\ajudante\instalar.ps1') + '" -Base "' +
-      ExpandConstant('{app}') + '"';
-    if WizardSilent then
-      Parametros := Parametros + ' -SemPausa';
-    if not Exec('powershell.exe', Parametros, ExpandConstant('{app}'),
-                SW_SHOWNORMAL, ewWaitUntilTerminated, Codigo) or (Codigo <> 0) then
+      ExpandConstant('{app}') + '" -SemPausa';
+    // O PowerShell de 64 bits (WithNativeSysDir). O Exec comum, num instalador
+    // de 32 bits como este, abre o de 32 (o System32 vira SysWOW64), que nao
+    // ve o nvidia-smi: a placa NVIDIA do notebook de um amigo do autor ficou
+    // de fora assim (25-set-2026).
+    try
+      Rodou := ExecAndLogOutputWithNativeSysDir(
+        ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parametros,
+        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Codigo, @AoLerLinhaDoMotor);
+    except
+      Log(GetExceptionMessage);
+      Rodou := False;
+    end;
+    WizardForm.ProgressGauge.Style := npbstNormal;
+    WizardForm.ProgressGauge.Position := WizardForm.ProgressGauge.Max;
+    if not Rodou or (Codigo <> 0) then
     begin
       MotorFalhou := True;
+      WizardForm.ProgressGauge.State := npbsError;
+      WizardForm.StatusLabel.Caption := 'A instala' + #$E7 + #$E3 + 'o do motor n' + #$E3 + 'o terminou.';
       // Suprimivel: no /VERYSILENT do CI uma caixa comum esperaria um clique
       // para sempre.
       // Nenhuma linha pode COMECAR com `#`: o pre-processador do Inno a le

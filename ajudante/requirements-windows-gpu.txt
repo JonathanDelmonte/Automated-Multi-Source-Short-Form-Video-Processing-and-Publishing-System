@@ -1,5 +1,12 @@
 # So com placa NVIDIA: as bibliotecas de CUDA que o whisper (ctranslate2)
 # carrega em tempo de execucao -- as mesmas faixas do `GPU=1` do Dockerfile.
 # O driver vem da propria placa; isto e so o lado do programa.
+#
+# Mudar este arquivo muda a assinatura das dependencias (atualizacao.py), e
+# toda instalacao roda o instalar.ps1 da versao nova na atualizacao seguinte.
+# Este paragrafo entrou por isso, em 25-set-2026: ate a versao 538 o
+# instalador abria o PowerShell de 32 bits, que nao ve o nvidia-smi, e quem
+# tinha placa NVIDIA ficou sem estas bibliotecas. A atualizacao roda o
+# PowerShell de 64 bits, que acha a placa.
 nvidia-cublas-cu12<13
 nvidia-cudnn-cu12>=9,<10

@@ -19,8 +19,9 @@
 #
 # Uso: powershell -ExecutionPolicy Bypass -File instalar.ps1 -Base <pasta> [-SoDependencias] [-SemPausa]
 #
-# `-SemPausa` e o que o instalador passa quando roda sem janela (/VERYSILENT):
-# ali ninguem aperta Enter, e a pausa do erro esperaria para sempre.
+# `-SemPausa` e o que o instalador passa: ele roda este script escondido e
+# mostra a saida na propria janela (cada linha "== " e um passo). Ali ninguem
+# aperta Enter, e a pausa do erro esperaria para sempre.
 
 param(
     [Parameter(Mandatory = $true)][string]$Base,
@@ -49,9 +50,14 @@ $log = Join-Path $Base "dados\logs\instalacao.log"
 New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 Start-Transcript -Path $log -Append | Out-Null
 
+# Os passos sao numerados aqui, e nao no instalador: e este script que sabe
+# quantos sao. O instalador mostra o texto de cada linha "== " como titulo.
+$script:passo = 0
+$script:passos = if ($SoDependencias) { 3 } else { 4 }
 function Passo($texto) {
+    $script:passo++
     Write-Host ""
-    Write-Host "== $texto" -ForegroundColor Yellow
+    Write-Host "== Passo $($script:passo) de $($script:passos): $texto" -ForegroundColor Yellow
 }
 
 # A saida do programa passa pelo Write-Host, e nao direto ao console: so assim
@@ -73,13 +79,53 @@ function Rodar($exe, [string[]]$argumentos) {
     }
 }
 
-function TemPlacaNvidia {
-    try {
-        $saida = & nvidia-smi -L 2>$null
-        return ($LASTEXITCODE -eq 0) -and ($saida -match "GPU")
-    } catch {
-        return $false
+# O nvidia-smi vem com o driver: no System32 nos drivers de hoje, na pasta
+# NVSMI nos antigos. Num PowerShell de 32 bits o System32 e trocado pelo
+# SysWOW64, onde ele nao esta -- dali, so pelo Sysnative. Foi o que fez o
+# notebook de um amigo do autor, com placa NVIDIA, instalar no processador
+# (25-set-2026): o instalador abria o PowerShell de 32 bits.
+function AcharNvidiaSmi {
+    $candidatos = @()
+    if ($env:windir) {
+        $candidatos += Join-Path $env:windir "Sysnative\nvidia-smi.exe"
+        $candidatos += Join-Path $env:windir "System32\nvidia-smi.exe"
     }
+    foreach ($pf in @($env:ProgramW6432, $env:ProgramFiles)) {
+        if ($pf) { $candidatos += Join-Path $pf "NVIDIA Corporation\NVSMI\nvidia-smi.exe" }
+    }
+    foreach ($c in $candidatos) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    $cmd = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+# O nome da primeira placa NVIDIA, ou $null. O motivo de nao achar vai para o
+# registro: "sem placa" e "sem driver" nao tem o mesmo conserto.
+function PlacaNvidia {
+    $smi = AcharNvidiaSmi
+    if (-not $smi) {
+        Write-Host "(nvidia-smi nao encontrado: sem placa NVIDIA ou sem o driver dela)"
+        return $null
+    }
+    $anterior = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $saida = @(& $smi -L 2>$null)
+        $codigo = $LASTEXITCODE
+    } catch {
+        Write-Host "(nvidia-smi falhou: $_)"
+        return $null
+    } finally {
+        $ErrorActionPreference = $anterior
+    }
+    $linha = $saida | Where-Object { "$_" -match "^GPU \d+: " } | Select-Object -First 1
+    if ($codigo -ne 0 -or -not $linha) {
+        Write-Host "(nvidia-smi em $smi respondeu $codigo sem listar placa)"
+        return $null
+    }
+    return ("$linha" -replace "^GPU \d+: ", "") -replace "\s*\(UUID:.*$", ""
 }
 
 # A RedirectionGuard deste processo, para o registro: se o erro 448 voltar,
@@ -110,6 +156,8 @@ try {
     Write-Host "Instalando o motor do Virtu Clips. Isto baixa algumas centenas de MB"
     Write-Host "e leva alguns minutos; a janela fecha sozinha no fim."
     Write-Host "(protecao de redirecionamento do Windows: $(ProtecaoDeRedirecionamento))"
+    # O de 32 bits nao ve o nvidia-smi (ver AcharNvidiaSmi): o CI confere esta linha.
+    Write-Host "(PowerShell de 64 bits: $(if ([Environment]::Is64BitProcess) { 'sim' } else { 'NAO' }))"
 
     # O uv so usa o Python que veio no instalador: nada de baixar outro, nem
     # de criar os atalhos de pasta com que ele organiza os que baixa.
@@ -117,34 +165,46 @@ try {
     $env:UV_CACHE_DIR = Join-Path $Base "cache-uv"
 
     if (-not $SoDependencias) {
-        Passo "Ambiente do motor"
+        Passo "ambiente do motor (o Python que veio no instalador)"
         if (-not (Test-Path $pythonBase)) {
             throw "o Python que vem no instalador nao esta em $pythonBase"
         }
         Rodar $uv @("venv", $venv, "--python", $pythonBase, "--allow-existing")
     }
 
-    Passo "Bibliotecas do motor"
+    Passo "bibliotecas do motor (algumas centenas de MB)"
     Rodar $uv @("pip", "install", "--python", $python,
                 "-r", (Join-Path $motor "ajudante\requirements-windows.txt"))
     # O YouTube muda toda semana e o yt-dlp acompanha: vai sempre o mais novo.
     Rodar $uv @("pip", "install", "--python", $python, "--upgrade", "yt-dlp[default]")
 
-    if (TemPlacaNvidia) {
-        Passo "Placa NVIDIA encontrada: bibliotecas de CUDA para o whisper"
-        Rodar $uv @("pip", "install", "--python", $python,
-                    "-r", (Join-Path $motor "ajudante\requirements-windows-gpu.txt"))
+    $placa = PlacaNvidia
+    if ($placa) {
+        Passo "placa NVIDIA encontrada ($placa): bibliotecas de CUDA para o whisper (cerca de 1 GB)"
+        # Sem elas o motor funciona, no processador -- entao faltar nao derruba
+        # a instalacao. A atualizacao sozinha tenta de novo quando ve a placa
+        # sem as bibliotecas (atualizacao.aplicar).
+        try {
+            Rodar $uv @("pip", "install", "--python", $python,
+                        "-r", (Join-Path $motor "ajudante\requirements-windows-gpu.txt"))
+            $resumo = "o motor vai usar a placa NVIDIA ($placa)"
+        } catch {
+            Write-Host "aviso: as bibliotecas da placa nao vieram ($_)"
+            $resumo = "o motor vai usar o processador por enquanto: as bibliotecas da placa nao vieram"
+        }
     } else {
-        Passo "Sem placa NVIDIA: o motor vai usar o processador"
+        Passo "sem placa NVIDIA: o motor vai usar o processador"
+        $resumo = "o motor vai usar o processador"
     }
 
-    Passo "Conferindo"
+    Passo "conferindo"
     Rodar $python @("-c", "import fastapi, faster_whisper, mediapipe, torch, cv2; print('motor ok')")
 
     # O cache do uv so serve para a proxima instalacao; sao centenas de MB.
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $env:UV_CACHE_DIR
 
-    Passo "Pronto"
+    Write-Host ""
+    Write-Host "== Pronto: $resumo" -ForegroundColor Green
     Stop-Transcript | Out-Null
     exit 0
 } catch {

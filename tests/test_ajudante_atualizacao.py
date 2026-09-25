@@ -217,10 +217,11 @@ def test_zip_de_outra_versao_e_recusado(tmp_path, github):
 # --- aplicar (a troca) ----------------------------------------------------------------
 
 class _Registro:
-    def __init__(self, verificacao=True, dependencias=True):
+    def __init__(self, verificacao=True, dependencias=True, falta_a_placa=False):
         self.chamadas = []
         self.verificacao = verificacao
         self.dependencias = dependencias
+        self.falta_a_placa = falta_a_placa
 
     def verificar(self, _c, pasta, _log):
         self.chamadas.append(("verificar", pasta.name))
@@ -234,8 +235,10 @@ class _Registro:
         self.chamadas.append(("ytdlp",))
 
     def aplicar(self, c, nova):
+        # A placa e da maquina que roda o teste: aqui ela e sempre decidida.
         return at.aplicar(c, nova, _nada, verificar_fn=self.verificar,
-                          dependencias_fn=self.deps, ytdlp_fn=self.ytdlp)
+                          dependencias_fn=self.deps, ytdlp_fn=self.ytdlp,
+                          falta_a_placa_fn=lambda _c: self.falta_a_placa)
 
 
 def test_troca_quando_a_verificacao_passa(tmp_path):
@@ -279,6 +282,37 @@ def test_dependencias_que_nao_instalam_nem_chegam_a_verificacao(tmp_path):
     assert not r.aplicar(c, nova)
     assert r.chamadas == [("deps", "11"), ("deps", "10")]
     assert (c.base / "atual.txt").read_text().strip() == "10"
+
+
+def test_placa_sem_bibliotecas_ganha_as_dependencias_na_troca(tmp_path):
+    """Ate a versao 538 o instalador abria o PowerShell de 32 bits, que nao
+    ve o nvidia-smi: quem tinha placa ficou sem as bibliotecas de CUDA. A
+    troca e o momento em que o motor esta parado com certeza -- e roda o
+    instalar.ps1 da versao nova, que as poe, mesmo sem a lista mudar."""
+    c = _instalado(tmp_path, "10")
+    nova = _versao(c.base, "11")
+    r = _Registro(falta_a_placa=True)
+    assert r.aplicar(c, nova)
+    assert r.chamadas == [("deps", "11"), ("verificar", "11")]
+
+
+def test_bibliotecas_da_placa_que_nao_vem_nao_seguram_a_troca(tmp_path):
+    """Sem elas o motor roda no processador, como ja rodava: nao e motivo
+    para recusar a versao nova -- nem para marca-la como quebrada."""
+    c = _instalado(tmp_path, "10")
+    nova = _versao(c.base, "11")
+    r = _Registro(dependencias=False, falta_a_placa=True)
+    assert r.aplicar(c, nova)
+    assert (c.base / "atual.txt").read_text().strip() == "11"
+    assert "11" not in at.ler_estado(c).get("falhou", [])
+
+
+def test_a_lista_da_placa_mudou_para_as_instalacoes_de_ate_538(tmp_path):
+    """A troca que chega nelas e a do codigo ANTIGO, que nao tem o
+    `falta_a_placa`: so a assinatura das dependencias mudando faz aquele
+    codigo rodar o instalar.ps1 novo (de 64 bits) e trazer a placa."""
+    texto = (RAIZ / "ajudante" / "requirements-windows-gpu.txt").read_text(encoding="utf-8")
+    assert "PowerShell de 32 bits" in texto
 
 
 def test_pasta_incompleta_nunca_vira_a_atual(tmp_path):

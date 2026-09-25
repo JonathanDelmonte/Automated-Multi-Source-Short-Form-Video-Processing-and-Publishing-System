@@ -2069,6 +2069,41 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   ficaram. E o `--parar` do `[UninstallRun]` tem `skipifdoesntexist`: uma
   instalacao que morreu antes do venv (a do 448) nao tem python.exe, e o
   desinstalador mostraria um erro por isso.
+- **O instalador roda o PowerShell de 64 bits, escondido, e mostra a saida na
+  propria janela** (25-set-2026). O notebook de um amigo do autor, com placa
+  NVIDIA, instalou "sem placa": o `Exec('powershell.exe')` de um instalador
+  de 32 bits (o Inno e) procura no SysWOW64 -- a propria fonte do Inno diz
+  isso --, e no PowerShell de 32 bits o `System32\nvidia-smi.exe` nao
+  existe. O CI nunca veria: o runner nao tem placa.
+  - **`ExecAndLogOutputWithNativeSysDir`** com `{sys}\WindowsPowerShell\...`:
+    o de 64 bits, e a saida linha a linha num callback. O script escreve
+    `PowerShell de 64 bits: sim|NAO` no registro, e o CI falha no `NAO`.
+  - **A janela azul saiu.** Na pagina de instalacao: o titulo e a linha
+    `== Passo k de n: ...` do script (e ELE que numera -- so ele sabe quantos
+    passos ha), a barra em `npbstMarquee` (o uv nao diz quanto falta, entao
+    nada de porcentagem inventada), e um `TNewMemo` escuro de letra fixa com
+    as linhas. A `== Pronto: ...` vira a frase da pagina final ("o motor vai
+    usar a placa NVIDIA (...)"). O CI confere que `motor: == Pronto:` chegou
+    ao log do Inno -- a prova de que o callback funciona.
+  - **O script acha o `nvidia-smi` de qualquer lado**: Sysnative (de 32
+    bits), System32, a pasta NVSMI dos drivers antigos e o PATH. Sem placa,
+    diz o motivo ("sem driver" e "driver quebrado" nao tem o mesmo conserto).
+  - **Faltar a placa nao derruba a instalacao**: o `pip install` das
+    bibliotecas de CUDA fica num `try`. Sem elas o motor funciona, no
+    processador.
+- **As instalacoes de ate 538 se consertam sozinhas**, por dois caminhos:
+  - a troca de versao e feita pelo codigo ANTIGO (`--aplicar` roda o
+    `atualizacao.py` de quem ja esta instalado), que so roda o `instalar.ps1`
+    quando a assinatura das dependencias muda. O `requirements-windows-gpu.txt`
+    ganhou um paragrafo explicando isso -- e mudar o arquivo e o que faz a
+    troca rodar o `instalar.ps1` NOVO, de um Python de 64 bits, que acha a
+    placa. Nao tirar o paragrafo achando que e so comentario;
+  - dali em diante, `atualizacao.falta_a_placa` (placa sem as DLLs de CUDA)
+    faz a troca rodar o `instalar.ps1` mesmo sem a lista mudar -- e o
+    resultado nao decide a troca.
+  - O icone dizia "placa de video" com o whisper no processador (placa sem
+    as DLLs). `onde_roda_o_whisper` diz "processador; faltam as bibliotecas
+    da placa".
 - **A pasta mudou com o nome** (`%LOCALAPPDATA%\Cortes` ->
   `%LOCALAPPDATA%\VirtuClips`), com o MESMO AppId, para ficar uma entrada so
   em "Aplicativos". Sem `UsePreviousAppDir=no` o Inno instalaria de novo na

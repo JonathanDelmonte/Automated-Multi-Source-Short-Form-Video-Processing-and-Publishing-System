@@ -251,8 +251,13 @@ def test_o_ci_instala_como_usuario_comum_com_a_protecao_ligada():
     conserto instala como usuario comum, com a RedirectionGuard forcada."""
     fluxo = (RAIZ / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
     passo = fluxo.split("- name: Um usuario comum instala", 1)[1].split("- name:", 1)[0]
-    assert "net user amigo" in passo and "-Credential $cred" in passo
-    assert '"/REDIRECTIONGUARD"' in passo and "--verificar" in passo
+    assert "net user amigo" in passo and "/REDIRECTIONGUARD" in passo and "--verificar" in passo
+    # Pelo .NET, sem tocar no Environment: o Start-Process -Credential passa o
+    # ambiente do administrador (o TEMP dele), e o instalador do amigo morria
+    # com codigo 1 antes do log (24-set-2026).
+    codigo = "\n".join(l for l in passo.splitlines() if not l.strip().startswith("#"))
+    assert "System.Diagnostics.ProcessStartInfo" in codigo and "LoadUserProfile = $true" in codigo
+    assert "-Credential" not in codigo and ".Environment" not in codigo
 
 
 def test_motor_quebrado_nao_termina_como_instalado():

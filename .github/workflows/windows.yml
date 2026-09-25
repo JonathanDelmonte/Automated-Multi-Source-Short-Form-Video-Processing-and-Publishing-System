@@ -148,7 +148,7 @@ jobs:
                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
           "codigo do instalador: $($p.ExitCode)"
           Get-Content "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
-          Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "RedirectionGuard|Cortes" -ErrorAction SilentlyContinue
+          if (Test-Path "$env:RUNNER_TEMP\inno.log") { Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "RedirectionGuard|Cortes" }
           if ($p.ExitCode -ne 0) { exit 1 }
       # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
       # pythonw.exe do venv com o iniciar.py; se um dos dois faltar, o icone
@@ -276,26 +276,48 @@ jobs:
           $senha = "Vc-" + [guid]::NewGuid().ToString("N").Substring(0, 8) + "-a1"
           net user amigo $senha /add | Out-Null
           if ($LASTEXITCODE -ne 0) { "nao criou o usuario"; exit 1 }
-          $cred = New-Object System.Management.Automation.PSCredential("amigo", (ConvertTo-SecureString $senha -AsPlainText -Force))
+          $segura = ConvertTo-SecureString $senha -AsPlainText -Force
           Set-Service seclogon -StartupType Manual
           Start-Service seclogon
           $pub = "C:\Users\Public\vc"
           New-Item -ItemType Directory -Force $pub | Out-Null
           icacls $pub /grant "amigo:(OI)(CI)M" | Out-Null
           Copy-Item ajudante\saida\Instalar-Virtu-Clips.exe $pub
-          $p = Start-Process "$pub\Instalar-Virtu-Clips.exe" -Credential $cred -LoadUserProfile -Wait -PassThru `
-               -WorkingDirectory $pub `
-               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/REDIRECTIONGUARD", "/LOG=$pub\inno-amigo.log"
-          "codigo do instalador (usuario comum): $($p.ExitCode)"
+          # Pelo .NET, e nao pelo Start-Process -Credential: aquele passa ao
+          # processo novo o AMBIENTE deste, e o TEMP do administrador nao e
+          # gravavel pelo amigo -- o instalador morria com codigo 1 antes de
+          # escrever uma linha de log. Sem tocar no `Environment` do
+          # ProcessStartInfo, o Windows monta o ambiente do proprio usuario,
+          # como num login de verdade.
+          function ComoAmigo($exe, $argumentos, $pasta) {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exe
+            $psi.Arguments = $argumentos
+            $psi.WorkingDirectory = $pasta
+            $psi.UserName = "amigo"
+            $psi.Domain = "."
+            $psi.Password = $segura
+            $psi.LoadUserProfile = $true
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $saida = $proc.StandardOutput.ReadToEndAsync()
+            $erro = $proc.StandardError.ReadToEndAsync()
+            $proc.WaitForExit()
+            $saida.Result + $erro.Result | Out-Host
+            return $proc.ExitCode
+          }
+          $codigo = ComoAmigo "$pub\Instalar-Virtu-Clips.exe" "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REDIRECTIONGUARD /LOG=$pub\inno-amigo.log" $pub
+          "codigo do instalador (usuario comum): $codigo"
           $base = "C:\Users\amigo\AppData\Local\VirtuClips"
-          Get-Content "$base\dados\logs\instalacao.log" -Tail 40 -ErrorAction SilentlyContinue
-          Select-String -Path "$pub\inno-amigo.log" -Pattern "RedirectionGuard" -ErrorAction SilentlyContinue
-          if ($p.ExitCode -ne 0) { exit 1 }
-          $v = Start-Process "$base\venv\Scripts\python.exe" -Credential $cred -LoadUserProfile -Wait -PassThru `
-               -WorkingDirectory $base -ArgumentList "$base\iniciar.py", "--verificar" `
-               -RedirectStandardOutput "$pub\verificar.txt" -RedirectStandardError "$pub\verificar-erro.txt"
-          Get-Content "$pub\verificar.txt", "$pub\verificar-erro.txt" -ErrorAction SilentlyContinue
-          if ($v.ExitCode -ne 0) { "o motor do usuario comum nao subiu"; exit 1 }
+          if (Test-Path "$base\dados\logs\instalacao.log") { Get-Content "$base\dados\logs\instalacao.log" -Tail 40 }
+          if (Test-Path "$pub\inno-amigo.log") {
+            Select-String -Path "$pub\inno-amigo.log" -Pattern "RedirectionGuard|User privileges|Temp"
+          } else { "o instalador nao escreveu o log" }
+          if ($codigo -ne 0) { exit 1 }
+          $codigo = ComoAmigo "$base\venv\Scripts\python.exe" "`"$base\iniciar.py`" --verificar" $base
+          if ($codigo -ne 0) { "o motor do usuario comum nao subiu"; exit 1 }
       - name: Guardar o instalador
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

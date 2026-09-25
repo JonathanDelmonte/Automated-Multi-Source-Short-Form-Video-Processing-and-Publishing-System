@@ -2075,6 +2075,11 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
     so ela), passa disso ("The system cannot find the path specified" no
     meio da compressao). O CI monta o pacote em `C:\vc\pacote` e o `.iss` o
     recebe por `/DPacote`; ha teste contra caminho do pacote escrito a mao;
+  - **`Start-Process -Credential` passa ao processo novo o AMBIENTE de quem
+    chama** -- inclusive o TEMP do administrador, que o usuario comum nao
+    pode gravar: o instalador dele saia com codigo 1 antes de escrever o log.
+    O CI usa o `ProcessStartInfo` do .NET sem tocar no `Environment`, e ai o
+    Windows monta o ambiente do proprio usuario, como num login;
   - `net user` com senha de **mais de 14 caracteres** pergunta se pode
     continuar e espera um "S" -- no CI, para sempre;
   - o PowerShell converte inteiro para `IntPtr` sem ambiguidade, e para

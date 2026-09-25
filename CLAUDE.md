@@ -2031,8 +2031,11 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   - o uv cria um atalho de pasta (junction) por versao menor do Python
     (`cpython-3.11-windows-...` apontando para a pasta da versao exata);
   - o Inno Setup 6.7 liga por padrao a **RedirectionGuard** do Windows, que
-    recusa atravessar atalho criado por usuario comum -- e ela chegou ao uv,
-    neto do instalador, embora a ajuda do Inno diga que filhos nao a herdam;
+    recusa atravessar atalho criado por usuario comum -- e ela estava ativa no
+    processo do uv, neto do instalador (o 448 e a assinatura dela), embora a
+    ajuda do Inno diga que filhos nao a herdam. Herdada ou ligada por politica
+    da maquina, o conserto cobre os dois; a linha "protecao de
+    redirecionamento" do `instalacao.log` diz qual foi;
   - o runner do GitHub e administrador, e atalho criado por administrador e
     "confiavel": por isso o CI instalava verde.
 
@@ -2046,6 +2049,9 @@ num Windows do GitHub e publica no GitHub Releases, de onde o site o oferece.
   voltar. E o `windows.yml` ganhou o passo **"Um usuario comum instala"**: cria
   um usuario sem administrador e instala como ele, com a protecao FORCADA
   (`/REDIRECTIONGUARD`), e o motor dele tem de passar no `--verificar`.
+  Medido na primeira volta verde (24-set-2026): o log do Inno diz "Not
+  enabling" no instalador de sempre e "Enabled in enforcing mode" no forcado
+  -- e o forcado instala igual, porque sem o atalho nao ha o que barrar.
 - **A pasta mudou com o nome** (`%LOCALAPPDATA%\Cortes` ->
   `%LOCALAPPDATA%\VirtuClips`), com o MESMO AppId, para ficar uma entrada so
   em "Aplicativos". Sem `UsePreviousAppDir=no` o Inno instalaria de novo na

@@ -147,7 +147,10 @@ jobs:
           $p = Start-Process ajudante\saida\Instalar-Virtu-Clips.exe -Wait -PassThru `
                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$env:RUNNER_TEMP\inno.log"
           "codigo do instalador: $($p.ExitCode)"
-          Get-Content "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Tail 60 -ErrorAction SilentlyContinue
+          if (Test-Path "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log") {
+            Select-String -Path "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Pattern "protecao de redirecionamento"
+            Get-Content "$env:LOCALAPPDATA\VirtuClips\dados\logs\instalacao.log" -Tail 60
+          }
           if (Test-Path "$env:RUNNER_TEMP\inno.log") { Select-String -Path "$env:RUNNER_TEMP\inno.log" -Pattern "RedirectionGuard|Cortes" }
           if ($p.ExitCode -ne 0) { exit 1 }
       # O atalho, o menu Iniciar e o "iniciar com o Windows" chamam o
@@ -311,7 +314,12 @@ jobs:
           $codigo = ComoAmigo "$pub\Instalar-Virtu-Clips.exe" "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REDIRECTIONGUARD /LOG=$pub\inno-amigo.log" $pub
           "codigo do instalador (usuario comum): $codigo"
           $base = "C:\Users\amigo\AppData\Local\VirtuClips"
-          if (Test-Path "$base\dados\logs\instalacao.log") { Get-Content "$base\dados\logs\instalacao.log" -Tail 40 }
+          if (Test-Path "$base\dados\logs\instalacao.log") {
+            # A pergunta de fundo do erro 448: a protecao forcada no instalador
+            # chega ao powershell (e dai ao uv)? O instalar.ps1 escreve a resposta.
+            Select-String -Path "$base\dados\logs\instalacao.log" -Pattern "protecao de redirecionamento"
+            Get-Content "$base\dados\logs\instalacao.log" -Tail 40
+          }
           if (Test-Path "$pub\inno-amigo.log") {
             Select-String -Path "$pub\inno-amigo.log" -Pattern "RedirectionGuard|User privileges|Temp"
           } else { "o instalador nao escreveu o log" }

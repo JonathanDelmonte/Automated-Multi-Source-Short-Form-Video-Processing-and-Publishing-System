@@ -262,7 +262,7 @@ conta não saem juntos.
 | 7.3a | motor: cota nova do YouTube (100 envios/dia), agenda por conta, a trava do post atrasado, "já publiquei" com link, os galhos do canal no publicar e no agendar; e o acerto do banco que já existe (`db_acerto`) | feita (26-set) |
 | 7.3b | cadastro de aplicativo por pessoa (Configurações → aplicativos, com o passo a passo) e "Conectar YouTube" pelo site, para publicar e para medir | feita (26-set) |
 | 7.3c | TikTok pela Content Posting API (Direct Post), privado até a auditoria: o cadastro do app do TikTok nas Configurações, o "conectar" da conta pelo site e o driver `tiktok-api` na cascata | feita (26-set) |
-| 7.3d | Instagram na versão simples | a fazer |
+| 7.3d | Instagram na versão simples: o galho do Instagram sai pelo pacote do dia (agora escolhido por plataforma no painel) e volta pelo "já publiquei" com o link; a legenda respeita o limite de 5 hashtags do app; a publicação pela API fica para depois (o porquê está logo abaixo) | feita (26-set) |
 | 7.3e | conferir as telas no computador e no celular, docs, CI | a fazer |
 
 A trava tem o teste que o "pronto quando" pede
@@ -298,6 +298,35 @@ estar privada. **Até a auditoria, o driver pede sempre o privado**, mesmo que
 se peça público e a conta ofereça: o TikTok recusaria o post. **O que falta ver
 no PC do autor** é o post de verdade, com o app dele no TikTok for Developers
 (em Sandbox) e a conta de teste privada (`COMO-EXECUTAR.md`, Passo 8).
+
+**O Instagram na versão simples (7.3d)** é o galho completo sem a API: o
+pacote do dia agora se escolhe por plataforma no painel (até aqui ele só
+baixava o do YouTube, e a legenda do Instagram existia no programa sem chegar a
+ninguém), a legenda sai com no máximo 5 hashtags — o limite do app desde
+dez-2025, que antes era 30 —, e a conta do Instagram diz na tela o caminho dela:
+pacote do dia, postar, e o link no "já publiquei", que é o que deixa acompanhar
+o post.
+
+**Por que a publicação pelo Instagram fica para depois**, pesquisado em
+26-set-2026:
+
+- **A API oficial precisa do vídeo num endereço público.** O Instagram busca o
+  arquivo por `video_url`, num servidor HTTPS aberto na hora do post; o programa
+  roda no computador de quem usa, e abri-lo para a internet vai contra o
+  desenho inteiro. O envio direto do arquivo (`rupload.facebook.com`) existe,
+  mas o exemplo oficial da Meta usa token do **Facebook**, não do Instagram, e
+  há relato público de ele falhar na prática (`ProcessingFailedError ...
+  FILE_NOT_FOUND`), com a recomendação de voltar ao `video_url`.
+- **Não existe post privado para testar.** Conta profissional do Instagram (a
+  única que a API aceita) não pode ser privada, e o que sobe aparece para os
+  seguidores na hora — o contrário do "privado primeiro" deste passo.
+- **E o autor já disse qual é o caminho do Instagram**: "é mais outro tipo de
+  coisa (...) bom pra phone farm" (7.9).
+
+O que mudaria isso: a Meta documentar o envio direto com o token do Instagram,
+ou o programa ganhar um jeito seguro de servir o corte por HTTPS só durante o
+post. Medir o Instagram (7.4) é outra conversa: ler métricas não envia vídeo, e
+o token de leitura pode ser colado do painel da Meta.
 
 ### 7.4 — Análises por canal
 

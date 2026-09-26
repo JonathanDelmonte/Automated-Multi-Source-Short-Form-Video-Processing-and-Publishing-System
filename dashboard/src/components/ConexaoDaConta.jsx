@@ -53,10 +53,23 @@ export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
     if (conectadoAgora) { setEsperando(null); setLinkManual(null); }
   }, [conectadoAgora]);
 
-  // Motor de antes da 7.3 não diz o estado da conexão; o Instagram ainda não
-  // conecta por aqui (7.3d).
+  // Motor de antes da 7.3 não diz o estado da conexão.
   const plataforma = conta?.platform;
-  if (!conexao || !TIPOS_DE[plataforma]) return null;
+  if (!conexao) return null;
+  // O Instagram, na versão simples (7.3d), publica pelo pacote do dia: a API
+  // dele que não pede o vídeo num endereço público não é confiável, e ele não
+  // tem post privado para testar (ver o plano). O cartão diz o caminho.
+  if (plataforma === 'instagram') {
+    return (
+      <p className="text-muted text-[12px] leading-snug">
+        No Instagram, esta versão publica pelo{' '}
+        <a href={hrefDe('/agenda')} className="text-ink2 underline underline-offset-2">pacote do dia</a>:
+        o corte e a legenda prontos para colar, com no máximo 5 hashtags. Depois de postar, cole o link
+        em &ldquo;já publiquei&rdquo; — é com ele que o programa acompanha o post.
+      </p>
+    );
+  }
+  if (!TIPOS_DE[plataforma]) return null;
 
   const tipos = TIPOS_DE[plataforma].map((id) => ({ id, ...DESCRICAO_DOS_TIPOS[plataforma][id] }));
   const empresa = empresaDe(plataforma);

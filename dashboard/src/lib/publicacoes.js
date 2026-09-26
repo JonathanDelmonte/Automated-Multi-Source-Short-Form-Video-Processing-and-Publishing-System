@@ -62,3 +62,21 @@ export function corpoDoDestino(jobId, destino) {
   if (!jobId || !id || (tipo !== 'canal' && tipo !== 'conta')) return null;
   return tipo === 'canal' ? { job_id: jobId, channel_id: id } : { job_id: jobId, account_id: id };
 }
+
+// As plataformas que o pacote do dia oferece: as das contas, na ordem de
+// sempre -- ou as três, quando ainda não há conta (o pacote serve até sem
+// conta nenhuma).
+export function plataformasDoPacote(contas) {
+  const tem = new Set((contas || []).map((c) => c.platform));
+  const delas = ORDEM_DAS_PLATAFORMAS.filter((p) => tem.has(p));
+  return delas.length ? delas : [...ORDEM_DAS_PLATAFORMAS];
+}
+
+// O endereço do pacote de um dia para uma plataforma. A legenda de cada corte
+// é escrita para ela: no Instagram, com no máximo 5 hashtags (o limite do app
+// desde dez-2025). Sem a plataforma, o motor responde o do YouTube -- era o
+// único que o painel pedia até a 7.3d.
+export function caminhoDoPacote(dia, plataforma) {
+  const q = new URLSearchParams({ dia, plataforma: plataforma || 'youtube' });
+  return `/api/publicacoes/pacote?${q}`;
+}

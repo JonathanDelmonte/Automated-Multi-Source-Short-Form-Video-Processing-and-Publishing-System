@@ -19,9 +19,25 @@ painel mostrar como publicado um corte que ninguem publicou.
 from __future__ import annotations
 
 import os
+import re
 
 from .base import (Account, Cost, PostMeta, PublishOptions, PublishResult,
                    Publisher, RenderedClip)
+
+#: Quantas hashtags cada plataforma aceita num post. **O Instagram passou a
+#: limitar a 5 por post e por Reel em dez-2025** (eram 30) e ignora as que
+#: passam: as que sobram seriam so texto a mais na legenda, e QUAIS ele descarta
+#: nao seria escolha de ninguem. Ficam as primeiras -- as da descricao, que o
+#: detector escreveu para aquela plataforma, antes das acrescentadas.
+MAX_HASHTAGS = {"instagram": 5}
+
+#: O tamanho maximo da legenda, em caracteres, onde o app recusa a que passa.
+MAX_CARACTERES = {"instagram": 2200}
+
+# Uma hashtag: `#` e pelo menos uma letra, fora de palavra, entidade ou URL
+# (`site.com/pagina#secao` nao e hashtag, e `#1` o Instagram nao transforma em
+# uma).
+_HASHTAG = re.compile(r"(?<![\w&/])#(?=\w*[^\W\d_])\w+")
 
 # O sufixo do arquivo de legenda, ao lado do clipe. `.txt` e proposital: e o
 # que abre com um duplo clique em qualquer maquina.
@@ -51,11 +67,40 @@ def _hashtags_faltantes(texto: str, hashtags) -> list[str]:
     return faltam
 
 
+def limitar_hashtags(texto: str, maximo: int) -> str:
+    """O texto com so as `maximo` primeiras hashtags. As outras saem, e o
+    espaco que elas deixavam tambem; o resto do texto fica como estava."""
+    vistas = 0
+
+    def troca(m):
+        nonlocal vistas
+        vistas += 1
+        return m.group(0) if vistas <= maximo else ""
+    saida = _HASHTAG.sub(troca, texto)
+    if vistas <= maximo:
+        return texto
+    saida = re.sub(r"[ \t]{2,}", " ", saida)
+    saida = re.sub(r"[ \t]+(?=\n|$)", "", saida)
+    saida = re.sub(r"\n{3,}", "\n\n", saida)
+    return saida.strip()
+
+
+def _cortar(texto: str, maximo: int) -> str:
+    """No maximo `maximo` caracteres, cortando num espaco quando da."""
+    if len(texto) <= maximo:
+        return texto
+    corte = texto[:maximo]
+    espaco = corte.rfind(" ")
+    return (corte[:espaco] if espaco > maximo * 0.8 else corte).rstrip()
+
+
 def render_caption(meta: PostMeta, platform: str) -> str:
     """O texto que a pessoa cola. Titulo, linha em branco, descricao, hashtags.
 
     Sem cabecalho, sem rotulo, sem decoracao: qualquer coisa que nao va para o
-    post e coisa que a pessoa tem de apagar depois de colar.
+    post e coisa que a pessoa tem de apagar depois de colar. E dentro das regras
+    da plataforma (`MAX_HASHTAGS`, `MAX_CARACTERES`): texto que o app recusa ou
+    ignora nao esta "pronto para colar".
     """
     titulo = (meta.title or "").strip()
     corpo = meta.description_for(platform).strip()
@@ -63,7 +108,12 @@ def render_caption(meta: PostMeta, platform: str) -> str:
     faltam = _hashtags_faltantes("\n".join(partes), meta.hashtags)
     if faltam:
         partes.append(" ".join(faltam))
-    return "\n\n".join(partes) + "\n"
+    texto = "\n\n".join(partes)
+    if platform in MAX_HASHTAGS:
+        texto = limitar_hashtags(texto, MAX_HASHTAGS[platform])
+    if platform in MAX_CARACTERES:
+        texto = _cortar(texto, MAX_CARACTERES[platform])
+    return texto + "\n"
 
 
 class ManualPublisher(Publisher):

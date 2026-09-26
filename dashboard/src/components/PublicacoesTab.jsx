@@ -9,7 +9,7 @@ import FilaDePublicacoes from './FilaDePublicacoes';
 import ConexaoDaConta from './ConexaoDaConta';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
-import { corpoDoDestino } from '../lib/publicacoes';
+import { caminhoDoPacote, corpoDoDestino, plataformasDoPacote } from '../lib/publicacoes';
 import { useAplicativos } from '../lib/aplicativo';
 import { TIPOS_DE, situacaoDoAplicativo } from '../lib/conexoes';
 import { hrefDe } from '../lib/rota';
@@ -50,6 +50,7 @@ export default function PublicacoesTab({
     destino: canal ? `canal:${canal}` : (canalDoProjeto ? `canal:${canalDoProjeto}` : ''),
   });
   const [ultimoEnvio, setUltimoEnvio] = useState(null);
+  const [plataformaDoPacote, setPlataformaDoPacote] = useState(null);
   const [confirmando, setConfirmando] = useState(null);
   const [agenda, setAgenda] = useState(null);
   const destinoAtual = useRef('');
@@ -108,13 +109,20 @@ export default function PublicacoesTab({
     setErro(null);
   });
 
+  // O pacote e escrito para UMA plataforma: a legenda de cada corte e a dela.
+  const opcoesDoPacote = plataformasDoPacote(contasDoCanal
+    ? (contas || []).filter((c) => contasDoCanal.includes(c.id))
+    : contas);
+  const pacotePara = opcoesDoPacote.includes(plataformaDoPacote)
+    ? plataformaDoPacote : opcoesDoPacote[0];
+
   const baixarPacote = (dia) => {
     // Download direto pelo navegador: o ZIP pode ter centenas de MB e passá-lo
     // por fetch() significaria carregá-lo inteiro na memória da aba antes de
     // salvar.
     // Pelo `getApiUrl`: no site do Cloudflare o servidor nao e a mesma origem
     // da pagina, e um caminho solto baixaria do Cloudflare (404).
-    window.location.href = getApiUrl(`/api/publicacoes/pacote?dia=${encodeURIComponent(dia)}`);
+    window.location.href = getApiUrl(caminhoDoPacote(dia, pacotePara));
   };
 
   const enviar = (rota, falha) => acao(async () => {
@@ -183,9 +191,31 @@ export default function PublicacoesTab({
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">pacote do dia</h3>
           <p className="text-muted text-[13px] leading-snug">
-            Os cortes do dia mais um arquivo de legenda por corte, pronto para
-            selecionar tudo e colar: título, descrição e hashtags.
+            Os cortes do dia mais um arquivo de legenda por corte, escrito para a
+            plataforma escolhida e pronto para selecionar tudo e colar: título,
+            descrição e hashtags.
+            {pacotePara === 'instagram' && ' No Instagram, com no máximo 5 hashtags: é o limite do app.'}
           </p>
+          {opcoesDoPacote.length > 1 && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="plataforma do pacote">
+              {opcoesDoPacote.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  data-plataforma={p}
+                  aria-pressed={p === pacotePara}
+                  onClick={() => setPlataformaDoPacote(p)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors ${
+                    p === pacotePara
+                      ? 'border-[color:var(--color-accent)] text-ink'
+                      : 'border-rule2 text-muted hover:text-ink2'}`}
+                >
+                  <IconePlataforma platform={p} size={14} mono={p !== pacotePara} />
+                  {PLATAFORMAS[p].nome}
+                </button>
+              ))}
+            </div>
+          )}
           {maisRecente ? (
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -279,7 +309,7 @@ export default function PublicacoesTab({
                         <Trash2 size={14} />
                       </button>
                     )}
-                    {c.conexao && TIPOS_DE[c.platform] && (
+                    {c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram') && (
                       <div className="basis-full pl-7">
                         <ConexaoDaConta conta={c} aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}
                                         aoMudar={carregar} />

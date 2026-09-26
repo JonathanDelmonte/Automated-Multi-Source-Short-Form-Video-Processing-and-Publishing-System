@@ -405,7 +405,7 @@ def test_a_conta_do_tiktok_ganha_o_botao_nas_duas_telas():
     publicacoes = _fonte("components", "PublicacoesTab.jsx")
     canal = _fonte("pages", "Canal.jsx")
     assert "c.platform === 'youtube'" not in publicacoes
-    assert "{c.conexao && TIPOS_DE[c.platform] && (" in publicacoes
+    assert "{c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram') && (" in publicacoes
     assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}" in publicacoes
     assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, p)}" in canal
 
@@ -420,3 +420,41 @@ def test_o_programa_antigo_manda_atualizar_e_nao_cadastrar():
     assert "atualize o programa deste computador" in conexao
     assert "estados[app.plataforma] === undefined ? (" in cadastro
     assert "Atualize o\n            programa" in cadastro or "Atualize o programa" in cadastro
+
+
+# --------------------------------------------------------------------------- #
+# O Instagram na versao simples (etapa 7.3d)
+# --------------------------------------------------------------------------- #
+
+@precisa_node
+@pytest.mark.parametrize("contas, esperado", [
+    # Sem conta, o pacote serve assim mesmo: as tres.
+    ([], ["youtube", "tiktok", "instagram"]),
+    ([{"platform": "instagram"}, {"platform": "youtube"}], ["youtube", "instagram"]),
+    ([{"platform": "instagram"}], ["instagram"]),
+])
+def test_o_pacote_oferece_as_plataformas_das_contas(contas, esperado):
+    assert _publicacoes(f"p.plataformasDoPacote({json.dumps(contas)})") == esperado
+
+
+@precisa_node
+def test_o_pacote_pede_a_plataforma_escolhida():
+    """Ate a 7.3d o painel so baixava o do YouTube: a legenda do Instagram (e a
+    do TikTok) existia no motor e nunca chegava a ninguem."""
+    assert _publicacoes("p.caminhoDoPacote('2026-09-26', 'instagram')") == \
+        "/api/publicacoes/pacote?dia=2026-09-26&plataforma=instagram"
+    assert _publicacoes("p.caminhoDoPacote('2026-09-26')").endswith("&plataforma=youtube")
+    aba = _fonte("components", "PublicacoesTab.jsx")
+    assert "getApiUrl(caminhoDoPacote(dia, pacotePara))" in aba
+    assert "/api/publicacoes/pacote?dia=" not in aba
+
+
+def test_a_conta_do_instagram_diz_o_caminho_dela():
+    """Sem botao de conectar, a conta do Instagram diria nada -- e "por que
+    nao sobe sozinho?" ficaria sem resposta na tela."""
+    conexao = _fonte("components", "ConexaoDaConta.jsx")
+    bloco = conexao[conexao.index("if (plataforma === 'instagram') {"):]
+    bloco = bloco[:bloco.index("if (!TIPOS_DE[plataforma]) return null;")]
+    assert "hrefDe('/agenda')" in bloco
+    assert "pacote do dia" in bloco and "5 hashtags" in bloco and "já publiquei" in bloco
+

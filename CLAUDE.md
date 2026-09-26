@@ -2658,6 +2658,27 @@ do codigo que ela mudou.
   resposta como a documentacao descreve); a rede de verdade nao e alcancavel
   daqui, e o primeiro post real e o roteiro do `COMO-EXECUTAR.md`.
 
+**O Instagram na versao simples** (7.3d): o galho completo, SEM a API.
+
+- **Sai pelo pacote do dia e volta pelo "ja publiquei" com o link.** O pacote
+  agora se escolhe por plataforma no painel (`caminhoDoPacote`,
+  `plataformasDoPacote` em `lib/publicacoes.js`): o motor sempre soube montar o
+  do Instagram (`?plataforma=instagram`), mas o painel so pedia o do YouTube, e
+  a legenda do Instagram nao chegava a ninguem. A conta do Instagram diz o
+  caminho dela no cartao (`ConexaoDaConta`), em vez de nada.
+- **A legenda respeita o app** (`manual.MAX_HASHTAGS`, `MAX_CARACTERES`): no
+  Instagram, no maximo 5 hashtags -- o limite desde dez-2025 (eram 30), e o app
+  ignora as que passam -- e 2.200 caracteres. Ficam as PRIMEIRAS, as da
+  descricao que o detector escreveu para a plataforma, antes das acrescentadas.
+  `#1`, `site.com/x#secao` e `&#123;` nao contam. Vale para o arquivo ao lado
+  do corte e para o pacote, que usam o mesmo `render_caption`.
+- **A API do Instagram ficou de fora, e o porque esta no plano**: ela busca o
+  video num endereco HTTPS publico (`video_url`), que um programa no PC de quem
+  usa nao tem; o envio direto do arquivo so tem exemplo oficial com token do
+  Facebook, e ha relato de falha na pratica; e conta profissional nao pode ser
+  privada, entao nao ha post de teste. O autor ja tinha posto o Instagram na
+  frota de aparelhos (7.9). Nao reabrir sem um desses fatos mudar.
+
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 
 - **Cada tela tem endereco** depois do `#` (`#/canais/<id>/agenda`,

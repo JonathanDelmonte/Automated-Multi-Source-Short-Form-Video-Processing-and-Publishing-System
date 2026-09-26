@@ -327,6 +327,49 @@ class TestTextoDaLegenda:
         assert render_caption(meta, "youtube") == "Titulo\n\nCorpo\n\n#a\n"
 
 
+class TestLegendaDoInstagram:
+    """O Instagram limita a 5 hashtags por post e por Reel desde dez-2025 (eram
+    30) e ignora as que passam. A legenda "pronta para colar" tem de estar
+    dentro disso: quais o app descarta nao pode ficar ao acaso."""
+
+    META = PostMeta(title="A girafa",
+                    descriptions={"instagram": "Olha isso #animais #natureza #fofura",
+                                  "tiktok": "Olha isso #animais #natureza #fofura"},
+                    hashtags=("animais", "#fyp", "girafa", "zoo", "bichos", "viral"))
+
+    @staticmethod
+    def _hashtags(texto):
+        return [p for p in texto.split() if p.startswith("#")]
+
+    def test_no_maximo_cinco_e_as_da_descricao_primeiro(self):
+        texto = render_caption(self.META, "instagram")
+        assert self._hashtags(texto) == ["#animais", "#natureza", "#fofura", "#fyp", "#girafa"]
+        assert texto.startswith("A girafa\n\nOlha isso")
+
+    def test_as_outras_plataformas_levam_todas(self):
+        assert len(self._hashtags(render_caption(self.META, "tiktok"))) == 8
+        assert len(self._hashtags(render_caption(self.META, "youtube"))) == 8
+
+    def test_descricao_com_hashtag_demais_perde_so_as_que_passam(self):
+        meta = PostMeta(descriptions={"instagram": "#um texto #dois no meio #tres #quatro "
+                                                   "#cinco #seis #sete fim"})
+        texto = render_caption(meta, "instagram")
+        assert texto == "#um texto #dois no meio #tres #quatro #cinco fim\n"
+
+    def test_o_que_nao_e_hashtag_nao_conta(self):
+        """`#1` o Instagram nao transforma em hashtag, e `site.com/x#secao` e
+        `&#123;` nao sao hashtag nenhuma."""
+        from publishers.manual import limitar_hashtags
+        texto = "o #1 do dia, site.com/x#secao &#123; #a #b #c #d #e #f"
+        assert limitar_hashtags(texto, 5) == "o #1 do dia, site.com/x#secao &#123; #a #b #c #d #e"
+
+    def test_a_legenda_cabe_no_limite_do_app(self):
+        meta = PostMeta(descriptions={"instagram": "palavra " * 600})
+        texto = render_caption(meta, "instagram")
+        assert len(texto.rstrip("\n")) <= 2200
+        assert not texto.rstrip("\n").endswith(" ")
+
+
 class TestSubmodulosNoNamespace:
     """`import publishers` tem de bastar para `publishers.pacote` e
     `publishers.quota`.

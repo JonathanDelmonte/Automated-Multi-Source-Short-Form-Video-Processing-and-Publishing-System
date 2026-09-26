@@ -246,6 +246,23 @@ class TestEndpointPacote:
         assert "descricao insta 1" in insta.read(
             "01_Titulo.instagram.txt").decode("utf-8")
 
+    def test_a_legenda_do_instagram_no_pacote_tem_no_maximo_cinco_hashtags(self, saida):
+        """O pacote e o caminho do Instagram nesta versao (7.3d): a legenda que
+        vai nele ja respeita o limite de 5 hashtags do app (dez-2025)."""
+        job_id = _job_com_cortes(saida, 1, titulos=["Titulo"])
+        meta = saida / job_id / "video_metadata.json"
+        dados = json.loads(meta.read_text(encoding="utf-8"))
+        dados["shorts"][0]["video_description_for_instagram"] = \
+            "Olha isso #a #b #c #d #e #f #g"
+        dados["shorts"][0]["video_description_for_tiktok"] = \
+            "Olha isso #a #b #c #d #e #f #g"
+        meta.write_text(json.dumps(dados), encoding="utf-8")
+        for plataforma, quantas in (("instagram", 5), ("tiktok", 7)):
+            pacote = zipfile.ZipFile(io.BytesIO(
+                _chama("GET", f"/api/publicacoes/pacote?plataforma={plataforma}").content))
+            texto = pacote.read(f"01_Titulo.{plataforma}.txt").decode("utf-8")
+            assert len([p for p in texto.split() if p.startswith("#")]) == quantas, plataforma
+
     def test_plataforma_desconhecida_e_400(self, saida):
         _job_com_cortes(saida, 1)
         r = _chama("GET", "/api/publicacoes/pacote?plataforma=orkut")

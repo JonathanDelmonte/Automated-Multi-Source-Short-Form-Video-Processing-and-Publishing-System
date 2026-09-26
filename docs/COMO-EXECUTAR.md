@@ -1071,6 +1071,11 @@ com título, descrição e hashtags — sem rótulo e sem cabeçalho, para selec
 tudo e colar. É o driver `manual`, e ele é o padrão de propósito: automatiza o
 trabalho todo menos abrir o app e apertar publicar.
 
+**Escolha a plataforma antes de baixar** (YouTube, TikTok ou Instagram, acima
+do botão): a legenda de cada corte é escrita para ela. No Instagram, com no
+máximo 5 hashtags — é o limite do app desde dez-2025, e ele ignora as que
+passam.
+
 Dentro do ZIP há um `LEIA-ME.txt` com a ordem sugerida, que é a ordem em que a
 detecção já entregou — do melhor para o pior.
 
@@ -1158,6 +1163,16 @@ app", "o seu app já teve 5 contas postando hoje" — e o corte não se perde.
 
 Quando o app passar na auditoria, ponha `TIKTOK_APP_AUDITADO=1` no `.env`: aí o
 programa passa a pedir "público" quando você pedir e o TikTok oferecer.
+
+### E o Instagram
+
+Nesta versão, o Instagram é **pelo pacote do dia**: escolha "Instagram" acima do
+botão do pacote, poste no app e cole o link em **"já publiquei"** — é com o link
+que o programa acompanha o post. Publicar sozinho no Instagram ficou para depois
+de propósito: a API oficial busca o vídeo num endereço público da internet, que
+um programa no seu computador não tem, e conta profissional do Instagram não
+pode ser privada, então não haveria post de teste. O porquê inteiro está no
+`docs/PLANO-DA-PLATAFORMA.md` (7.3d).
 
 ### Na primeira vez, publique privado
 

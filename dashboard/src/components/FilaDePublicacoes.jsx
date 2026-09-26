@@ -129,8 +129,12 @@ export default function FilaDePublicacoes({ publicacoes, ocupado, aoMudar, vazio
                     <li key={p.id} className="text-[13px]" data-plataforma={p.account?.platform}>
                       <div className="flex items-center gap-2 min-w-0">
                         <IconePlataforma platform={p.account?.platform} size={15} title={nome} />
-                        <span className="text-ink2 truncate max-w-[9rem] sm:max-w-[14rem]">{p.account?.handle}</span>
-                        <span className={`text-xs ${estado.cor} truncate`}>{estado.texto}</span>
+                        {/* No celular o estado desce para a linha de baixo em vez de ser
+                            cortado: "agendado · 26 de set., 13:…" escondia justamente a hora. */}
+                        <span className="min-w-0 flex flex-wrap items-baseline gap-x-2">
+                          <span className="text-ink2 truncate max-w-full sm:max-w-[14rem]">{p.account?.handle}</span>
+                          <span className={`text-xs ${estado.cor} whitespace-nowrap`}>{estado.texto}</span>
+                        </span>
                         <span className="ml-auto flex items-center gap-2.5 shrink-0">
                           {p.url && (
                             <a href={p.url} target="_blank" rel="noopener noreferrer"

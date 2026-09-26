@@ -179,6 +179,36 @@ async def registrar_fonte(adapter: str, entrada: str,
         return None
 
 
+async def registrar_licenca(source_id: Optional[str], origem: Optional[dict]) -> bool:
+    """A origem e a licenca da fonte (etapa 7.5), numa linha de
+    `source_licenses`. Falha aberto como o resto: a pasta do projeto guarda a
+    mesma origem (`.origem.json`), e e dali que o credito sai."""
+    if not source_id or not origem:
+        return False
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        import licencas
+
+        limpa = licencas.limpar_origem(origem)
+        publicado = licencas._data(limpa.get("published_at"))
+        async with db.tenant() as t:
+            t.add(db_models.SourceLicense(
+                source_id=source_id, key=limpa.get("key"),
+                license=limpa["license"], license_text=limpa.get("license_text"),
+                title=(limpa.get("title") or "")[:300] or None,
+                author=(limpa.get("author") or "")[:200] or None,
+                author_url=limpa.get("author_url"), url=limpa.get("url"),
+                published_at=(_dt(publicado.year, publicado.month, publicado.day,
+                                  tzinfo=_tz.utc) if publicado else None),
+                declared_by=limpa["declared_by"]))
+            await t.commit()
+            return True
+    except Exception as e:
+        _avisar(e, f"registrar a licenca da fonte {source_id}")
+        return False
+
+
 async def registrar_job(job_id: str, source_id: str) -> bool:
     """Cria a linha de `jobs` com o **mesmo id do pipeline**.
 

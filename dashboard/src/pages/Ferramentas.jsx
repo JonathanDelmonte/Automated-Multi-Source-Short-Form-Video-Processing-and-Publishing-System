@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowLeft, ArrowRight, Image, Search, Wand2 } from 'lucide-react';
 import ThumbnailStudio from '../components/ThumbnailStudio';
+import AvatarDoCanal from '../components/ui/AvatarDoCanal';
 import Pagina, { CabecalhoDaPagina, EmBreve } from '../components/ui/Pagina';
 import { enviarVideo } from '../lib/processar';
 import { usePainel } from '../lib/painel';
@@ -9,6 +10,41 @@ import { hrefDe, ir } from '../lib/rota';
 // Ferramentas (etapa 7.1): o que se usa de vez em quando, fora do fluxo de um
 // canal. Hoje, o YouTube Studio (títulos e miniaturas), que o autor pediu para
 // manter; o resto tem o lugar marcado.
+
+// A busca com licença livre chegou na 7.5 DENTRO da receita de cada canal: é
+// o tema do canal que diz o que procurar, e é o canal que corta e posta. Aqui
+// fica o caminho até ela, e não uma segunda busca solta.
+function BuscaComLicenca() {
+  const { canais } = usePainel();
+  const lista = canais.canais || [];
+  return (
+    <div className="card p-5 space-y-3 min-w-0">
+      <p className="flex items-center gap-2 text-ink font-medium">
+        <Search size={16} className="shrink-0" /> Busca de vídeos com licença livre
+      </p>
+      <p className="text-muted text-[13px] leading-snug">
+        Mora na receita de cada canal, na aba Automação: acha vídeos pelo tema do canal, confere a licença
+        Creative Commons vídeo a vídeo e põe o crédito do autor na descrição de cada post.
+      </p>
+      {lista.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {lista.map((c) => (
+            // Sem o `btn-quiet`: ele põe tudo em minúsculas, e o nome do canal
+            // (e o monograma do avatar) é escrito como a pessoa escreveu.
+            <a key={c.id} href={hrefDe(`/canais/${c.id}/automacao`)}
+               className="inline-flex items-center gap-1.5 min-w-0 max-w-full px-2.5 py-1 rounded-full border border-rule text-xs text-ink2 hover:text-ink hover:border-rule2 transition-colors">
+              <AvatarDoCanal canal={c} size={16} /> <span className="truncate">{c.name}</span>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <a href={hrefDe('/canais/novo')} className="btn-quiet px-2.5 py-1 text-xs inline-flex items-center gap-1.5">
+          criar um canal <ArrowRight size={13} />
+        </a>
+      )}
+    </div>
+  );
+}
 
 function Studio() {
   const { apiKey, geminiNoMotor, keysMissing, pedirChave } = usePainel();
@@ -77,11 +113,7 @@ export default function Ferramentas({ ferramenta = null }) {
       </a>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <EmBreve etapa="7.5" titulo="Busca de vídeos sem direitos">
-          <p className="flex gap-2"><Search size={15} className="shrink-0 mt-0.5" />
-            Achar vídeos de domínio público ou com licença livre no nicho de um canal, guardando a
-            licença e o crédito de cada um.</p>
-        </EmBreve>
+        <BuscaComLicenca />
         <EmBreve etapa="7.7" titulo="Estilos de criação">
           <p className="flex gap-2"><Wand2 size={15} className="shrink-0 mt-0.5" />
             Montar e salvar o estilo dos vídeos de IA de um canal: traço, cores, voz e ritmo.</p>

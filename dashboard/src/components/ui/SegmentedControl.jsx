@@ -10,8 +10,11 @@
  *  - multi: allow multiple selections (value must be an array)
  *  - columns: grid column count (default: options.length, capped at 4)
  *  - size: 'sm' | 'md'
+ *  - minColPx: a coluna mais estreita antes de a grade quebrar de linha
+ *    (padrão 48 no sm, 88 no md). Suba quando a dica tem palavra longa: numa
+ *    tela de celular, "só o enquadramento" em letra mono não cabia em 48.
  */
-export default function SegmentedControl({ options, value, onChange, multi = false, columns, size = 'md' }) {
+export default function SegmentedControl({ options, value, onChange, multi = false, columns, size = 'md', minColPx }) {
   const cols = columns || Math.min(options.length, 4);
   const isActive = (v) => (multi ? Array.isArray(value) && value.includes(v) : value === v);
 
@@ -25,7 +28,7 @@ export default function SegmentedControl({ options, value, onChange, multi = fal
 
   // Responsive tracks: `cols` columns when they fit, wrapping to fewer on
   // narrow containers so options never crush below a readable width.
-  const minCol = size === 'sm' ? 48 : 88;
+  const minCol = minColPx || (size === 'sm' ? 48 : 88);
   const gridTemplateColumns = `repeat(auto-fill, minmax(max(${minCol}px, calc((100% - ${(cols - 1) * 6}px) / ${cols})), 1fr))`;
 
   return (

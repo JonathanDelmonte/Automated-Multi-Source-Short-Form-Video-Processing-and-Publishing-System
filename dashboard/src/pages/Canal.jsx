@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, Languages, Loader2, Plus, ShieldCheck, Trash2, Zap } from 'lucide-react';
+import AgendaDoCanal from '../components/AgendaDoCanal';
+import AutomacaoDoCanal from '../components/automacao/AutomacaoDoCanal';
+import CalendarioDosCanais from '../components/CalendarioDosCanais';
 import ConexaoDaConta from '../components/ConexaoDaConta';
 import PainelDeAnalises from '../components/analises/PainelDeAnalises';
 import FormularioDoCanal from '../components/FormularioDoCanal';
@@ -8,7 +11,7 @@ import PublicacoesTab from '../components/PublicacoesTab';
 import TiposDeCriacao from '../components/TiposDeCriacao';
 import AvatarDoCanal from '../components/ui/AvatarDoCanal';
 import IconePlataforma from '../components/ui/IconePlataforma';
-import Pagina, { EmBreve, Secao } from '../components/ui/Pagina';
+import Pagina, { Secao } from '../components/ui/Pagina';
 import { SituacaoDosCanais } from './Canais';
 import { apiFetch } from '../lib/api';
 import { useAplicativos } from '../lib/aplicativo';
@@ -157,6 +160,7 @@ function Ajustes({ canal }) {
         <p className="flex items-center gap-2 text-sm text-ok"><Check size={15} /> Canal salvo.</p>
       )}
       <FormularioDoCanal key={canal.id} canal={canal} aoSalvar={() => setSalvo(true)} />
+      <AgendaDoCanal key={`agenda-${canal.id}`} canal={canal} />
 
       <section className="card p-4 sm:p-5 space-y-3 border-[color:color-mix(in_oklab,var(--color-danger)_35%,transparent)]">
         <h2 className="text-danger text-sm font-medium">apagar o canal</h2>
@@ -234,37 +238,20 @@ function ConteudoDaAba({ aba, canal, subaba }) {
         </div>
       );
     case 'automacao':
-      return (
-        <div className="space-y-4">
-          <EmBreve
-            etapa="7.5"
-            titulo="Receitas: o canal trabalhando sozinho"
-            itens={[
-              'Buscar vídeos sem direitos autorais no nicho do canal, guardando a licença e o crédito de cada um.',
-              'Cortar e editar com o template e o estilo do canal.',
-              'Postar nos horários do canal, com a trava de segurança que já vale na Agenda: um post de cada vez, nunca vários juntos, mesmo depois de o computador ficar desligado.',
-            ]}
-          />
-          <Secao titulo="antes de postar">
-            <p className="text-sm text-ink2 flex items-center gap-2">
-              {canal.requires_approval
-                ? <><ShieldCheck size={15} className="shrink-0" /> Este canal espera a sua aprovação antes de cada post.</>
-                : <><Zap size={15} className="shrink-0" /> Este canal pode postar sozinho.</>}
-            </p>
-            <a href={hrefDe(`/canais/${canal.id}/ajustes`)} className="text-xs text-muted hover:text-ink2">mudar nos ajustes</a>
-          </Secao>
-        </div>
-      );
+      return <AutomacaoDoCanal canal={canal} />;
     case 'agenda':
       return ids.length === 0 ? semContas : (
-        <PublicacoesTab
-          secoes={['publicar', 'fila']}
-          canal={canal.id}
-          contasDoCanal={ids}
-          status="scheduled"
-          tituloDaFila="na fila deste canal"
-          vazioDaFila="Nada na fila deste canal."
-        />
+        <div className="space-y-4">
+          <CalendarioDosCanais canalId={canal.id} />
+          <PublicacoesTab
+            secoes={['publicar', 'fila']}
+            canal={canal.id}
+            contasDoCanal={ids}
+            status="scheduled"
+            tituloDaFila="na fila deste canal"
+            vazioDaFila="Nada na fila deste canal."
+          />
+        </div>
       );
     case 'publicados':
       return ids.length === 0 ? semContas : (

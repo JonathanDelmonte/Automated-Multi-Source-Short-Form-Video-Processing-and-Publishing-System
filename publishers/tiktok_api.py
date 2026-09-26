@@ -142,11 +142,13 @@ def escolher_privacidade(pedida: str, opcoes, *, auditado: bool = False) -> str:
 def legenda(meta: PostMeta) -> str:
     """A legenda do post: a descricao do TikTok (que ja vem com hashtags do
     detector), as hashtags que faltarem, e o titulo se nao houver descricao."""
+    from .base import com_credito
     from .manual import _hashtags_faltantes
     corpo = (meta.description_for("tiktok") or "").strip() or (meta.title or "").strip()
     faltam = _hashtags_faltantes(corpo, meta.hashtags)
     texto = " ".join([corpo] + faltam).strip() if faltam else corpo
-    return texto[:MAX_LEGENDA]
+    # O credito da fonte vai no fim e nao e cortado (etapa 7.5).
+    return com_credito(texto, meta.credit, MAX_LEGENDA)
 
 
 def corpo_do_post(meta: PostMeta, privacidade: str, info: dict, tamanho: int) -> dict:

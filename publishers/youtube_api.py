@@ -25,7 +25,8 @@ import os
 
 from . import quota
 from .base import (Account, Cost, PostMeta, PublishOptions, PublishResult,
-                   Publisher, PublisherError, QuotaEsgotada, RenderedClip)
+                   Publisher, PublisherError, QuotaEsgotada, RenderedClip,
+                   com_credito)
 
 URL_TOKEN = "https://oauth2.googleapis.com/token"
 URL_UPLOAD = ("https://www.googleapis.com/upload/youtube/v3/videos"
@@ -88,7 +89,7 @@ def corpo_do_video(meta: PostMeta, opts: PublishOptions) -> dict:
     """
     titulo = (meta.title or "").replace("<", "").replace(">", "").strip()
     titulo = titulo[:MAX_TITULO] or "Corte"
-    descricao = meta.description_for("youtube")[:MAX_DESCRICAO]
+    descricao = com_credito(meta.description_for("youtube"), meta.credit, MAX_DESCRICAO)
     corpo = {
         "snippet": {
             "title": titulo,
@@ -97,10 +98,11 @@ def corpo_do_video(meta: PostMeta, opts: PublishOptions) -> dict:
         },
         "status": {
             "privacyStatus": privacidade(opts.visibility),
-            # Declaracao obrigatoria desde a COPPA. `False` e a resposta certa
-            # para conteudo de cortes; quem faz video infantil tem de mudar, e
-            # deixar o campo fora faz a API assumir o pior.
-            "selfDeclaredMadeForKids": False,
+            # Declaracao obrigatoria desde a COPPA, e a lei americana nao a deixa
+            # opcional: o canal infantil marca todo envio (etapa 7.5,
+            # `receitas.feito_para_criancas`). Deixar o campo fora faz a API
+            # assumir o pior.
+            "selfDeclaredMadeForKids": bool(meta.made_for_kids),
         },
     }
     tags = _tags(meta)

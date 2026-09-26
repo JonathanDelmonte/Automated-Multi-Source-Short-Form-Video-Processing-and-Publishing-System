@@ -1140,23 +1140,32 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=
         if split_ranges is None:
             import layout_ranges as _layouts
             split_ranges = _layouts.split_ranges(_layouts.read(clip_path))
+        estilo = dict(
+            max_chars=style["max_chars"], max_duration=style["max_duration"],
+            alignment=style["alignment"], fontsize=style["font_size"],
+            font_name=style["font_name"], font_color=style["font_color"],
+            border_color=style["border_color"], border_width=style["border_width"],
+            highlight_color=style["highlight_color"], effect=style["effect"],
+            base_opacity=style["base_opacity"], uppercase=style["uppercase"])
+        # O template que a receita do canal escolheu (etapa 7.5): o documento
+        # manda no estilo inteiro, como no /api/subtitle. Ilegivel, vale o de
+        # sempre -- nunca custa a legenda.
+        import template as _template
+        do_template = _template.kwargs_do_arquivo(
+            os.environ.get(_template.VARIAVEL_DO_JOB))
+        if do_template:
+            estilo.update(do_template)
         if not _subs.generate_ass(
                 transcript, clip_start, clip_end, ass_path,
-                split_ranges=split_ranges,
-                max_chars=style["max_chars"], max_duration=style["max_duration"],
-                alignment=style["alignment"], fontsize=style["font_size"],
-                font_name=style["font_name"], font_color=style["font_color"],
-                border_color=style["border_color"], border_width=style["border_width"],
-                highlight_color=style["highlight_color"], effect=style["effect"],
-                base_opacity=style["base_opacity"], uppercase=style["uppercase"]):
+                split_ranges=split_ranges, **estilo):
             print("   ℹ️ No words in range — clip ships without captions.")
             return None
 
         _subs.burn_subtitles(
             clip_path, ass_path, out_path,
-            alignment=style["alignment"], fontsize=style["font_size"],
-            font_name=style["font_name"], font_color=style["font_color"],
-            border_color=style["border_color"], border_width=style["border_width"])
+            alignment=estilo["alignment"], fontsize=estilo["fontsize"],
+            font_name=estilo["font_name"], font_color=estilo["font_color"],
+            border_color=estilo["border_color"], border_width=estilo["border_width"])
         print(f"   💬 Captions burned: {os.path.basename(out_path)}")
         return out_path
     except Exception as e:

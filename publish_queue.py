@@ -189,6 +189,36 @@ async def apagar_conta(account_id: str) -> Optional[dict]:
 # Publicar
 # --------------------------------------------------------------------------- #
 
+async def _repetido_na_plataforma(t, clip_row, account_row) -> Optional[str]:
+    """A conta da MESMA plataforma que ja tem este corte, ou None.
+
+    **Nao repetir** (etapa 7.5): "a mesma fonte ou o mesmo corte nao vai duas
+    vezes, nem entre canais". O galho e um por PLATAFORMA -- o mesmo corte no
+    YouTube e no TikTok e o desenho --, mas o mesmo corte em duas contas do
+    YouTube e conteudo repetido nas contas de quem usa, que e o que as
+    plataformas punem. O que falhou ou foi cancelado nao conta: nao foi ao ar.
+    """
+    from sqlalchemy import and_, select as _select
+    P, A = db_models.Publication, db_models.Account
+    achada = (await t.session.execute(
+        _select(A.platform, A.handle)
+        .select_from(P)
+        .join(A, and_(A.id == P.account_id, A.tenant_id == P.tenant_id))
+        .where(P.tenant_id == t.tenant_id)
+        .where(P.clip_id == clip_row.id)
+        .where(P.account_id != account_row.id)
+        .where(A.platform == account_row.platform)
+        .where(P.status.not_in(("failed", "cancelled"))))).first()
+    if achada is None:
+        return None
+    return f"{achada[0]}/{achada[1]}"
+
+
+def _recusa_de_repetido(outra: str) -> FilaError:
+    return FilaError(
+        f"este corte ja foi para {outra}: o mesmo corte nao vai duas vezes na "
+        "mesma plataforma, nem em outro canal")
+
 async def publicar(clip_row, account_row, caminho_do_arquivo: str,
                    meta: publishers.PostMeta,
                    opts: Optional[publishers.PublishOptions] = None) -> dict:
@@ -211,6 +241,9 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
             raise FilaError(
                 f"este corte ja foi para {account_row.platform}/"
                 f"{account_row.handle} (status: {anterior.status})")
+        outra = await _repetido_na_plataforma(t, clip_row, account_row)
+        if outra:
+            raise _recusa_de_repetido(outra)
         linha = t.add(db_models.Publication(
             clip_id=clip_row.id, account_id=account_row.id,
             driver=driver.id, status="publishing",
@@ -279,6 +312,9 @@ async def agendar(clip_row, account_row, quando) -> dict:
             raise FilaError(
                 f"este corte ja esta na fila para {account_row.platform}/"
                 f"{account_row.handle} (status: {repetida[0].status})")
+        outra = await _repetido_na_plataforma(t, clip_row, account_row)
+        if outra:
+            raise _recusa_de_repetido(outra)
         conta = conta_para_driver(account_row)
         driver = publishers.resolve(account_row.platform, conta)
         linha = t.add(db_models.Publication(

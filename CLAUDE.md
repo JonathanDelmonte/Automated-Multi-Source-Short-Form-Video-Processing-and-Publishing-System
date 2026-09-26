@@ -774,7 +774,9 @@ projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
   desde a 7.3a; eram 6 pela regra antiga), e o agendador nunca o ultrapassa.
   Os tres primeiros sao **defaults configuraveis** -- calibrar horario exige
   retencao medida, que e a Fase 5. **Desde a 7.3a a agenda e por conta e o
-  post atrasado tem trava**: ver "A 7.3a no motor", na Fase 7.
+  post atrasado tem trava**: ver "A 7.3a no motor", na Fase 7. **Desde a 7.5
+  as janelas e o por-dia sao do CANAL** (os daqui viram o padrao de quem nao
+  escolheu) e valem no fuso de quem usa: ver "A automacao por canal".
 - **`JITTER_MINIMO_MIN` (5) e piso NAO configuravel.** Pedir zero nao desliga o
   jitter, so o reduz ao piso, com uma linha no log. A alternativa e um
   agendador que um dia roda com zero -- e a assinatura que o §1 manda evitar
@@ -1232,7 +1234,7 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
 | POST | `/api/publicacoes/{id}/publicado` | "Já publiquei", com o link do post |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
-| GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto numa conta ou no canal |
+| GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor (`?canal=` a de um canal), e agendar um projeto numa conta ou no canal |
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | As leituras coletadas (as três plataformas), e "medir agora" |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou (por canal e plataforma, `?canal=&plataforma=`) |
@@ -1246,6 +1248,12 @@ portrait clip cannot reproduce the shrink either.
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
 | GET/POST/PATCH/DELETE | `/api/canais`, `/api/canais/{id}` | Os canais (Fase 7): nome, nicho, avatar, contas ligadas, aprovacao |
 | PUT | `/api/jobs/{id}/canal` | Poe (ou tira) um projeto num canal |
+| GET/PUT | `/api/canais/{id}/receita` | A receita do canal (7.5): de onde vem o video e como editar, com o estoque e a agenda |
+| POST | `/api/canais/{id}/receita/buscar`, `/api/canais/{id}/receita/rodar` | "Buscar agora" e "verificar agora" |
+| GET/POST | `/api/canais/{id}/candidatos`, `/api/candidatos/{id}` | A caixa de entrada de fontes: listar, escolher o proximo, tirar da fila |
+| GET/POST | `/api/aprovacoes`, `/api/aprovacoes/decidir` | A caixa de aprovacao: aprovar (vai para a agenda do canal) ou recusar |
+| GET | `/api/automacao` | O que cada receita esta fazendo, para o Inicio |
+| PUT | `/api/fuso` | O fuso de quem usa, mandado pelo painel (as janelas valem nele) |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -2461,8 +2469,8 @@ do codigo que ela mudou.
   Ja o `channel_id` do `/api/process` (Form e JSON) so recusa id malformado ou
   canal que o banco diz nao existir -- banco fora do ar nao impede o video.
 - **`requires_approval` e obrigatorio ao criar**: decisao do autor, e nenhum
-  padrao decide por ele. O campo so e guardado por enquanto; quem o usa e a
-  automacao (7.5).
+  padrao decide por ele. Quem o usa e a automacao (7.5): com ele, o corte da
+  receita espera na caixa de aprovacao antes de ir para a agenda.
 - **Nome unico sem diferenca de maiuscula**, conferido no codigo; a unicidade
   do schema e exata e fica de rede para dois pedidos ao mesmo tempo.
 - **Uma conta pertence a um canal so**: `contas` no PATCH e a lista inteira, e
@@ -2744,12 +2752,120 @@ do codigo que ela mudou.
   marcas (tres vermelhos) se confundem entre si e com o vermelho de erro. Todo
   grafico tem dica com teclado e "ver como tabela"; dia sem base fica sem
   coluna (um buraco honesto, e nao um zero).
-- **Achado da 7.4, NAO consertado**: o agendador calcula as janelas no fuso do
-  PROCESSO (`datetime.now().astimezone()`), e no Docker o container roda em
-  UTC -- 11h/15h/19h viram 8h/12h/16h em Brasilia. O contorno documentado e
-  `SCHEDULE_WINDOWS=14,18,22`; o conserto (o fuso de quem usa guardado no
-  motor) fica para a 7.5, onde as janelas passam a ser do canal. No ajudante
-  vale a hora do Windows.
+- **Achado da 7.4, consertado na 7.5**: o agendador calculava as janelas no
+  fuso do PROCESSO, e no Docker o container roda em UTC -- 11h/15h/19h viravam
+  8h/12h/16h em Brasilia. Agora as janelas valem no fuso de quem usa, que o
+  painel manda ao motor (`fuso.py`, na secao seguinte), e o contorno
+  `SCHEDULE_WINDOWS=14,18,22` deixou de ser necessario.
+
+**A automacao por canal** (`receitas.py`, `busca_cc.py`, `licencas.py`,
+`automacao.py`, `fuso.py`, e o laco em `app.py`; etapa 7.5):
+
+- **O "pronto quando" e o desenho inteiro**: o canal, com o PC ligado e
+  ninguem mexendo, acha um video com licenca, corta, espera a aprovacao (ou
+  nao) e posta nos horarios dele, com o credito na descricao. Cinco tabelas
+  novas (`channel_settings`, `recipes`, `candidates`, `source_licenses`,
+  `clip_approvals`; migracao `f3a9c5e7b214`), pela regra da Fase 7: nenhuma
+  coluna em tabela que ja existe.
+- **Receita e ajustes do canal sao DOCUMENTOS** (`recipes.spec_json`,
+  `channel_settings.settings_json`), validados por `receitas.py` (stdlib pura),
+  como o template da secao 5: campo novo nao vira migracao, campo desconhecido
+  passa. **A agenda e o "feito para criancas" sao do CANAL, nao da receita**:
+  valem para tudo o que o canal posta, pela receita ou a mao, e a 7.7 tera uma
+  segunda receita no mesmo canal (`kind` = `ia`, ja no CHECK). Se o canal espera
+  aprovacao continua sendo `channels.requires_approval` (7.1).
+- **O laco chama o motor pela porta do painel**: o job da receita nasce no
+  `/api/process`, dentro do processo, por `ASGITransport` (o desenho do MCP),
+  com um token de 5 min do dono quando a auth esta ligada. Probe de qualidade,
+  tenant, canal e resume valem igual; abaixo do piso de qualidade
+  (`QUALITY_GATE_MIN_HEIGHT`, 720p) o video e recusado -- o
+  `needs_confirmation` vira motivo, nao pergunta. Nao trocar por chamada
+  direta ao `run_job`: seria uma segunda porta, e ela divergiria da tela.
+- **Um video de cada vez por receita, e o ESTOQUE manda, nao o relogio**: com
+  posts agendados + cortes esperando aprovacao para `DIAS_DE_ESTOQUE` (2) dias
+  do canal, a receita nao corta -- sem isso o canal com aprovacao empilharia
+  coisa esperando a pessoa. `ritmo.videos_por_dia` conta no fuso de quem usa.
+  Uma volta por vez (`_TRAVA_DA_AUTOMACAO`, que o "verificar agora" tambem
+  pega), a cada 5 min (`AUTOMACAO_TICK_SECONDS`); a busca, no maximo de 6 em 6
+  horas quando a caixa esvaziou (`AUTOMACAO_BUSCA_HORAS`).
+- **A licenca e conferida NO VIDEO, nunca so no filtro da busca**
+  (`busca_cc.py`). Pela API (`search.list` com `videoLicense=creativeCommon` e
+  `videos.list` com `status.license`) quando ha conta do YouTube conectada para
+  MEDIR e busca na cota do dia (100, cota propria: `quota.cabe_busca`,
+  debitada ANTES da chamada); senao pelo yt-dlp, num SUBPROCESSO como o
+  `quality_probe.py`, com o filtro Creative Commons da pagina de resultados e
+  a linha "Creative Commons Attribution license (reuse allowed)" da pagina de
+  cada video. `desconhecida` nunca vira `cc-by`. Live, restricao de idade e
+  duracao fora da pedida ficam de fora com o motivo em frase; pela API, o
+  canal infantil busca com `safeSearch=strict`.
+- **Links, live da Twitch e pasta pedem a confirmacao de direitos de quem
+  usa** (`receitas.pronta`); a busca nao, porque so traz licenca conferida.
+  **Trocar a fonte apaga a confirmacao** (`receitas.mesma_fonte`): quem
+  confirmou uma lista de links nao confirmou a proxima. Link de playlist ou de
+  canal vira os videos mais recentes dele; a live vira um BLOCO quando o canal
+  esta no ar (a URL do canal cai no `TwitchLiveAdapter` do bloco 1.5).
+- **A pasta do canal e `DATA_DIR/entrada/<nome>`**, com o nome no ESTADO da
+  receita (renomear o canal nao a move) e validado antes de virar caminho. A
+  chave do arquivo e pelo CONTEUDO (tamanho e 1 MB de cada ponta), nao pelo
+  nome; arquivo que mudou nos ultimos 120 s pode estar sendo copiado e espera.
+  O original fica: o job recebe um hard link em `uploads/`.
+- **Nao repetir, em duas camadas.** A fonte: `automacao.chaves_usadas` junta o
+  que qualquer receita cortou, o `source_licenses.key` e as URLs de `sources`
+  (o que alguem cortou a mao tambem conta), e a candidata ja usada vira
+  `repetido`. O corte: `publish_queue._repetido_na_plataforma` recusa o mesmo
+  corte em duas contas da MESMA plataforma, inclusive de canais diferentes; o
+  galho em plataformas diferentes e o desenho. Falhou/cancelado nao conta.
+- **O credito nunca e o que se corta** (`publishers.base.com_credito`): vai no
+  fim da descricao do YouTube, da legenda do TikTok e da legenda pronta para
+  colar, e quem encolhe para caber e o resto do texto. No idioma do canal (pt,
+  en, es). A versao da CC BY (3.0 ate jul-2025, 4.0 depois) sai da data de
+  envio: nem a pagina nem a API a dizem.
+- **A origem mora na PASTA do projeto** (`.origem.json`, ao lado do `.canal`) e
+  em `source_licenses`: e da pasta que o credito sai na hora de publicar,
+  porque a lista de projetos e o pacote vem do disco e o banco falha aberto.
+  **Os fatos da pagina vencem o pedido** (`licencas.juntar`): um pedido que
+  diga "Creative Commons" nao passa por cima de uma pagina que diz licenca
+  padrao. Video colado a mao tambem ganha origem (o probe de qualidade le a
+  pagina); upload sem nada declarado nao ganha origem inventada.
+- **O fim do job** (`app._automacao_depois_do_job`, chamado no
+  `run_job_wrapper` e reconciliado pelo laco se o motor caiu no meio): os
+  cortes de maior nota, ate `cortes_por_video`, vao para a caixa de aprovacao
+  ou direto para a agenda do canal, um galho por conta. Idempotente.
+  **Aprovado que nao entrou em conta nenhuma volta a esperar**
+  (`voltar_aprovacao`), com o motivo: "aprovei e sumiu" seria o pior desfecho.
+- **"Feito para criancas"** (`receitas.feito_para_criancas`): a escolha
+  explicita do canal vence; sem ela, decide o nome do nicho (infantil, kids,
+  desenho...). Pela API o YouTube recebe `selfDeclaredMadeForKids`; no pacote
+  do dia, o LEIA-ME manda marcar. **Marca se o canal do PROJETO ou o da CONTA
+  de destino for infantil** (`app._para_criancas(job, conta)`): um projeto sem
+  canal publicado na conta do canal infantil e envio do canal infantil, e
+  marcar a mais so desliga os comentarios daquele video -- marcar a menos e o
+  erro que a lei pune. **Banco fora do ar na hora de publicar faz o envio
+  falhar, e nao sair desmarcado** (`_para_criancas` e `canais.canal_da_conta`
+  levantam).
+- **O fuso de quem usa** (`fuso.py`): o painel manda o do navegador
+  (`PUT /api/fuso`, o nome e a diferenca em minutos) a cada vez que abre, e o
+  motor guarda por tenant em `DATA_DIR/fuso.json`. As janelas de cada conta
+  (`scheduler.AgendaDaConta`), a trava do post atrasado, o "videos por dia" e
+  o pacote do dia usam esse fuso. A diferenca em minutos vai junto porque o
+  `zoneinfo` precisa da base de fusos, que o Python do Windows nao traz; sem
+  nada guardado, vale o do processo, que era o comportamento de antes.
+- **O template da receita chega ao pipeline por arquivo**
+  (`caption_template.json` na pasta do job, `CAPTION_TEMPLATE_FILE`): a legenda
+  automatica do `main.py` ja sai no estilo escolhido, sem segunda passada.
+- **O CRUD levanta, o laco nao**: salvar receita da 400/503 com o motivo; o
+  que o laco faz sozinho vai para `recipes.state_json` (a situacao, a ultima
+  busca, o erro), que a tela mostra.
+- No painel: a aba **Automacao** do canal (`components/automacao/`: a
+  situacao, o editor da receita, a caixa de entrada de fontes e a de
+  aprovacao com a previa do corte), a **agenda do canal** nos Ajustes
+  (`AgendaDoCanal.jsx`), o **calendario** da semana na Agenda
+  (`CalendarioDosCanais.jsx`, no relogio de quem olha) e o resumo no
+  **Inicio**. **O editor nasce da receita gravada e so remonta quando ela e
+  gravada** (`key={receita.updated_at}`): o recarregar de 30 s nao pode apagar
+  o que a pessoa digita. O texto do "agendar" descreve a agenda do CANAL do
+  destino (`lib/publicacoes.canalDoDestino`). Motor anterior a 7.5 responde
+  404 nas rotas novas, e a aba diz para atualizar.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

@@ -63,6 +63,24 @@ export function corpoDoDestino(jobId, destino) {
   return tipo === 'canal' ? { job_id: jobId, channel_id: id } : { job_id: jobId, account_id: id };
 }
 
+// O canal cuja agenda vale para um destino (7.5): o próprio canal, ou o canal
+// a que a conta está ligada. Conta solta não tem canal, e ali valem as janelas
+// da instalação -- é o que o motor faz ao agendar.
+export function canalDoDestino(destino, contas) {
+  const [tipo, id] = (destino || '').split(':');
+  if (!id) return null;
+  if (tipo === 'canal') return id;
+  if (tipo !== 'conta') return null;
+  return (contas || []).find((c) => c.id === id)?.channel_id || null;
+}
+
+// A agenda que o texto do "agendar" descreve. Com o canal, a dele (as janelas
+// e o por-dia que ele escolheu); um motor de antes da 7.5 ignora o `canal` e
+// responde a da instalação, que era a única que existia.
+export function caminhoDaAgenda(canalId) {
+  return canalId ? `/api/agenda?${new URLSearchParams({ canal: canalId })}` : '/api/agenda';
+}
+
 // As plataformas que o pacote do dia oferece: as das contas, na ordem de
 // sempre -- ou as três, quando ainda não há conta (o pacote serve até sem
 // conta nenhuma).

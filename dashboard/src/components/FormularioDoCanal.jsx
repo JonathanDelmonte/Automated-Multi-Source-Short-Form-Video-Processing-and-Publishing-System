@@ -368,7 +368,8 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
           {aprovacao === null && !editando
             ? 'Escolha uma das duas: quem decide é você, e dá para mudar depois nos ajustes do canal. '
             : ''}
-          A automação chega na etapa 7.5; a escolha fica guardada desde já.
+          Vale para o que a automação do canal corta: com “eu reviso antes”, cada corte espera na caixa de
+          aprovação, na aba Automação. O que você agenda à mão já é a sua aprovação.
         </p>
       </Secao>
 

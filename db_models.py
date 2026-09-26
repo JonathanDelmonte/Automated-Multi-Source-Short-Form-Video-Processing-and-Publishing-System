@@ -623,10 +623,248 @@ class ChannelJob(Base, TenantScoped):
     )
 
 
+# --------------------------------------------------------------------------- #
+# 13-17. automacao por canal (Fase 7, etapa 7.5)
+# --------------------------------------------------------------------------- #
+#
+# A mesma regra das tabelas dos canais: tudo o que e novo entra como tabela
+# nova, porque o `create_all` do boot cria tabela que falta e nunca acrescenta
+# coluna. E, dentro das tabelas novas, o que tende a crescer (a receita, os
+# ajustes do canal) mora num documento JSON validado por um modulo puro
+# (`receitas.py`) -- o mesmo desenho do `templates.spec_json`: campo novo de
+# receita nao vira migracao.
+
+class ChannelSettings(Base, TenantScoped):
+    """Os ajustes de um canal que nao cabiam na linha de `channels`: a agenda
+    (as janelas do dia e quantos posts por dia) e o "feito para criancas". Um
+    documento por canal, validado por `receitas.normalizar_ajustes`.
+
+    **As janelas valem no fuso de QUEM USA, e o fuso nao mora aqui**: ele e da
+    pessoa, nao do canal, e fica por tenant em `DATA_DIR/fuso.json`
+    (`fuso.py`), mandado pelo painel. O motor pode rodar em UTC (o container
+    do Docker), e "postar as 11h" e uma frase sobre o relogio de quem usa.
+    """
+    __tablename__ = "channel_settings"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_channel_settings_tenant"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_channel_settings_channel"),
+        UniqueConstraint("tenant_id", "channel_id", name="uq_channel_settings_tenant_channel"),
+        Index("ix_channel_settings_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+#: Os tipos de receita. A 7.5 so aceita `cortes` (a validacao mora em
+#: `receitas.py`); `serie` (7.6) e `ia` (7.7) ja entram no CHECK para que as
+#: proximas etapas nao precisem refazer a tabela no boot.
+RECIPE_KINDS = ("cortes", "serie", "ia")
+
+
+class Recipe(Base, TenantScoped):
+    """A receita de um canal: de onde vem o video, como editar, e se esta
+    ligada. Quando postar e a agenda do canal (`channel_settings`), e se espera
+    aprovacao e o `channels.requires_approval` -- os dois valem para todo
+    conteudo do canal, feito pela receita ou a mao.
+
+    `spec_json` e o documento (`receitas.normalizar`); `state_json` e o que o
+    laco da automacao anota para a tela (ultima busca, ultimo erro).
+    """
+    __tablename__ = "recipes"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="cortes")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    spec_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    state_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_recipes_tenant"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_recipes_channel"),
+        # Uma receita de cada tipo por canal: a de cortes e, na 7.7, a de IA.
+        UniqueConstraint("tenant_id", "channel_id", "kind", name="uq_recipes_tenant_channel_kind"),
+        CheckConstraint(
+            "kind in (%s)" % ",".join(f"'{k}'" for k in RECIPE_KINDS),
+            name="ck_recipes_kind"),
+        Index("ix_recipes_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+#: As licencas que o programa sabe dizer. `cc-by` e a Creative Commons do
+#: YouTube; `youtube`, a licenca padrao (sem reuso); `dominio-publico` entra
+#: para as series da 7.6; `propria` e `autorizada` sao declaracao de quem usa
+#: (o video e dela, ou ela tem autorizacao); `desconhecida`, quando ninguem
+#: disse.
+LICENSES = ("cc-by", "dominio-publico", "youtube", "propria", "autorizada", "desconhecida")
+
+#: O caminho de um video que a receita achou. `escolhido` e o que a pessoa
+#: mandou cortar primeiro; `repetido`, o que outro canal ja usou.
+CANDIDATE_STATUSES = ("novo", "escolhido", "recusado", "processando", "processado",
+                      "falhou", "repetido")
+
+
+class Candidate(Base, TenantScoped):
+    """Um video que a receita achou, com a licenca, esperando a vez -- a
+    caixa de entrada de fontes.
+
+    `key` e a identidade do video entre fontes (`youtube:<id>`,
+    `twitch-live:<canal>:<bloco>`, `pasta:<hash>`), e e por ela que "nao
+    repetir" funciona: o mesmo video nao vira candidato duas vezes na mesma
+    receita, e o que outro canal ja cortou e marcado `repetido`.
+    """
+    __tablename__ = "candidates"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    recipe_id: Mapped[str] = mapped_column(ID, nullable=False)
+    key: Mapped[str] = mapped_column(String(255), nullable=False)
+    # O que vai para o `/api/process`: a URL, ou -- na pasta -- o nome do
+    # arquivo DENTRO da pasta do canal, nunca um caminho que venha de fora.
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    author: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    author_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    thumbnail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    license: Mapped[str] = mapped_column(String(16), nullable=False, default="desconhecida")
+    # O texto da plataforma, como veio ("Creative Commons Attribution license
+    # (reuse allowed)"): e a prova, se um dia alguem reclamar.
+    license_text: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="novo")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # O projeto que o cortou. Sem FK: o job pode nao ter linha no banco (o
+    # pipeline falha aberto), e a candidata continua dizendo qual foi.
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    found_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_candidates_tenant"),
+        ForeignKeyConstraint(["tenant_id", "recipe_id"],
+                             ["recipes.tenant_id", "recipes.id"],
+                             ondelete="CASCADE", name="fk_candidates_recipe"),
+        UniqueConstraint("tenant_id", "recipe_id", "key", name="uq_candidates_tenant_recipe_key"),
+        CheckConstraint(
+            "license in (%s)" % ",".join(f"'{l}'" for l in LICENSES),
+            name="ck_candidates_license"),
+        CheckConstraint(
+            "status in (%s)" % ",".join(f"'{s}'" for s in CANDIDATE_STATUSES),
+            name="ck_candidates_status"),
+        CheckConstraint("duration_s is null or duration_s >= 0",
+                        name="ck_candidates_duration_nao_negativa"),
+        CheckConstraint("views is null or views >= 0", name="ck_candidates_views_nao_negativa"),
+        Index("ix_candidates_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_candidates_tenant_key", "tenant_id", "key"),
+        Index("ix_candidates_tenant_recipe_status", "tenant_id", "recipe_id", "status"),
+    )
+
+
+class SourceLicense(Base, TenantScoped):
+    """A origem e a licenca de uma fonte processada: quem fez, com que licenca,
+    onde esta. Responde reclamacao e strike, e e dela que sai o credito que a
+    licenca Creative Commons exige na descricao.
+
+    Uma linha por fonte. **A pasta do projeto tem a mesma informacao**
+    (`.origem.json`), e e dali que o credito sai na hora de publicar -- a lista
+    de projetos e o pacote do dia vem do disco, e o banco falha aberto. Esta
+    tabela serve as consultas (a origem de tudo o que um canal postou) e o "nao
+    repetir" (`key`).
+    """
+    __tablename__ = "source_licenses"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    source_id: Mapped[str] = mapped_column(ID, nullable=False)
+    key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    license: Mapped[str] = mapped_column(String(16), nullable=False, default="desconhecida")
+    license_text: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    author: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    author_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Quem disse a licenca: a `plataforma` (o YouTube marcou Creative Commons)
+    # ou a `pessoa` (o video e dela, ou ela tem autorizacao).
+    declared_by: Mapped[str] = mapped_column(String(16), nullable=False, default="plataforma")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_source_licenses_tenant"),
+        ForeignKeyConstraint(["tenant_id", "source_id"], ["sources.tenant_id", "sources.id"],
+                             ondelete="CASCADE", name="fk_source_licenses_source"),
+        UniqueConstraint("tenant_id", "source_id", name="uq_source_licenses_tenant_source"),
+        CheckConstraint(
+            "license in (%s)" % ",".join(f"'{l}'" for l in LICENSES),
+            name="ck_source_licenses_license"),
+        CheckConstraint("declared_by in ('plataforma','pessoa')",
+                        name="ck_source_licenses_declared_by"),
+        Index("ix_source_licenses_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_source_licenses_tenant_key", "tenant_id", "key"),
+    )
+
+
+APPROVAL_STATUSES = ("esperando", "aprovado", "recusado")
+
+
+class ClipApproval(Base, TenantScoped):
+    """Um corte da automacao esperando a pessoa -- a caixa de aprovacao, nos
+    canais que pedem aprovacao antes de postar.
+
+    Aprovado, o corte ganha os galhos nas janelas do canal, como qualquer
+    agendamento; recusado, fica no projeto e nao vai ao ar.
+    """
+    __tablename__ = "clip_approvals"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    clip_id: Mapped[str] = mapped_column(ID, nullable=False)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="esperando")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_clip_approvals_tenant"),
+        ForeignKeyConstraint(["tenant_id", "clip_id"], ["clips.tenant_id", "clips.id"],
+                             ondelete="CASCADE", name="fk_clip_approvals_clip"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_clip_approvals_channel"),
+        UniqueConstraint("tenant_id", "clip_id", name="uq_clip_approvals_tenant_clip"),
+        CheckConstraint(
+            "status in (%s)" % ",".join(f"'{s}'" for s in APPROVAL_STATUSES),
+            name="ck_clip_approvals_status"),
+        Index("ix_clip_approvals_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_clip_approvals_tenant_channel_status", "tenant_id", "channel_id", "status"),
+    )
+
+
 #: Toda tabela do schema menos `tenants`, que E o tenant. O teste de estrutura
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
     "users", "accounts", "templates", "sources", "jobs", "clips",
     "publications", "publication_posts", "metrics", "metric_details",
     "channels", "channel_accounts", "channel_jobs",
+    "channel_settings", "recipes", "candidates", "source_licenses", "clip_approvals",
 )

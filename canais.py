@@ -23,6 +23,7 @@ na tela, e "o banco nao respondeu" e a resposta certa -- o painel mostra o 503.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func
@@ -31,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 import db
 import db_models
 import publish_queue
+import receitas
 
 
 class CanalError(ValueError):
@@ -162,6 +164,14 @@ def validar(dados: dict, criando: bool) -> dict:
                 raise CanalError(str(e))
             limpas.append({"platform": platform, "handle": handle.strip()})
         saida["novas_contas"] = limpas
+    if "ajustes" in dados:
+        # So confere a forma aqui; o documento inteiro (com o que ja estava
+        # gravado por baixo) e montado na hora de gravar.
+        try:
+            receitas.normalizar_ajustes(dados["ajustes"])
+        except receitas.ReceitaInvalida as e:
+            raise CanalError(str(e))
+        saida["ajustes"] = dados["ajustes"]
     return saida
 
 
@@ -174,7 +184,22 @@ def _conta_curta(conta) -> dict:
             "driver_pref": conta.driver_pref}
 
 
-def _json(canal, contas: list) -> dict:
+def _ajustes_json(canal, linha) -> dict:
+    """Os ajustes como a tela os le: o que o canal escolheu, o que vale de
+    fato (com os padroes da instalacao onde ele nao escolheu) e o "feito para
+    criancas" com a origem do valor."""
+    import scheduler
+
+    ajustes = receitas.ajustes_gravados(getattr(linha, "settings_json", None))
+    return {
+        **ajustes,
+        "agenda_efetiva": receitas.agenda_efetiva(
+            ajustes, scheduler.janelas(), scheduler.por_dia()),
+        "criancas": receitas.feito_para_criancas(ajustes, canal.niche),
+    }
+
+
+def _json(canal, contas: list, ajustes=None) -> dict:
     return {
         "id": canal.id,
         "name": canal.name,
@@ -189,7 +214,14 @@ def _json(canal, contas: list) -> dict:
                          key=lambda c: (publish_queue.PLATAFORMAS.index(c["platform"])
                                         if c["platform"] in publish_queue.PLATAFORMAS else 99,
                                         c["handle"].lower())),
+        # A agenda do canal e o "feito para criancas" (7.5). Sempre presente:
+        # um canal que nunca mexeu nos ajustes tem os padroes.
+        "ajustes": _ajustes_json(canal, ajustes),
     }
+
+
+async def _ajustes_por_canal(t) -> dict:
+    return {a.channel_id: a for a in await t.all(db_models.ChannelSettings)}
 
 
 async def _contas_por_canal(t) -> dict:
@@ -208,8 +240,9 @@ async def listar() -> list:
     async with db.tenant() as t:
         canais = await t.all(db_models.Channel)
         por_canal = await _contas_por_canal(t)
+        ajustes = await _ajustes_por_canal(t)
     canais = sorted(canais, key=lambda c: c.name.lower())
-    return [_json(c, por_canal.get(c.id, [])) for c in canais]
+    return [_json(c, por_canal.get(c.id, []), ajustes.get(c.id)) for c in canais]
 
 
 async def obter(canal_id: str) -> Optional[dict]:
@@ -220,7 +253,21 @@ async def obter(canal_id: str) -> Optional[dict]:
         if canal is None:
             return None
         por_canal = await _contas_por_canal(t)
-    return _json(canal, por_canal.get(canal.id, []))
+        ajustes = await _ajustes_por_canal(t)
+    return _json(canal, por_canal.get(canal.id, []), ajustes.get(canal.id))
+
+
+async def idioma(canal_id: Optional[str]) -> Optional[str]:
+    """O idioma do canal (o do credito da licenca), ou None. Falha aberto."""
+    if not id_valido(canal_id):
+        return None
+    try:
+        async with db.tenant() as t:
+            canal = await t.get(db_models.Channel, canal_id)
+            return canal.language if canal is not None else None
+    except Exception as e:
+        print(f"⚠️  Banco (idioma do canal {canal_id}): {e}")
+        return None
 
 
 async def existe(canal_id: str) -> Optional[bool]:
@@ -293,6 +340,26 @@ async def _ligar_contas(t, canal_id: str, campos: dict) -> None:
             t.add(db_models.ChannelAccount(channel_id=canal_id, account_id=conta_id))
 
 
+async def _gravar_ajustes(t, canal_id: str, dados: Optional[dict]):
+    """Os ajustes do canal com `dados` por cima do que ja estava. Devolve a
+    linha (nova ou a de sempre)."""
+    linha = (await t.all(db_models.ChannelSettings,
+                         db_models.ChannelSettings.channel_id == canal_id) or [None])[0]
+    base = receitas.ajustes_gravados(linha.settings_json) if linha is not None else None
+    try:
+        documento = receitas.normalizar_ajustes(dados, base=base)
+    except receitas.ReceitaInvalida as e:
+        raise CanalError(str(e))
+    if linha is None:
+        linha = t.add(db_models.ChannelSettings(channel_id=canal_id, settings_json=documento))
+    else:
+        # Atribuir um dict NOVO: o SQLAlchemy nao percebe mudanca dentro do
+        # mesmo objeto de uma coluna JSON.
+        linha.settings_json = documento
+        linha.updated_at = datetime.now(timezone.utc)
+    return linha
+
+
 def _conflito(e: IntegrityError) -> CanalDuplicado:
     """A unicidade do schema pegou o que a conferencia de antes nao viu: dois
     pedidos ao mesmo tempo. O SQLite nomeia as colunas; o Postgres, a regra."""
@@ -313,12 +380,15 @@ async def criar(dados: dict) -> dict:
                 **{k: campos[k] for k in COLUNAS if k in campos}))
             await t.flush()
             await _ligar_contas(t, canal.id, campos)
+            ajustes = None
+            if "ajustes" in campos:
+                ajustes = await _gravar_ajustes(t, canal.id, campos["ajustes"])
             await t.commit()
         except IntegrityError as e:
             await t.session.rollback()
             raise _conflito(e)
         por_canal = await _contas_por_canal(t)
-        return _json(canal, por_canal.get(canal.id, []))
+        return _json(canal, por_canal.get(canal.id, []), ajustes)
 
 
 async def atualizar(canal_id: str, dados: dict) -> Optional[dict]:
@@ -337,12 +407,15 @@ async def atualizar(canal_id: str, dados: dict) -> Optional[dict]:
                 if coluna in campos:
                     setattr(canal, coluna, campos[coluna])
             await _ligar_contas(t, canal.id, campos)
+            if "ajustes" in campos:
+                await _gravar_ajustes(t, canal.id, campos["ajustes"])
             await t.commit()
         except IntegrityError as e:
             await t.session.rollback()
             raise _conflito(e)
         por_canal = await _contas_por_canal(t)
-        return _json(canal, por_canal.get(canal.id, []))
+        ajustes = await _ajustes_por_canal(t)
+        return _json(canal, por_canal.get(canal.id, []), ajustes.get(canal.id))
 
 
 async def apagar(canal_id: str) -> Optional[dict]:
@@ -394,3 +467,63 @@ async def ligar_job(job_id: str, canal_id: Optional[str]) -> bool:
         print(f"⚠️  Banco (ligar projeto {job_id} ao canal {canal_id}): {e}")
         return False
 
+
+
+# --------------------------------------------------------------------------- #
+# A agenda de cada conta (7.5)
+# --------------------------------------------------------------------------- #
+
+async def canal_da_conta(account_id: Optional[str]) -> Optional[str]:
+    """O canal a que a conta esta ligada, ou None (conta solta).
+
+    **Levanta se o banco nao responde**, ao contrario de `idioma`: quem chama
+    e o "feito para criancas" do envio, e na duvida o envio nao sai marcado
+    errado.
+    """
+    if not id_valido(account_id):
+        return None
+    async with db.tenant() as t:
+        ligacoes = await t.all(db_models.ChannelAccount,
+                               db_models.ChannelAccount.account_id == account_id)
+    return ligacoes[0].channel_id if ligacoes else None
+
+
+async def agendas_das_contas(conta_ids, tenant_id: Optional[str] = None) -> dict:
+    """`{conta: scheduler.AgendaDaConta}`: as janelas e o teto do canal de cada
+    conta, e o fuso de quem usa.
+
+    **Sessao crua**, como `publish_queue.ocupados_das_contas`: o laco do
+    agendador e do servidor e atravessa os tenants, e o fuso vem do tenant de
+    cada conta. Conta sem canal (ou canal sem ajustes) fica com as janelas da
+    instalacao -- mas no fuso de quem usa, que e o conserto desta etapa.
+    """
+    import fuso
+    import scheduler
+    from sqlalchemy import select as _select
+
+    ids = [c for c in dict.fromkeys(conta_ids or ()) if c]
+    if not ids:
+        return {}
+    A, L, S = db_models.Account, db_models.ChannelAccount, db_models.ChannelSettings
+    consulta = (_select(A.id, A.tenant_id, S.settings_json)
+                .select_from(A)
+                .join(L, (L.account_id == A.id) & (L.tenant_id == A.tenant_id), isouter=True)
+                .join(S, (S.channel_id == L.channel_id) & (S.tenant_id == A.tenant_id),
+                      isouter=True)
+                .where(A.id.in_(ids)))
+    if tenant_id:
+        consulta = consulta.where(A.tenant_id == tenant_id)
+    async with db.session() as s:
+        linhas = (await s.execute(consulta)).all()
+    fusos: dict = {}
+    agendas: dict = {}
+    for conta_id, dono, documento in linhas:
+        if dono not in fusos:
+            fusos[dono] = fuso.tz_do_tenant(dono)
+        agenda = receitas.ajustes_gravados(documento).get("agenda") or {}
+        janelas = agenda.get("janelas")
+        agendas[conta_id] = scheduler.AgendaDaConta(
+            horas=tuple(janelas) if janelas else None,
+            teto=agenda.get("por_dia") or None,
+            fuso=fusos[dono])
+    return agendas

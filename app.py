@@ -13,6 +13,10 @@ import links_de_post
 import canais
 import auth
 import scheduler
+import fuso as fuso_de_quem_usa
+import licencas
+import receitas
+import automacao
 import metrics_collector
 import metricas_tiktok
 import metricas_instagram
@@ -1449,6 +1453,9 @@ async def run_job_wrapper(job_id):
         # arquivo em R2 e do webhook porque e o unico passo daqui que a Fase 3
         # precisa que exista: `publications` tem FK composta para `clips`.
         await _fechar_job_no_banco(job_id)
+        # O corte que uma receita mandou fazer (7.5): os cortes vao para a
+        # caixa de aprovacao do canal, ou direto para a agenda dele.
+        await _automacao_depois_do_job(job_id)
         # Settle the minute reservation (managed jobs only): commit on success,
         # release otherwise so the minutes go back to the user.
         await _settle_reservation(job_id)
@@ -1945,6 +1952,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_resume_scan())
     asyncio.create_task(_laco_do_agendador())
     asyncio.create_task(_laco_de_metricas())
+    asyncio.create_task(_laco_da_automacao())
     # O banco nasce no boot (Fase 2, bloco 2.3). O seed e idempotente e cria o
     # schema, o tenant fixo do self-host e o template padrao -- sem isto, a
     # primeira visita a aba de templates falharia com "no such table" numa
@@ -2880,6 +2888,8 @@ async def process_endpoint(
     captions: Optional[str] = Form(None),
     upload_id: Optional[str] = Form(None),
     channel_id: Optional[str] = Form(None),
+    origem: Optional[str] = Form(None),
+    template_id: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
     text_llm_ok = (llm_backend.active() or llm_cascade.has_text_provider()) and not BILLING_ENABLED
@@ -2919,6 +2929,8 @@ async def process_endpoint(
         captions = body.get("captions")
         upload_id = body.get("upload_id")
         channel_id = body.get("channel_id")
+        origem = body.get("origem")
+        template_id = body.get("template_id")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -3007,8 +3019,22 @@ async def process_endpoint(
     # 20 min on a 360p-only source. Fail-open: any probe error starts normally.
     # The probe also runs under force_low_quality so the short-source check
     # can't be bypassed through the quality-gate confirm.
+    # A origem pedida (7.5): quem mandou pode dizer de onde o video veio e com
+    # que licenca -- a automacao manda o que a busca conferiu; um arquivo da
+    # pasta do canal vem "autorizada" pela confirmacao de quem usa. A pagina
+    # do video, quando o probe a abre, vence nos fatos (`licencas.juntar`).
+    if isinstance(origem, str) and origem.strip():
+        try:
+            origem = json.loads(origem)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="origem tem de ser um objeto JSON")
+    if origem is not None and not isinstance(origem, dict):
+        raise HTTPException(status_code=400, detail="origem tem de ser um objeto JSON")
+    origem_da_pagina = None
+
     if url and (QUALITY_GATE_MIN_HEIGHT > 0 or MIN_SOURCE_SECONDS > 0):
         probe = await _probe_youtube_quality(url)
+        origem_da_pagina = probe.get("origem") if isinstance(probe.get("origem"), dict) else None
         # Hard reject, no confirm-and-retry: a too-short source fails the same
         # way on every retry, so letting the user force it just burns the job.
         source_duration = int(probe.get("duration") or 0)
@@ -3126,6 +3152,19 @@ async def process_endpoint(
     if captions is not None and str(captions).lower() in ("0", "false", "no"):
         env["AUTO_CAPTIONS"] = "0"
         print(f"[captions] job={job_id} auto-captions off")
+
+    # O template de legenda (etapa 7.5): a receita do canal escolhe o estilo, e
+    # a legenda que o pipeline ja queima sai nele. O documento vai para a pasta
+    # do job -- o `main.py` e outro processo, e nao tem o banco.
+    if template_id:
+        spec = await _spec_do_template(str(template_id))
+        if spec is None:
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="Template nao encontrado")
+        caminho_do_template = os.path.join(job_output_dir, template_doc.ARQUIVO_DO_JOB)
+        with open(caminho_do_template, "w", encoding="utf-8") as f:
+            json.dump(spec, f, ensure_ascii=False)
+        env[template_doc.VARIAVEL_DO_JOB] = caminho_do_template
 
     input_path = None
     if url:
@@ -3255,6 +3294,20 @@ async def process_endpoint(
         storage_key=None if url else input_path)
     if source_id and await job_registry.registrar_job(job_id, source_id) and channel_id:
         await canais.ligar_job(job_id, channel_id)
+
+    # A origem e a licenca da fonte (7.5): na pasta (e dali que o credito sai
+    # na hora de publicar) e no banco (as consultas e o "nao repetir"). So
+    # quando ha o que dizer: um upload sem nada declarado nao ganha origem
+    # inventada.
+    origem_do_job = licencas.juntar(
+        {**(origem_da_pagina or {}), "url": (origem_da_pagina or {}).get("url") or url}
+        if origem_da_pagina else None,
+        {**(origem or {}), "url": (origem or {}).get("url") or url,
+         "found_by": (origem or {}).get("found_by") or "manual"} if (origem or url) else None)
+    if origem_do_job:
+        origem_do_job["idioma"] = await canais.idioma(channel_id) or origem_do_job.get("idioma")
+        licencas.gravar_origem(job_output_dir, origem_do_job)
+        await job_registry.registrar_licenca(source_id, origem_do_job)
 
     # O tenant vai para a pasta do job pelo mesmo motivo do `.owner` logo
     # abaixo: o manifesto de resume some quando o job termina, e um projeto
@@ -3868,7 +3921,7 @@ async def download_all_clips(job_id: str, request: Request):
 # pipeline guarda nada -- quem acha o arquivo atual de cada corte e este
 # arquivo, que ja resolve as versoes derivadas em `_canonical_clip_file`.
 
-def _post_meta_do_clip(clip: dict) -> publishers.PostMeta:
+def _post_meta_do_clip(clip: dict, credito: str = "") -> publishers.PostMeta:
     """O `PostMeta` a partir de um item de `shorts` do metadata.
 
     **Nao ha `video_description_for_youtube` no prompt de deteccao** -- so
@@ -3876,6 +3929,9 @@ def _post_meta_do_clip(clip: dict) -> publishers.PostMeta:
     `PostMeta.description_for`, que pega a primeira que existir. E o
     comportamento certo: um texto escrito para vertical curto serve aos tres, e
     nao ter descricao nao pode impedir a publicacao.
+
+    `credito` e o que a licenca da fonte exige (7.5), lido da pasta do projeto
+    (`.origem.json`) uma vez por job.
     """
     return publishers.PostMeta(
         title=(clip.get('video_title_for_youtube_short')
@@ -3884,6 +3940,7 @@ def _post_meta_do_clip(clip: dict) -> publishers.PostMeta:
             'tiktok': clip.get('video_description_for_tiktok') or '',
             'instagram': clip.get('video_description_for_instagram') or '',
         },
+        credit=credito,
     )
 
 
@@ -3910,6 +3967,11 @@ def _itens_do_job(job_id: str):
 
     base_name = os.path.basename(metas[0]).replace('_metadata.json', '')
     mem_clips = ((jobs.get(job_id) or {}).get('result') or {}).get('clips') or []
+    # A origem e a licenca da fonte (7.5): o credito vai na descricao de todo
+    # corte do projeto, no idioma do canal. Da pasta, e nao do banco: o pacote
+    # do dia e a lista de projetos vem do disco.
+    origem = licencas.ler_origem(output_dir)
+    credito = licencas.credito(origem, (origem or {}).get("idioma"))
 
     itens = []
     for i, clip in enumerate(data.get('shorts') or []):
@@ -3934,7 +3996,7 @@ def _itens_do_job(job_id: str):
             title=(clip.get('video_title_for_youtube_short') or '').strip(),
             duration_s=duracao)
         itens.append(publishers.pacote.Item(clip=rendered,
-                                            meta=_post_meta_do_clip(clip)))
+                                            meta=_post_meta_do_clip(clip, credito)))
     return itens
 
 
@@ -3959,6 +4021,8 @@ async def _cortes_por_dia(request) -> dict:
         entradas = os.listdir(OUTPUT_DIR)
     except OSError:
         return por_dia
+    # O dia e o de quem usa (7.5): no Docker o processo esta em UTC.
+    fuso_do_tenant = fuso_de_quem_usa.tz_do_tenant(db.tenant_atual())
     for job_id in entradas:
         if not _JOB_ID_RE.match(job_id):
             continue
@@ -3971,7 +4035,8 @@ async def _cortes_por_dia(request) -> dict:
             continue
         for item in _itens_do_job(job_id):
             try:
-                dia = publishers.pacote.dia_de(os.path.getmtime(item.clip.path))
+                dia = publishers.pacote.dia_de(os.path.getmtime(item.clip.path),
+                                               fuso_do_tenant)
             except OSError:
                 continue
             por_dia.setdefault(dia, []).append(item)
@@ -3988,7 +4053,8 @@ async def listar_dias_com_cortes(request: Request):
     por_dia = await _cortes_por_dia(request)
     dias = [{"dia": dia, "cortes": len(itens)}
             for dia, itens in sorted(por_dia.items(), reverse=True)]
-    return {"dias": dias, "hoje": publishers.pacote.hoje()}
+    return {"dias": dias,
+            "hoje": publishers.pacote.hoje(fuso_de_quem_usa.tz_do_tenant(db.tenant_atual()))}
 
 
 @app.get("/api/publicacoes/pacote")
@@ -4018,6 +4084,23 @@ async def baixar_pacote_do_dia(request: Request,
             status_code=404,
             detail=f"Nenhum corte em {escolhido}. Dias com corte: "
                    f"{', '.join(sorted(por_dia, reverse=True)[:5])}")
+
+    if plataforma == "youtube":
+        # O LEIA-ME lembra o "feito para criancas" dos cortes de canal infantil
+        # (7.5): postando a mao, quem marca e a pessoa.
+        import dataclasses
+        criancas: dict = {}
+        marcados = []
+        for item in itens:
+            if item.clip.job_id not in criancas:
+                try:
+                    criancas[item.clip.job_id] = await _para_criancas(item.clip.job_id)
+                except Exception:
+                    criancas[item.clip.job_id] = False
+            marcados.append(dataclasses.replace(
+                item, meta=dataclasses.replace(item.meta,
+                                               made_for_kids=criancas[item.clip.job_id])))
+        itens = marcados
 
     nome = publishers.pacote.nome_do_pacote(escolhido, plataforma)
     destino = os.path.join(OUTPUT_DIR, f"pacote_{uuid.uuid4().hex[:8]}_{nome}")
@@ -5594,6 +5677,20 @@ def _erro_de_banco(e: Exception) -> HTTPException:
                "na pasta do projeto e tente de novo.")
 
 
+async def _spec_do_template(template_id: str) -> Optional[dict]:
+    """O documento de um template salvo, ou None (id torto, apagado ou banco
+    fora do ar -- quem chama decide o que isso significa)."""
+    if not canais.id_valido(template_id):
+        return None
+    try:
+        async with db.tenant() as t:
+            linha = await t.get(db_models.Template, template_id)
+            return template_doc.normalizar(linha.spec_json) if linha else None
+    except Exception as e:
+        print(f"⚠️  Template {template_id} ilegivel: {e}")
+        return None
+
+
 @app.get("/api/templates")
 async def listar_templates():
     """A ultima versao de cada template, mais os presets de legenda.
@@ -6095,8 +6192,16 @@ async def _publicar_uma_agendada(pendente: dict) -> None:
         return
 
     try:
+        meta = await _meta_para_publicar(corte.job_id, item.meta, conta.id)
+    except Exception as e:
+        # Sem saber se o canal e infantil, o envio nao sai: marcado errado
+        # seria pior (COPPA) que atrasado.
+        await publish_queue._fechar(pendente["id"], status="failed")
+        print(f"⏰ Agendada {pendente['id']}: nao consegui ler o canal ({e}).")
+        return
+    try:
         resultado = await publish_queue.publicar_reservada(
-            pendente["id"], corte, conta, item.clip.path, item.meta)
+            pendente["id"], corte, conta, item.clip.path, meta)
         print(f"⏰ Publicada agendada {pendente['id']} por {resultado['driver']}: "
               f"{resultado['detail']}")
     except publish_queue.FilaError as e:
@@ -6106,6 +6211,23 @@ async def _publicar_uma_agendada(pendente: dict) -> None:
 def _teto_do_agendador() -> int:
     """Quantos por dia e por conta: a agenda, sem passar da cota do YouTube."""
     return min(scheduler.por_dia(), publishers.quota.uploads_por_dia())
+
+
+async def _agendas_das_contas(conta_ids, tenant_id: Optional[str] = None) -> dict:
+    """`{conta: AgendaDaConta}` com o teto de cada uma sem passar da cota do
+    YouTube (7.5): as janelas e o por-dia do canal da conta, no fuso de quem
+    usa. Falha aberto: sem o banco, as contas ficam com as regras da
+    instalacao, como antes desta etapa."""
+    import dataclasses
+    try:
+        agendas = await canais.agendas_das_contas(conta_ids, tenant_id)
+    except Exception as e:
+        print(f"⚠️  Agenda dos canais ilegivel ({e}); usando a da instalacao.")
+        return {}
+    cota = publishers.quota.uploads_por_dia()
+    return {conta: dataclasses.replace(
+                agenda, teto=min(agenda.teto or scheduler.por_dia(), cota))
+            for conta, agenda in agendas.items()}
 
 
 async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
@@ -6135,8 +6257,12 @@ async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
         print(f"⚠️  Agendador: nao consegui ler a fila ({e})")
         return feito
 
+    # As janelas do reagendamento sao as do canal de cada conta, no fuso de
+    # quem usa (7.5): no Docker o processo esta em UTC.
+    agendas = await _agendas_das_contas({p["account_id"] for p in pendentes})
     triagem = scheduler.triar_vencidas(pendentes, agora, ocupados,
-                                       teto_por_dia=_teto_do_agendador())
+                                       teto_por_dia=_teto_do_agendador(),
+                                       agendas=agendas)
     for pub_id, quando in triagem.reagendar.items():
         try:
             if await publish_queue.reagendar(pub_id, scheduler.para_utc(quando)):
@@ -6235,10 +6361,88 @@ def _da_conta(conta) -> dict:
 
 
 @app.get("/api/agenda")
-async def ver_agenda():
+async def ver_agenda(canal: Optional[str] = None):
     """A agenda em vigor. E o que o painel mostra antes de agendar, para que
-    ninguem descubra o horario depois do post."""
-    return scheduler.descricao()
+    ninguem descubra o horario depois do post. Com `canal`, a daquele canal
+    (as janelas e o por-dia dele, 7.5). O fuso vai junto: as horas valem no
+    fuso de quem usa, e a tela diz qual e."""
+    agenda = None
+    if canal:
+        if not canais.id_valido(canal):
+            raise HTTPException(status_code=400, detail="canal invalido")
+        dados = await canais.obter(canal)
+        if dados is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+        efetiva = dados["ajustes"]["agenda_efetiva"]
+        agenda = scheduler.AgendaDaConta(horas=tuple(efetiva["janelas"]),
+                                         teto=efetiva["por_dia"])
+    return {**scheduler.descricao(agenda),
+            "fuso": fuso_de_quem_usa.descricao(db.tenant_atual())}
+
+
+class FusoIn(BaseModel):
+    nome: str
+    offset_min: int
+
+
+@app.put("/api/fuso")
+async def guardar_fuso(req: FusoIn):
+    """O fuso de quem usa, mandado pelo painel a cada vez que abre (7.5).
+
+    E o conserto da agenda no Docker: o container roda em UTC, e "postar as
+    11h" e uma frase sobre o relogio de quem usa. Guardado no motor porque a
+    trava do agendador e a automacao trabalham sem ninguem olhando.
+    """
+    try:
+        registro = fuso_de_quem_usa.guardar(db.tenant_atual(), req.nome, req.offset_min)
+    except fuso_de_quem_usa.FusoInvalido as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"nome": registro["nome"], "offset_min": registro["offset_min"], "origem": "painel"}
+
+
+async def _agendar_itens(job_id: str, escolhidos: list, contas: list) -> tuple:
+    """Agenda os cortes `escolhidos` de um job em cada conta, nas janelas do
+    canal dela e no fuso de quem usa. Devolve `(resultados, agendas)`.
+
+    E o miolo do `/api/agendar`, e o mesmo caminho da automacao (7.5): o corte
+    que a receita cortou, ou que a pessoa aprovou, entra na agenda pelas mesmas
+    regras de quem agenda a mao.
+    """
+    # Os horarios que cada conta ja tem entram na conta: agendar dois projetos
+    # no mesmo canal nao pode por dois posts na mesma janela.
+    ocupados = await publish_queue.ocupados_das_contas(
+        [c.id for c in contas], datetime.now(timezone.utc),
+        tenant_id=db.tenant_atual())
+    # As janelas e o teto do canal de cada conta, no fuso de quem usa (7.5).
+    agendas = await _agendas_das_contas([c.id for c in contas], db.tenant_atual())
+    fuso_do_tenant = fuso_de_quem_usa.tz_do_tenant(db.tenant_atual())
+
+    resultados = []
+    for conta in contas:
+        agenda = agendas.get(conta.id) or scheduler.AgendaDaConta(
+            teto=_teto_do_agendador(), fuso=fuso_do_tenant)
+        # Horario proprio por conta: o jitter e sorteado de novo para cada
+        # galho, e o YouTube e o TikTok do mesmo corte nao saem no mesmo minuto.
+        horarios = scheduler.proximos_horarios(
+            len(escolhidos), datetime.now(agenda.fuso or fuso_do_tenant),
+            horas=agenda.horas, teto_por_dia=agenda.teto or _teto_do_agendador(),
+            ocupados=ocupados.get(conta.id, []))
+        for item, quando in zip(escolhidos, horarios):
+            base = {"clip_index": item.clip.index, **_da_conta(conta)}
+            corte = await job_registry.clipe_do_job(job_id, item.clip.index)
+            if corte is None:
+                resultados.append({**base, "ok": False,
+                                   "detail": "este corte nao esta no banco; "
+                                             "reprocesse o projeto para registra-lo"})
+                continue
+            try:
+                linha = await publish_queue.agendar(
+                    corte, conta, scheduler.para_utc(quando))
+            except publish_queue.FilaError as e:
+                resultados.append({**base, "ok": False, "detail": str(e)})
+                continue
+            resultados.append({**base, "ok": True, **linha})
+    return resultados, agendas
 
 
 @app.post("/api/agendar")
@@ -6263,45 +6467,740 @@ async def agendar_cortes(req: AgendarIn, request: Request):
                             detail="Nenhum corte para agendar neste projeto")
 
     contas = await _contas_do_pedido(req.account_id, req.channel_id)
-    # Os horarios que cada conta ja tem entram na conta: agendar dois projetos
-    # no mesmo canal nao pode por dois posts na mesma janela.
     try:
-        ocupados = await publish_queue.ocupados_das_contas(
-            [c.id for c in contas], datetime.now(timezone.utc),
-            tenant_id=db.tenant_atual())
+        resultados, agendas = await _agendar_itens(req.job_id, escolhidos, contas)
     except Exception as e:
         raise _erro_da_fila(e)
-
-    resultados = []
-    for conta in contas:
-        # Horario proprio por conta: o jitter e sorteado de novo para cada
-        # galho, e o YouTube e o TikTok do mesmo corte nao saem no mesmo minuto.
-        horarios = scheduler.proximos_horarios(
-            len(escolhidos), teto_por_dia=_teto_do_agendador(),
-            ocupados=ocupados.get(conta.id, []))
-        for item, quando in zip(escolhidos, horarios):
-            base = {"clip_index": item.clip.index, **_da_conta(conta)}
-            corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
-            if corte is None:
-                resultados.append({**base, "ok": False,
-                                   "detail": "este corte nao esta no banco; "
-                                             "reprocesse o projeto para registra-lo"})
-                continue
-            try:
-                linha = await publish_queue.agendar(
-                    corte, conta, scheduler.para_utc(quando))
-            except publish_queue.FilaError as e:
-                resultados.append({**base, "ok": False, "detail": str(e)})
-                continue
-            except Exception as e:
-                raise _erro_da_fila(e)
-            resultados.append({**base, "ok": True, **linha})
 
     agendados = sum(1 for r in resultados if r.get("ok"))
     destino = ", ".join(f"{c.platform}/{c.handle}" for c in contas)
     print(f"⏰ {agendados} publicacao(oes) de {req.job_id} agendadas para {destino}")
+    primeira = agendas.get(contas[0].id) if contas else None
     return {"resultados": resultados, "agendados": agendados,
-            "agenda": scheduler.descricao()}
+            "agenda": {**scheduler.descricao(primeira),
+                       "fuso": fuso_de_quem_usa.descricao(db.tenant_atual())}}
+
+
+# --- Automacao por canal (Fase 7, etapa 7.5) --------------------------------
+# "O canal infantil, com o PC ligado e ninguem mexendo, acha um video com
+# licenca, corta, espera a aprovacao (ou nao, se o canal estiver assim) e posta
+# nos horarios dele, com o credito na descricao." As regras de cada peca moram
+# em `receitas.py` (os documentos), `busca_cc.py` (achar o video e conferir a
+# licenca), `licencas.py` (a chave, a origem e o credito) e `automacao.py` (o
+# banco: a receita, a caixa de entrada, o estoque e a caixa de aprovacao).
+# Aqui esta o laco, que e a parte que precisa da fila de jobs.
+
+#: De quanto em quanto tempo o laco olha as receitas. Cinco minutos: o que a
+#: receita espera (o job terminar, a janela do dia, a busca de seis em seis
+#: horas) e de minutos para cima.
+INTERVALO_DA_AUTOMACAO = int(os.environ.get("AUTOMACAO_TICK_SECONDS", "300"))
+#: A primeira volta espera o boot assentar (o seed, o resume dos jobs).
+ATRASO_INICIAL_DA_AUTOMACAO = int(os.environ.get("AUTOMACAO_FIRST_TICK_SECONDS", "90"))
+BUSCA_CC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "busca_cc.py")
+#: Uma busca pelo yt-dlp abre ate dez paginas de video; cinco minutos e folga.
+PRAZO_DA_BUSCA_S = 300
+#: Uma volta de cada vez: o "verificar agora" do painel e o laco nao cortam o
+#: mesmo candidato duas vezes.
+_TRAVA_DA_AUTOMACAO = asyncio.Lock()
+
+
+async def _para_criancas(job_id: str, account_id: Optional[str] = None) -> bool:
+    """Se o envio e "feito para criancas" (COPPA): o canal do PROJETO ou o
+    canal da CONTA de destino e infantil. Levanta se o banco nao responde: na
+    duvida, o envio nao sai marcado errado.
+
+    Os dois costumam ser o mesmo canal. Quando nao sao -- um projeto sem canal
+    publicado na conta do canal infantil --, marcar a mais custa pouco (o
+    YouTube desliga os comentarios daquele video) e marcar a menos e o erro que
+    a lei americana pune. So o canal do projeto erraria para o lado caro.
+    """
+    candidatos = [_canal_do_disco(os.path.join(OUTPUT_DIR, job_id))]
+    if account_id:
+        candidatos.append(await canais.canal_da_conta(account_id))
+    for canal_id in dict.fromkeys(c for c in candidatos if c):
+        dados = await canais.obter(canal_id)
+        if dados and dados["ajustes"]["criancas"]["valor"]:
+            return True
+    return False
+
+
+async def _meta_para_publicar(job_id: str, meta: publishers.PostMeta,
+                              account_id: Optional[str] = None) -> publishers.PostMeta:
+    """O texto do post com o que o canal manda: o "feito para criancas" (7.5).
+    O credito da licenca ja vem da pasta (`_itens_do_job`)."""
+    import dataclasses
+    return dataclasses.replace(meta, made_for_kids=await _para_criancas(job_id, account_id))
+
+
+async def _token_interno(tenant_id: str) -> Optional[str]:
+    """Um token curto do dono do tenant, para a automacao chamar o proprio
+    motor como o painel chama. So existe dentro deste processo (a chamada e por
+    `ASGITransport`, nunca pela rede) e vale 5 minutos."""
+    if not await _auth_ativa():
+        return None
+    async with db.tenant(tenant_id) as t:
+        usuarios = await t.all(db_models.User, db_models.User.password_hash.is_not(None))
+    if not usuarios:
+        return None
+    dono = next((u for u in usuarios if u.role == "owner"), usuarios[0])
+    return auth.gerar_token(dono.id, tenant_id, dono.token_version, ttl=300)
+
+
+async def _chamar_o_motor(metodo: str, caminho: str, tenant_id: str, **kw):
+    """A automacao usa o motor pela mesma porta do painel: o `/api/process`
+    inteiro (o probe de qualidade, a fonte curta demais, o tenant, o canal, o
+    manifesto de resume) vale para o video que ela manda cortar. Mesmo desenho
+    do servidor MCP -- e o que impede a automacao de divergir do que a tela faz.
+    """
+    import httpx as _httpx
+
+    cabecalhos = {"user-agent": "virtu-clips-automacao"}
+    token = await _token_interno(tenant_id)
+    if token:
+        cabecalhos["authorization"] = f"Bearer {token}"
+    db.usar_tenant(tenant_id)
+    transporte = _httpx.ASGITransport(app=app)
+    async with _httpx.AsyncClient(transport=transporte, base_url="http://motor.local",
+                                  timeout=None) as cliente:
+        return await cliente.request(metodo, caminho, headers=cabecalhos, **kw)
+
+
+def _vaga_de_upload(caminho: str, nome: str) -> str:
+    """Um arquivo da pasta do canal vira uma vaga de upload pronta, como a que
+    o `PUT /api/uploads` deixa -- sem passar os bytes pela rede de dentro do
+    processo. O original fica na pasta: e da pessoa."""
+    upload_id = str(uuid.uuid4())
+    seguro = os.path.basename(nome) or "video.mp4"
+    destino = os.path.join(UPLOAD_DIR, f"pending_{upload_id}_{seguro}")
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    try:
+        os.link(caminho, destino)
+    except OSError:
+        shutil.copyfile(caminho, destino)
+    pending_uploads[upload_id] = {
+        "user_id": None, "filename": seguro, "path": destino,
+        "created": time.time(), "bytes": os.path.getsize(destino), "complete": True,
+    }
+    return upload_id
+
+
+def _pedido_de_corte(spec: dict, canal_id: str, origem: dict) -> dict:
+    """O corpo do `/api/process` que a receita manda: como editar vem dela."""
+    edicao = spec["edicao"]
+    corpo = {
+        # A confirmacao de direitos e a da receita: a busca so traz licenca
+        # livre CONFERIDA, e links, live e pasta so ligam com a confirmacao de
+        # quem usa (`receitas.pronta`).
+        "acknowledged": True,
+        "channel_id": canal_id,
+        "target_clips": edicao["cortes_por_video"],
+        "clip_min_seconds": edicao["duracao_min"],
+        "clip_max_seconds": edicao["duracao_max"],
+        "layouts": [edicao["layout"]],
+        "auto_hook": bool(edicao["gancho"]),
+        "captions": bool(edicao["legenda"]),
+        "origem": origem,
+    }
+    if edicao.get("template_id"):
+        corpo["template_id"] = edicao["template_id"]
+    return corpo
+
+
+def _origem_do_candidato(c, tipo: str) -> dict:
+    declarada = c.license in ("autorizada", "propria")
+    return {
+        "url": c.url if tipo != "pasta" else None,
+        "key": c.key, "title": c.title, "author": c.author, "author_url": c.author_url,
+        "license": c.license, "license_text": c.license_text,
+        "published_at": c.published_at.isoformat() if c.published_at else None,
+        "declared_by": "pessoa" if declarada else "plataforma",
+        "found_by": tipo,
+    }
+
+
+async def _mandar_cortar(receita, spec: dict, canal: dict, candidato) -> str:
+    """Cria o job do candidato. Devolve a frase do que aconteceu."""
+    tipo = spec["fonte"]["tipo"]
+    corpo = _pedido_de_corte(spec, canal["id"], _origem_do_candidato(candidato, tipo))
+    if tipo == "pasta":
+        caminho = automacao.caminho_do_arquivo(
+            (receita.state_json or {}).get("pasta"), candidato.url)
+        if not caminho:
+            await automacao.marcar_candidato(candidato.id, "falhou",
+                                             motivo="o arquivo saiu da pasta")
+            return "o arquivo saiu da pasta antes de ser cortado"
+        corpo["upload_id"] = _vaga_de_upload(caminho, candidato.url)
+    else:
+        corpo["url"] = candidato.url
+    resposta = await _chamar_o_motor("POST", "/api/process", receita.tenant_id, json=corpo)
+    try:
+        dados = resposta.json()
+    except ValueError:
+        dados = {}
+    if resposta.status_code == 200 and dados.get("job_id"):
+        await automacao.marcar_candidato(candidato.id, "processando", job_id=dados["job_id"])
+        print(f"🤖 Automacao ({canal['name']}): cortando {candidato.title or candidato.url} "
+              f"-> projeto {dados['job_id']}")
+        return f"cortando {candidato.title or 'o próximo vídeo'}"
+    if dados.get("needs_confirmation"):
+        altura = (dados.get("quality_check") or {}).get("max_height")
+        await automacao.marcar_candidato(
+            candidato.id, "recusado",
+            motivo=f"o vídeo só existe em {altura}p; a receita não corta abaixo de "
+                   f"{QUALITY_GATE_MIN_HEIGHT}p")
+        return "o próximo vídeo tinha qualidade baixa e ficou de fora"
+    detalhe = dados.get("detail") if isinstance(dados.get("detail"), str) else f"HTTP {resposta.status_code}"
+    await automacao.marcar_candidato(candidato.id, "falhou", motivo=detalhe)
+    return f"o motor recusou o vídeo: {detalhe}"
+
+
+async def _contas_do_canal(canal_id: str) -> list:
+    async with db.tenant() as t:
+        ligadas = {l.account_id for l in await t.all(
+            db_models.ChannelAccount, db_models.ChannelAccount.channel_id == canal_id)}
+        contas = [c for c in await t.all(db_models.Account) if c.id in ligadas]
+    return sorted(contas, key=lambda c: (_ORDEM_DAS_PLATAFORMAS.get(c.platform, 9),
+                                         c.handle.lower()))
+
+
+async def _cortes_do_job(job_id: str) -> list:
+    """As linhas de `clips` do job, da maior nota para a menor."""
+    async with db.tenant() as t:
+        cortes = await t.all(db_models.Clip, db_models.Clip.job_id == job_id)
+    return sorted(cortes, key=lambda c: (-(c.score or 0),
+                                         int((c.rubric_json or {}).get("clip_index") or 0)))
+
+
+async def _agendar_cortes_no_canal(canal_id: str, job_id: str, indices: list) -> dict:
+    """Os cortes vao para a agenda do canal, um galho por conta."""
+    contas = await _contas_do_canal(canal_id)
+    if not contas:
+        return {"agendados": 0, "falhas": [],
+                "aviso": "o canal não tem conta ligada; os cortes ficaram no projeto"}
+    itens = {i.clip.index: i for i in _itens_do_job(job_id)}
+    escolhidos = [itens[i] for i in indices if i in itens]
+    if not escolhidos:
+        return {"agendados": 0, "falhas": [], "aviso": "os arquivos dos cortes não estão na pasta"}
+    resultados, _ = await _agendar_itens(job_id, escolhidos, contas)
+    return {"agendados": sum(1 for r in resultados if r.get("ok")),
+            "falhas": [r.get("detail") for r in resultados if not r.get("ok")],
+            "aviso": None}
+
+
+async def _automacao_depois_do_job(job_id: str) -> None:
+    """O fim de um job da automacao: os cortes vao para a caixa de aprovacao
+    (canal que pede) ou direto para a agenda do canal.
+
+    Chamado no fim de todo job (`run_job_wrapper`) e pelo laco, que reconcilia
+    o job que terminou com o motor fora do ar. Idempotente: a aprovacao e unica
+    por corte e a publicacao, por corte e conta. Nunca levanta.
+    """
+    try:
+        candidato = await automacao.candidato_do_job(job_id)
+        if candidato is None or candidato.status != "processando":
+            return
+        job = jobs.get(job_id) or _job_view_from_disk(job_id) or {}
+        status = job.get("status")
+        if status in ("queued", "processing"):
+            return
+        receita = await automacao.receita_por_id(candidato.recipe_id)
+        if receita is None:
+            return
+        if status != "completed":
+            motivo = _job_error_text(job.get("logs") or []) or (
+                "o corte foi cancelado" if status == "cancelled" else "o corte falhou")
+            await automacao.marcar_candidato(candidato.id, "falhou", motivo=motivo)
+            await automacao.anotar(receita.id, situacao=f"o último corte falhou: {motivo[:200]}")
+            return
+        canal = await canais.obter(receita.channel_id)
+        spec = receitas.normalizar(receita.spec_json)
+        cortes = (await _cortes_do_job(job_id))[:spec["edicao"]["cortes_por_video"]]
+        if not cortes:
+            await automacao.marcar_candidato(candidato.id, "processado",
+                                             motivo="o vídeo não rendeu corte")
+            await automacao.anotar(receita.id, situacao="o último vídeo não rendeu corte")
+            return
+        if canal and canal["requires_approval"]:
+            novas = await automacao.criar_aprovacoes(canal["id"], [c.id for c in cortes])
+            situacao = f"{novas} corte(s) esperando a sua aprovação"
+        else:
+            indices = [int((c.rubric_json or {}).get("clip_index") or 0) for c in cortes]
+            feito = await _agendar_cortes_no_canal(receita.channel_id, job_id, indices)
+            situacao = feito["aviso"] or f"{feito['agendados']} post(s) na agenda do canal"
+        await automacao.marcar_candidato(candidato.id, "processado", motivo=situacao)
+        await automacao.anotar(receita.id, situacao=situacao,
+                               ultimo_video={"titulo": candidato.title, "job_id": job_id,
+                                             "quando": datetime.now(timezone.utc).isoformat()})
+        print(f"🤖 Automacao: projeto {job_id} pronto -- {situacao}")
+    except Exception as e:
+        print(f"⚠️  Automacao: o fim do projeto {job_id} nao foi tratado ({e})")
+
+
+def _rodar_busca_cc(pedido: dict) -> dict:
+    """O `busca_cc.py` num subprocesso, como o probe de qualidade: o servidor
+    nao importa o yt-dlp, e uma busca travada morre no prazo."""
+    try:
+        proc = subprocess.run([sys.executable, BUSCA_CC_SCRIPT],
+                              input=json.dumps(pedido).encode("utf-8"),
+                              capture_output=True, timeout=PRAZO_DA_BUSCA_S)
+        return json.loads(proc.stdout.decode("utf-8", errors="replace").strip() or "{}")
+    except subprocess.TimeoutExpired:
+        return {"erro": f"a busca passou de {PRAZO_DA_BUSCA_S // 60} minutos"}
+    except Exception as e:
+        return {"erro": f"{type(e).__name__}: {e}"}
+
+
+async def _busca_pela_api(spec: dict, canal: dict) -> Optional[dict]:
+    """A busca pela API do YouTube, quando ha uma conta do YouTube conectada
+    para MEDIR (o escopo de leitura) e busca na cota do dia. None: vai pelo
+    yt-dlp."""
+    import busca_cc
+    import metrics_collector as _mc
+
+    if not publishers.quota.cabe_busca():
+        return None
+    async with db.tenant() as t:
+        contas = [c for c in await t.all(db_models.Account)
+                  if c.platform == "youtube"]
+    do_canal = {c["id"] for c in canal["contas"]}
+    contas.sort(key=lambda c: 0 if c.id in do_canal else 1)
+    segredo = next((s for s in (_mc.credencial_de_leitura(c.handle) for c in contas) if s), None)
+    if segredo is None:
+        return None
+    laco = asyncio.get_event_loop()
+    fonte = spec["fonte"]
+    try:
+        token = await laco.run_in_executor(None, _mc._token_de_leitura, segredo)
+        achados = await laco.run_in_executor(
+            None, busca_cc.buscar_pela_api, fonte["tema"], fonte["duracao"],
+            canal.get("language"), token, 25, bool(canal["ajustes"]["criancas"]["valor"]))
+    except Exception as e:
+        print(f"⚠️  Busca pela API do YouTube falhou ({e}); vai pelo yt-dlp.")
+        return None
+    candidatos, recusados = [], []
+    for achado in achados:
+        motivo = busca_cc.serve_para_a_busca(achado, fonte["duracao"])
+        (recusados.append({**achado, "motivo": motivo}) if motivo else candidatos.append(achado))
+    return {"candidatos": candidatos, "recusados": recusados, "avisos": [], "via": "api"}
+
+
+async def _buscar(receita, spec: dict, canal: dict) -> dict:
+    """Busca videos novos para a receita e grava na caixa de entrada."""
+    tipo = spec["fonte"]["tipo"]
+    laco = asyncio.get_event_loop()
+    vistos = sorted(await automacao.chaves_conhecidas(receita.id))
+    resultado = None
+    if tipo == "busca":
+        resultado = await _busca_pela_api(spec, canal)
+        if resultado is None:
+            resultado = await laco.run_in_executor(None, _rodar_busca_cc, {
+                "acao": "busca", "tema": spec["fonte"]["tema"],
+                "duracao": spec["fonte"]["duracao"], "vistos": vistos})
+            resultado["via"] = "yt-dlp"
+    elif tipo == "links":
+        resultado = await laco.run_in_executor(None, _rodar_busca_cc, {
+            "acao": "links", "links": spec["fonte"]["links"], "vistos": vistos})
+        resultado["via"] = "yt-dlp"
+    else:
+        return {"novos": 0, "via": None, "erro": None}
+    agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if resultado.get("erro"):
+        await automacao.anotar(receita.id, ultima_busca=agora, erro_da_busca=resultado["erro"])
+        return {"novos": 0, "via": resultado.get("via"), "erro": resultado["erro"]}
+    novos = await automacao.acrescentar_candidatos(
+        receita.id, resultado.get("candidatos") or [], resultado.get("recusados") or [])
+    await automacao.anotar(receita.id, ultima_busca=agora, erro_da_busca=None,
+                           via_da_busca=resultado.get("via"), achados_na_busca=novos,
+                           recusados_na_busca=len(resultado.get("recusados") or []))
+    return {"novos": novos, "via": resultado.get("via"), "erro": None,
+            "recusados": len(resultado.get("recusados") or []),
+            "avisos": (resultado.get("avisos") or [])[:5]}
+
+
+def _pode_buscar(estado: dict, agora: datetime) -> bool:
+    ultima = (estado or {}).get("ultima_busca")
+    if not ultima:
+        return True
+    try:
+        quando = datetime.fromisoformat(ultima)
+    except ValueError:
+        return True
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    return agora - quando >= timedelta(hours=automacao.horas_entre_buscas())
+
+
+async def _conferir_em_andamento(candidato) -> Optional[str]:
+    """O candidato que esta sendo cortado: ainda esta? None quando o job ja
+    acabou (e foi tratado aqui)."""
+    job_id = candidato.job_id
+    job = jobs.get(job_id) if job_id else None
+    if job and job.get("status") in ("queued", "processing"):
+        return f"cortando {candidato.title or 'um vídeo'}"
+    if job_id and (job or _job_view_from_disk(job_id)):
+        visto = job or _job_view_from_disk(job_id)
+        if visto.get("status") in ("queued", "processing"):
+            return f"cortando {candidato.title or 'um vídeo'}"
+        await _automacao_depois_do_job(job_id)
+        return None
+    await automacao.marcar_candidato(
+        candidato.id, "falhou", motivo="o projeto não terminou (apagado, ou o motor reiniciou no meio)")
+    return None
+
+
+async def _cortar_a_live(receita, spec: dict, canal: dict) -> str:
+    """Twitch: se o canal esta no ar, um bloco da live vira um corte."""
+    laco = asyncio.get_event_loop()
+    endereco = spec["fonte"]["twitch"]
+    resposta = await laco.run_in_executor(None, _rodar_busca_cc,
+                                          {"acao": "twitch", "url": endereco})
+    if resposta.get("erro"):
+        return f"não consegui ver a Twitch: {resposta['erro']}"
+    if not resposta.get("ao_vivo"):
+        return "o canal da Twitch está fora do ar"
+    agora = datetime.now(timezone.utc)
+    bloco = {"key": f"twitch-live:{licencas.chave(endereco)}:{agora.strftime('%Y%m%dT%H%M')}",
+             "url": endereco, "title": resposta.get("titulo") or "live",
+             "author": endereco.rstrip("/").rsplit("/", 1)[-1], "author_url": endereco,
+             "license": "autorizada"}
+    await automacao.acrescentar_candidatos(receita.id, [bloco])
+    candidato = await automacao.proximo_candidato(receita.id)
+    if candidato is None:
+        return "nada para cortar agora"
+    return await _mandar_cortar(receita, spec, canal, candidato)
+
+
+async def _ler_a_pasta(receita) -> int:
+    """Os videos novos da pasta do canal viram candidatos."""
+    nome = (receita.state_json or {}).get("pasta")
+    arquivos = await asyncio.get_event_loop().run_in_executor(
+        None, automacao.arquivos_da_pasta, nome)
+    return await automacao.acrescentar_candidatos(receita.id, [
+        {"key": a["chave"], "url": a["nome"], "title": os.path.splitext(a["nome"])[0],
+         "license": "autorizada"} for a in arquivos])
+
+
+async def _cuidar_da_receita(recipe_id: str, tenant_id: str, *,
+                             agora: Optional[datetime] = None,
+                             forcar_busca: bool = False) -> str:
+    """Uma volta de uma receita. Devolve a frase que a tela mostra."""
+    agora = agora or datetime.now(timezone.utc)
+    db.usar_tenant(tenant_id)
+    receita = await automacao.receita_por_id(recipe_id)
+    if receita is None or not receita.active:
+        return "a receita está desligada"
+    try:
+        spec = receitas.normalizar(receita.spec_json)
+    except receitas.ReceitaInvalida as e:
+        return f"a receita está inválida: {e}"
+    falta = receitas.pronta(spec)
+    if falta:
+        return f"a receita não pode rodar: {falta}"
+    canal = await canais.obter(receita.channel_id)
+    if canal is None:
+        return "o canal não existe mais"
+
+    atual = await automacao.em_andamento(receita.id)
+    if atual is not None:
+        cortando = await _conferir_em_andamento(atual)
+        if cortando:
+            return cortando
+
+    agenda = canal["ajustes"]["agenda_efetiva"]
+    estoque = await automacao.estoque_do_canal(canal["id"], agora)
+    limite = max(1, agenda["por_dia"] * automacao.DIAS_DE_ESTOQUE)
+    if estoque["total"] >= limite:
+        if estoque["esperando_aprovacao"]:
+            return (f"{estoque['esperando_aprovacao']} corte(s) esperando a sua "
+                    "aprovação; a receita espera antes de cortar mais")
+        return (f"{estoque['agendados']} post(s) na agenda: dá para "
+                f"{automacao.DIAS_DE_ESTOQUE} dias, a receita espera")
+
+    fuso = fuso_de_quem_usa.tz_do_tenant(tenant_id)
+    if await automacao.cortados_hoje(receita.id, fuso, agora) >= spec["ritmo"]["videos_por_dia"]:
+        return "já cortou os vídeos de hoje; volta amanhã"
+
+    tipo = spec["fonte"]["tipo"]
+    if tipo == "twitch":
+        return await _cortar_a_live(receita, spec, canal)
+    if tipo == "pasta":
+        await _ler_a_pasta(receita)
+    candidato = await automacao.proximo_candidato(receita.id)
+    if candidato is None and tipo in ("busca", "links"):
+        if forcar_busca or _pode_buscar(receita.state_json, agora):
+            achou = await _buscar(receita, spec, canal)
+            if achou.get("erro"):
+                return f"a busca falhou: {achou['erro']}"
+            candidato = await automacao.proximo_candidato(receita.id)
+        else:
+            return "nenhum vídeo novo na caixa de entrada; a próxima busca é mais tarde"
+    if candidato is None:
+        return ("a pasta do canal está vazia" if tipo == "pasta"
+                else "a busca não achou vídeo novo com licença livre")
+    return await _mandar_cortar(receita, spec, canal, candidato)
+
+
+async def _uma_volta_da_automacao(agora: Optional[datetime] = None) -> dict:
+    """Uma volta em todas as receitas ligadas. Nunca levanta: uma receita com
+    problema anota o problema e nao para as outras."""
+    feito: dict = {}
+    async with _TRAVA_DA_AUTOMACAO:
+        try:
+            ativas = await automacao.receitas_ativas()
+        except Exception as e:
+            print(f"⚠️  Automacao: nao consegui ler as receitas ({e})")
+            return feito
+        for r in ativas:
+            try:
+                situacao = await _cuidar_da_receita(r["id"], r["tenant_id"], agora=agora)
+            except Exception as e:
+                situacao = f"erro: {type(e).__name__}: {e}"
+                print(f"⚠️  Automacao: a receita {r['id']} explodiu ({e})")
+            feito[r["id"]] = situacao
+            await automacao.anotar(r["id"], situacao=situacao,
+                                   ultima_volta=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return feito
+
+
+async def _laco_da_automacao():
+    """O motor trabalhando sozinho: de tempos em tempos, cada receita ligada
+    anda um passo. Nao roda enquanto a instancia drena, como o agendador."""
+    await asyncio.sleep(ATRASO_INICIAL_DA_AUTOMACAO)
+    while True:
+        if not _draining:
+            await _uma_volta_da_automacao()
+        await asyncio.sleep(INTERVALO_DA_AUTOMACAO)
+
+
+def _erro_da_automacao(e: Exception) -> HTTPException:
+    if isinstance(e, (automacao.AutomacaoError, receitas.ReceitaInvalida)):
+        return HTTPException(status_code=400, detail=str(e))
+    print(f"⚠️ Automacao: banco indisponivel ({e})")
+    return HTTPException(status_code=503,
+                         detail="O banco nao respondeu. Rode `python db_seed.py` na pasta do "
+                                "projeto e tente de novo.")
+
+
+async def _receita_para_a_tela(canal_id: str) -> dict:
+    receita = await automacao.obter_receita(canal_id)
+    if receita is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    canal = await canais.obter(canal_id)
+    estoque = await automacao.estoque_do_canal(canal_id)
+    return {"receita": receita, "estoque": estoque,
+            "agenda": {**canal["ajustes"]["agenda_efetiva"],
+                       "fuso": fuso_de_quem_usa.descricao(db.tenant_atual())},
+            "criancas": canal["ajustes"]["criancas"],
+            "requires_approval": canal["requires_approval"],
+            "busca_pela_api": publishers.quota.cabe_busca(),
+            "intervalo_min": max(1, INTERVALO_DA_AUTOMACAO // 60),
+            "horas_entre_buscas": automacao.horas_entre_buscas()}
+
+
+@app.get("/api/canais/{canal_id}/receita")
+async def ver_receita(canal_id: str):
+    """A receita do canal (a padrao, desligada, quando ainda nao ha), com o
+    estoque e a agenda que ela respeita."""
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    try:
+        return await _receita_para_a_tela(canal_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_automacao(e)
+
+
+@app.put("/api/canais/{canal_id}/receita")
+async def salvar_receita(canal_id: str, request: Request):
+    """Grava a receita: `{spec, ativa, confirmar_direitos}`."""
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    corpo = await _corpo_json(request)
+    ativa = corpo.get("ativa")
+    if ativa is not None and not isinstance(ativa, bool):
+        raise HTTPException(status_code=400, detail="ativa tem de ser true ou false")
+    try:
+        salva = await automacao.salvar_receita(
+            canal_id, corpo.get("spec"), ativa=ativa,
+            confirmar_direitos=bool(corpo.get("confirmar_direitos")))
+        if salva is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+        return await _receita_para_a_tela(canal_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_automacao(e)
+
+
+async def _receita_do_canal(canal_id: str):
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    receita = await automacao.obter_receita(canal_id)
+    if receita is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    if not receita["id"]:
+        raise HTTPException(status_code=400, detail="Salve a receita do canal primeiro.")
+    return receita
+
+
+@app.post("/api/canais/{canal_id}/receita/buscar")
+async def buscar_agora(canal_id: str):
+    """"Buscar agora": a busca da receita sem esperar a hora dela."""
+    receita = await _receita_do_canal(canal_id)
+    if receita["spec"]["fonte"]["tipo"] not in ("busca", "links", "pasta"):
+        raise HTTPException(status_code=400, detail="Esta fonte não tem busca: a live é vista a cada volta.")
+    if receita["spec"]["fonte"]["tipo"] == "busca" and not receita["spec"]["fonte"]["tema"]:
+        raise HTTPException(status_code=400, detail="Escreva o tema da busca primeiro.")
+    linha = await automacao.receita_por_id(receita["id"])
+    if receita["spec"]["fonte"]["tipo"] == "pasta":
+        return {"novos": await _ler_a_pasta(linha), "via": "pasta", "erro": None}
+    canal = await canais.obter(canal_id)
+    return await _buscar(linha, receita["spec"], canal)
+
+
+@app.post("/api/canais/{canal_id}/receita/rodar")
+async def rodar_agora(canal_id: str):
+    """"Verificar agora": uma volta da receita deste canal, na hora."""
+    receita = await _receita_do_canal(canal_id)
+    if not receita["ativa"]:
+        raise HTTPException(status_code=400, detail="Ligue a receita primeiro.")
+    async with _TRAVA_DA_AUTOMACAO:
+        situacao = await _cuidar_da_receita(receita["id"], db.tenant_atual())
+        await automacao.anotar(receita["id"], situacao=situacao,
+                               ultima_volta=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return {"situacao": situacao}
+
+
+@app.get("/api/canais/{canal_id}/candidatos")
+async def ver_candidatos(canal_id: str, status: Optional[str] = None):
+    """A caixa de entrada de fontes do canal."""
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    if status and status not in db_models.CANDIDATE_STATUSES:
+        raise HTTPException(status_code=400, detail="status desconhecido")
+    try:
+        lista = await automacao.listar_candidatos(canal_id, status)
+    except Exception as e:
+        raise _erro_da_automacao(e)
+    if lista is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    return {"candidatos": lista}
+
+
+class DecisaoDoCandidatoIn(BaseModel):
+    acao: str
+
+
+@app.post("/api/candidatos/{candidato_id}")
+async def decidir_candidato(candidato_id: str, req: DecisaoDoCandidatoIn):
+    """`escolher` (cortar este antes), `recusar` ou `voltar` para a fila."""
+    if not canais.id_valido(candidato_id):
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado")
+    try:
+        feito = await automacao.decidir_candidato(candidato_id, req.acao)
+    except Exception as e:
+        raise _erro_da_automacao(e)
+    if feito is None:
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado")
+    return feito
+
+
+def _video_do_corte(job_id: Optional[str], indice: int) -> Optional[str]:
+    """O endereco do arquivo ATUAL do corte (com legenda, gancho), para a
+    previa na caixa de aprovacao."""
+    if not job_id:
+        return None
+    for item in _itens_do_job(job_id):
+        if item.clip.index == indice and os.path.exists(item.clip.path):
+            return f"/videos/{job_id}/{os.path.basename(item.clip.path)}"
+    return None
+
+
+@app.get("/api/aprovacoes")
+async def ver_aprovacoes(canal: Optional[str] = None, status: Optional[str] = "esperando"):
+    """A caixa de aprovacao: os cortes da automacao esperando a pessoa."""
+    if canal and not canais.id_valido(canal):
+        raise HTTPException(status_code=400, detail="canal invalido")
+    if status and status not in db_models.APPROVAL_STATUSES:
+        raise HTTPException(status_code=400, detail="status desconhecido")
+    try:
+        lista = await automacao.listar_aprovacoes(canal, status or None)
+    except Exception as e:
+        raise _erro_da_automacao(e)
+    for a in lista:
+        a["clip"]["video_url"] = _video_do_corte(a["clip"]["job_id"], a["clip"]["clip_index"])
+    return {"aprovacoes": lista}
+
+
+class DecisaoDeAprovacaoIn(BaseModel):
+    ids: List[str]
+    decisao: str
+
+
+@app.post("/api/aprovacoes/decidir")
+async def decidir_aprovacoes(req: DecisaoDeAprovacaoIn):
+    """Aprovar (o corte ganha os galhos nas janelas do canal) ou recusar.
+
+    Aprovado que nao conseguiu entrar na agenda de nenhuma conta volta a
+    esperar, e a resposta diz por que: "aprovei e sumiu" seria o pior dos
+    desfechos.
+    """
+    if not req.ids or len(req.ids) > 100 or not all(canais.id_valido(i) for i in req.ids):
+        raise HTTPException(status_code=400, detail="ids têm de ser de 1 a 100 aprovações")
+    try:
+        mudadas = await automacao.decidir_aprovacoes(req.ids, req.decisao)
+    except Exception as e:
+        raise _erro_da_automacao(e)
+    resultados = []
+    if req.decisao == "aprovar":
+        cortes = {}
+        async with db.tenant() as t:
+            for c in await t.all(db_models.Clip,
+                                 db_models.Clip.id.in_([m["clip_id"] for m in mudadas])):
+                cortes[c.id] = c
+        for m in mudadas:
+            corte = cortes.get(m["clip_id"])
+            if corte is None:
+                resultados.append({"id": m["id"], "ok": False, "detail": "o corte sumiu"})
+                continue
+            indice = int((corte.rubric_json or {}).get("clip_index") or 0)
+            try:
+                feito = await _agendar_cortes_no_canal(m["channel_id"], corte.job_id, [indice])
+            except Exception as e:
+                feito = {"agendados": 0, "falhas": [f"{type(e).__name__}: {e}"], "aviso": None}
+            if feito["agendados"]:
+                resultados.append({"id": m["id"], "ok": True, "agendados": feito["agendados"],
+                                   "falhas": feito["falhas"]})
+            else:
+                await automacao.voltar_aprovacao(m["id"])
+                resultados.append({"id": m["id"], "ok": False,
+                                   "detail": feito["aviso"] or "; ".join(feito["falhas"])
+                                   or "nenhuma conta aceitou o corte"})
+    else:
+        resultados = [{"id": m["id"], "ok": True} for m in mudadas]
+    return {"resultados": resultados, "decididas": len(mudadas)}
+
+
+@app.get("/api/automacao")
+async def ver_automacao():
+    """O que a automacao esta fazendo, canal por canal -- para o Inicio e a
+    lista de canais."""
+    try:
+        esperando = await automacao.esperando_por_canal()
+        async with db.tenant() as t:
+            linhas = await t.all(db_models.Recipe)
+    except Exception as e:
+        raise _erro_da_automacao(e)
+    return {
+        "receitas": [{"channel_id": r.channel_id, "ativa": bool(r.active),
+                      "tipo": ((r.spec_json or {}).get("fonte") or {}).get("tipo"),
+                      "situacao": (r.state_json or {}).get("situacao"),
+                      "ultima_volta": (r.state_json or {}).get("ultima_volta")}
+                     for r in linhas],
+        "esperando_aprovacao": esperando,
+        "intervalo_min": max(1, INTERVALO_DA_AUTOMACAO // 60),
+    }
 
 
 # --- Auth (Fase 4, bloco 4.1) -----------------------------------------------
@@ -7350,6 +8249,11 @@ async def publicar_cortes(req: PublicarIn, request: Request):
     opts = publishers.PublishOptions(visibility=req.visibility,
                                      scheduled_at=req.scheduled_at,
                                      dry_run=req.dry_run)
+    try:
+        # Por conta: o canal da conta de destino tambem marca (7.5).
+        para_criancas = {c.id: await _para_criancas(req.job_id, c.id) for c in contas}
+    except Exception as e:
+        raise _erro_da_fila(e)
     resultados = []
     for item in escolhidos:
         corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
@@ -7370,8 +8274,10 @@ async def publicar_cortes(req: PublicarIn, request: Request):
         for conta in contas:
             base = {"clip_index": item.clip.index, **_da_conta(conta)}
             try:
+                import dataclasses as _dc
                 resultado = await publish_queue.publicar(
-                    corte, conta, item.clip.path, item.meta, opts)
+                    corte, conta, item.clip.path,
+                    _dc.replace(item.meta, made_for_kids=para_criancas[conta.id]), opts)
             except publish_queue.FilaError as e:
                 resultados.append({**base, "ok": False, "detail": str(e)})
                 continue

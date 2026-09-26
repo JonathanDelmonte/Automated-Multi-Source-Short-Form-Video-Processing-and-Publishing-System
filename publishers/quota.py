@@ -44,6 +44,10 @@ UPLOADS_POR_DIA_PADRAO = 100
 #: Unidades por dia para as outras chamadas (o `videos.list` do coletor de
 #: metricas, por exemplo). O envio NAO sai daqui desde jun-2026.
 TETO_PADRAO = 10000
+#: Chamadas de `search.list` por dia, na cota propria da busca (desde
+#: jun-2026, como o envio). E o que a busca de videos com licenca da
+#: automacao (etapa 7.5) gasta quando vai pela API.
+BUSCAS_POR_DIA_PADRAO = 100
 
 ARQUIVO = ".youtube_quota.json"
 
@@ -64,6 +68,11 @@ def uploads_por_dia() -> int:
 def teto_diario() -> int:
     """As unidades das OUTRAS chamadas. `YOUTUBE_QUOTA_DAILY` manda."""
     return _inteiro_positivo("YOUTUBE_QUOTA_DAILY", TETO_PADRAO)
+
+
+def buscas_por_dia() -> int:
+    """`YOUTUBE_SEARCHES_DAILY` manda, para quem conseguiu mais cota de busca."""
+    return _inteiro_positivo("YOUTUBE_SEARCHES_DAILY", BUSCAS_POR_DIA_PADRAO)
 
 
 def _caminho() -> str:
@@ -87,7 +96,7 @@ def dia_do_youtube(agora: datetime | None = None) -> str:
 
 
 def _vazio() -> dict:
-    return {"dia": dia_do_youtube(), "unidades": 0, "uploads": 0}
+    return {"dia": dia_do_youtube(), "unidades": 0, "uploads": 0, "buscas": 0}
 
 
 def _ler() -> dict:
@@ -100,6 +109,7 @@ def _ler() -> dict:
         return _vazio()
     dados.setdefault("unidades", 0)
     dados.setdefault("uploads", 0)
+    dados.setdefault("buscas", 0)
     return dados
 
 
@@ -157,6 +167,26 @@ def registrar_upload() -> int:
     return max(0, uploads_por_dia() - dados["uploads"])
 
 
+# --- A busca (etapa 7.5) ------------------------------------------------------
+
+def buscas_hoje() -> int:
+    return _contagem(_ler(), "buscas")
+
+
+def cabe_busca() -> bool:
+    """Se ainda cabe um `search.list` hoje. Sem cota, a automacao busca pelo
+    yt-dlp, que nao gasta cota nenhuma."""
+    return buscas_hoje() < buscas_por_dia()
+
+
+def registrar_busca() -> int:
+    """Conta uma busca, ANTES da chamada, pelo mesmo motivo do envio."""
+    dados = _ler()
+    dados["buscas"] = _contagem(dados, "buscas") + 1
+    _gravar(dados)
+    return max(0, buscas_por_dia() - dados["buscas"])
+
+
 # --- As outras chamadas -------------------------------------------------------
 
 def usadas() -> int:
@@ -191,6 +221,9 @@ def estado() -> dict:
         "uploads_por_dia": uploads_por_dia(),
         "uploads_restantes": max(0, uploads_por_dia() - envios),
         "cabe_mais_um": envios < uploads_por_dia(),
+        # A busca da automacao (7.5), na cota propria dela.
+        "buscas_hoje": _contagem(dados, "buscas"),
+        "buscas_por_dia": buscas_por_dia(),
         # As unidades das outras chamadas.
         "teto": teto_diario(),
         "usadas": unidades,

@@ -53,8 +53,9 @@ function UsoELimites() {
           <span className="text-muted"> A cota do Google recomeça à meia-noite do horário do Pacífico.</span>
         </p>
       )}
+      {/* Sem etapa: o plano pôs "uso e limites" nas Configurações sem data, e
+          o "etapa 7.3" que estava aqui ficou mentindo quando a 7.3 acabou. */}
       <EmBreve
-        etapa="7.3"
         itens={[
           'Quanto do limite diário de cada IA gratuita já foi usado hoje.',
           'A cota de envios de cada cadastro de aplicativo do YouTube.',

@@ -1253,11 +1253,16 @@ horário certo exige retenção medida, e isso é a Fase 5.
 O teto duro é outro e não é escolha nossa: a cota de envios do YouTube (**100 por
 dia**). O agendador nunca o ultrapassa.
 
-**No Docker, as horas da agenda são as do container, que roda em UTC**
-(achado na 7.4): as janelas 11h, 15h e 19h viram 8h, 12h e 16h em Brasília. Até
-isso ser corrigido, ponha no `.env` as horas em UTC que você quer — para 11h, 15h
-e 19h de Brasília: `SCHEDULE_WINDOWS=14,18,22`. No ajudante, as horas são as do
-Windows, e não há nada a mudar.
+**As horas são as do seu relógio**, no Docker também (consertado na 7.5): o
+painel manda o fuso do navegador ao programa a cada vez que abre, e as janelas
+valem nele — antes, no Docker, 11h, 15h e 19h viravam 8h, 12h e 16h em
+Brasília, porque o container roda em UTC. **Se você pôs
+`SCHEDULE_WINDOWS=14,18,22` no `.env` por causa do aviso antigo, tire a linha**:
+agora ela postaria às 14h, 18h e 22h.
+
+**Cada canal pode ter as próprias janelas**: no canal, **Ajustes → agenda do
+canal** (as horas e quantos posts por dia). Os números do `.env` ficam como o
+padrão de quem não escolheu.
 
 **A agenda é por conta, e o atrasado tem trava.** Um horário novo respeita os
 posts que a conta já tem. E se o computador estiver desligado na hora marcada,
@@ -1365,6 +1370,87 @@ coleta na hora e diz quantos cortes foram medidos.
 **O que me mandar de volta**: os números da tela ao lado dos do app de cada
 plataforma, e a mensagem de erro de qualquer conta que não mediu (ela aparece em
 "medir agora" e no log do programa).
+
+---
+
+## Passo 13 — Automação: o canal que trabalha sozinho
+
+Cada canal tem uma **receita** (aba **Automação** do canal): de onde vêm os
+vídeos e como cortar. Com ela ligada, o programa acha um vídeo, corta, espera a
+sua aprovação (se o canal pedir) e agenda os cortes nas janelas do canal, com o
+crédito do autor na descrição quando a licença pede.
+
+**O programa precisa estar aberto para a receita andar.** Ele olha as receitas a
+cada 5 minutos; com o computador desligado, nada acontece, e o post cuja hora
+passou sai quando ele voltar, um de cada vez (a trava do Passo 10).
+
+- **No ajudante**, ele já abre com o Windows.
+- **No Docker**, o Docker Desktop precisa abrir com o Windows: **Settings →
+  General**, a opção de iniciar o Docker Desktop quando você entra no computador
+  ("Start Docker Desktop when you sign in", ou "log in", conforme a versão). Os
+  três containers voltam sozinhos com ele — a menos que você tenha usado o
+  `atalhos\parar.bat`, que os desliga de vez (`docker compose down`): aí só
+  voltam com o `atalhos\subir.bat`.
+
+**As quatro fontes:**
+
+- **busca por tema**: o programa procura no YouTube só vídeos marcados como
+  **Creative Commons** e confere a licença na página de cada vídeo antes de
+  aceitar. Com uma conta do YouTube **conectada para medir** (Passo 12), a busca
+  vai pela API do Google (100 buscas por dia); sem, pela página do YouTube, sem
+  cota. O que fica de fora aparece em **fora**, com o motivo;
+- **links**: vídeos, playlists ou canais, um por linha (de um canal, os vídeos
+  mais recentes);
+- **live da Twitch**: quando o canal está no ar, um bloco da live vira cortes;
+- **pasta**: os vídeos que você puser na pasta do canal. A aba mostra o
+  caminho; no Docker ela fica dentro da pasta do projeto:
+
+  ```
+  C:\Users\User\Documents\GitHub\Automated-Multi-Source-Short-Form-Video-Processing-and-Publishing-System\data\entrada\<nome-do-canal>
+  ```
+
+  e no ajudante, em `%LOCALAPPDATA%\VirtuClips\dados\data\entrada\<nome-do-canal>`.
+  Um arquivo que mudou nos últimos 2 minutos espera (pode estar sendo copiado),
+  e o original fica na pasta.
+
+**Links, live e pasta pedem que você confirme ter os direitos** sobre aqueles
+vídeos; a busca não, porque só traz licença conferida. Trocar a fonte pede a
+confirmação de novo.
+
+**O que cada canal decide nos Ajustes:** a **agenda do canal** (as horas e quantos
+por dia) e o **feito para crianças** — no nicho infantil ele já vem marcado; com
+ele, todo envio pela API sai marcado como conteúdo para crianças no YouTube, e o
+LEIA-ME do pacote do dia lembra de marcar quando o post é à mão. Se o canal
+**revisa antes de postar**, os cortes esperam na **caixa de aprovação** da aba
+Automação; aprovado, o corte entra na agenda do canal.
+
+### Roteiro de teste (7.5)
+
+1. **O canal infantil, com aprovação.** Na aba Automação, **usar o modelo** do
+   nicho (ou escrever o tema), deixar "mais de 20 min", **salvar e ligar**, e
+   apertar **verificar agora** (para não esperar os 5 minutos). A receita busca,
+   escolhe o primeiro vídeo da fila e começa a cortar: o projeto aparece em
+   Projetos. Na caixa de entrada, conferir que os de **fora** dizem o motivo.
+2. Quando o projeto terminar, os cortes aparecem na **caixa de aprovação**.
+   Aprovar um: ele entra na agenda do canal, um post por conta, nas horas do
+   canal — conferir no **calendário** da Agenda. Recusar outro: ele fica no
+   projeto e não vai ao ar.
+3. **O crédito.** Baixar o pacote do dia (ou abrir a legenda ao lado do corte):
+   no fim do texto, "Créditos: …" com o título, o autor, o link do vídeo e a
+   licença. Postado pela API, o crédito vai no fim da descrição do YouTube e da
+   legenda do TikTok.
+4. **Um canal sem aprovação**, com **links** (confirmar os direitos): os cortes
+   vão direto para a agenda.
+5. **A pasta**: copiar um vídeo para a pasta de um canal com a fonte "pasta",
+   esperar 2 minutos e apertar **ler a pasta agora**.
+6. **Deixar o computador ligado com o programa aberto** e voltar no dia
+   seguinte: no calendário, os posts de ontem aparecem apagados ("saiu"), na
+   hora do seu relógio. Com a conta do YouTube conectada para publicar, o vídeo
+   do canal infantil aparece no YouTube Studio como "para crianças".
+
+**O que me mandar de volta**: a linha de situação da receita (logo no topo da
+aba Automação), o motivo de qualquer vídeo que ficou de fora e que você achou
+que devia ter entrado, e o log do projeto de qualquer corte que falhou.
 
 ---
 

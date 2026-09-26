@@ -43,7 +43,7 @@ from __future__ import annotations
 import os
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, time as _time, timedelta, timezone
+from datetime import datetime, time as _time, timedelta, timezone, tzinfo
 from typing import Callable, Iterable, Optional, Sequence
 
 #: Quantos cortes por dia, por padrao. A conta do §1.
@@ -214,19 +214,31 @@ class Triagem:
     reagendar: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class AgendaDaConta:
+    """As regras de UMA conta: as janelas e o teto do canal dela, e o fuso em
+    que as janelas valem (etapa 7.5). `None` e "o padrao da instalacao"."""
+    horas: Optional[tuple] = None
+    teto: Optional[int] = None
+    fuso: Optional[tzinfo] = None
+
+
 def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
                    ocupados_por_conta: Optional[dict] = None, *,
                    sorteador: Optional[Callable[[int, int], int]] = None,
                    horas: Optional[Sequence[int]] = None,
                    jitter: Optional[int] = None,
                    gap: Optional[timedelta] = None,
-                   teto_por_dia: Optional[int] = None) -> Triagem:
+                   teto_por_dia: Optional[int] = None,
+                   agendas: Optional[dict] = None) -> Triagem:
     """A trava do post atrasado: por conta, sai no maximo UM, e o resto espera.
 
     `vencidas` sao dicts com `id`, `account_id` e `scheduled_at`.
     `ocupados_por_conta` e `{conta: [horarios]}` com os posts recentes de
     verdade (e os que estao subindo agora) e os agendados que ainda nao
-    venceram.
+    venceram. `agendas` e `{conta: AgendaDaConta}`: as janelas, o teto e o fuso
+    do canal de cada conta (7.5); a conta que nao estiver ali segue `horas`,
+    `teto_por_dia` e o fuso do processo.
 
     Por conta, a vencida mais antiga sai agora se as duas regras deixarem: o
     espacamento minimo desde o ultimo post da conta e o teto do dia. As outras
@@ -238,10 +250,10 @@ def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
     juntos -- o PC que ficou desligado --, e ai e ela que impede a rajada.
     """
     agora = _com_fuso(agora)
-    local = agora.astimezone()
     gap = espacamento_minimo() if gap is None else gap
-    teto = por_dia() if teto_por_dia is None else max(1, int(teto_por_dia))
+    teto_padrao = por_dia() if teto_por_dia is None else max(1, int(teto_por_dia))
     ocupados_por_conta = ocupados_por_conta or {}
+    agendas = agendas or {}
 
     por_conta: dict = {}
     for item in vencidas:
@@ -249,6 +261,12 @@ def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
 
     triagem = Triagem()
     for conta, itens in por_conta.items():
+        agenda = agendas.get(conta) or AgendaDaConta()
+        # O "hoje" do teto e o dia de quem usa, e as janelas do reagendamento
+        # sao as dela: no Docker o processo esta em UTC.
+        local = agora.astimezone(agenda.fuso) if agenda.fuso else agora.astimezone()
+        teto = max(1, int(agenda.teto)) if agenda.teto else teto_padrao
+        horas_da_conta = agenda.horas if agenda.horas else horas
         itens = sorted(itens, key=lambda i: (_com_fuso(i["scheduled_at"]), i["id"]))
         tomados = sorted(_com_fuso(o).astimezone(local.tzinfo)
                          for o in ocupados_por_conta.get(conta, ()))
@@ -264,18 +282,20 @@ def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
         if not resto:
             continue
         horarios = proximos_horarios(
-            len(resto), local, sorteador=sorteador, horas=horas, jitter=jitter,
+            len(resto), local, sorteador=sorteador, horas=horas_da_conta, jitter=jitter,
             gap=gap, teto_por_dia=teto, ocupados=tomados)
         for item, quando in zip(resto, horarios):
             triagem.reagendar[item["id"]] = quando
     return triagem
 
 
-def descricao() -> dict:
-    """A agenda em vigor, para o painel explicar o que vai acontecer."""
+def descricao(agenda: Optional[AgendaDaConta] = None) -> dict:
+    """A agenda em vigor, para o painel explicar o que vai acontecer. Com
+    `agenda`, a de um canal: as janelas e o teto dele no lugar dos padroes."""
+    agenda = agenda or AgendaDaConta()
     return {
-        "por_dia": por_dia(),
-        "janelas": list(janelas()),
+        "por_dia": int(agenda.teto) if agenda.teto else por_dia(),
+        "janelas": list(agenda.horas) if agenda.horas else list(janelas()),
         "espacamento_min": int(espacamento_minimo().total_seconds() // 60),
         "jitter_min": jitter_minutos(),
         "jitter_piso_min": JITTER_MINIMO_MIN,

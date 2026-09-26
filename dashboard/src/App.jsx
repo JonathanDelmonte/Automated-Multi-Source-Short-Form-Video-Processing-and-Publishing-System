@@ -25,6 +25,7 @@ import { API_BASE_URL } from './config';
 import { URL_DO_INSTALADOR } from './lib/ajudante';
 import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 import { useListaDeCanais } from './lib/canais';
+import { mandarFuso } from './lib/automacao';
 import { ehVoltaDoGoogle } from './lib/conexoes';
 import { PainelContext } from './lib/painel';
 import { hrefDe, ir, useRota } from './lib/rota';
@@ -154,6 +155,9 @@ function App() {
   const sessaoPronta = configCarregada && (!authAtiva || isSignedIn);
   // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   useAquecerTranscricao(sessaoPronta);
+  // O fuso deste navegador vai para o motor (7.5): a agenda e a automação
+  // valem no relógio de quem usa, e no Docker o motor roda em UTC.
+  useEffect(() => { if (sessaoPronta) mandarFuso(); }, [sessaoPronta]);
   const rota = useRota();
   // A volta do "Conectar YouTube" no painel do Docker (7.3): o Google devolve
   // para a raiz do painel, com `?state=...&code=...` (ver VoltaDoGoogle).

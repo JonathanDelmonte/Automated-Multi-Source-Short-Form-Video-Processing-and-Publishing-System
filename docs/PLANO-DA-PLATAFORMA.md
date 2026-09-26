@@ -123,14 +123,18 @@ caminho de produção.
 | `jobs` | um vídeo processado | nada |
 | `publications` | um corte numa conta | nada: **já é o galho**. A unicidade (corte, conta) é o que impede postar duas vezes |
 | `metrics` | série de views e retenção por publicação | nada; as análises agregam por conta e por canal |
-| `source_licenses` | — | **nova** (7.5): licença e crédito da fonte (autor, licença, link) |
-| `recipes` | — | **nova** (7.5): tipo, fonte, edição, agenda, aprovação |
-| `candidates` | — | **nova** (7.5): vídeos que a busca achou, com a licença, esperando decisão |
+| `channel_settings` | — | **nova** (7.5): a agenda do canal (as janelas e quantos posts por dia) e o "feito para crianças" |
+| `recipes` | — | **nova** (7.5): o tipo, de onde vêm os vídeos e como editar. Quando postar e se espera aprovação ficaram no **canal** (a agenda nos ajustes; a aprovação desde a 7.1) |
+| `candidates` | — | **nova** (7.5): vídeos que a receita achou, com a licença, esperando a vez — a caixa de entrada de fontes |
+| `source_licenses` | — | **nova** (7.5): a origem e a licença de cada fonte processada (autor, licença, link), de onde sai o crédito |
+| `clip_approvals` | — | **nova** (7.5): os cortes da automação esperando a pessoa — a caixa de aprovação |
 | `creation_styles`, `creations` | — | **novas** (7.7): o estilo de criação salvo, e o roteiro, as cenas e os arquivos de cada vídeo de IA |
 | `devices` | — | **nova** (7.9): os aparelhos da frota |
 
 O projeto também guarda o canal na própria pasta (`.canal`, ao lado do `.tenant`):
-a lista de projetos vem do disco, e o banco falha aberto.
+a lista de projetos vem do disco, e o banco falha aberto. Pelo mesmo motivo, a
+origem e a licença da fonte (7.5) moram também na pasta (`.origem.json`): é dali
+que o crédito sai na hora de publicar.
 
 ## As fases
 
@@ -431,15 +435,71 @@ autor** são os números de verdade, com as contas dele: o roteiro está no
 - **O motor ligado.** Para rodar sozinho, o motor tem de subir com o Windows: o
   ajudante já faz isso; no Docker, o Docker Desktop precisa iniciar com o
   Windows. O post cuja hora passou com o PC desligado segue a trava da 7.3.
-- **O fuso da agenda (achado na 7.4).** O agendador calcula as janelas no fuso
-  do processo, e no Docker o container roda em UTC: 11h/15h/19h viram 8h/12h/16h
-  em Brasília. O contorno está no `COMO-EXECUTAR.md` (`SCHEDULE_WINDOWS=14,18,22`);
-  o conserto entra aqui, com as janelas passando a ser do canal: o fuso de quem
-  usa guardado no motor. No ajudante, vale a hora do Windows.
+- **O fuso da agenda (achado na 7.4, consertado aqui).** O agendador calculava
+  as janelas no fuso do processo, e no Docker o container roda em UTC:
+  11h/15h/19h viravam 8h/12h/16h em Brasília. Agora o painel manda o fuso do
+  navegador ao motor a cada vez que abre, e as janelas de cada canal valem nele;
+  o contorno `SCHEDULE_WINDOWS=14,18,22` deixou de ser preciso.
 
 **Pronto quando:** o canal infantil, com o PC ligado e ninguém mexendo, acha um
 vídeo com licença, corta, espera a aprovação (ou não, se o canal estiver assim) e
 posta nos horários dele, com o crédito na descrição.
+
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.5a | motor: as cinco tabelas; a agenda do canal (as janelas e quantos posts por dia, nos ajustes do canal) no fuso de quem usa — o conserto do achado da 7.4 —; e o "feito para crianças" (escolhido no canal, ou pelo nicho), que vai no envio do YouTube e no LEIA-ME do pacote do dia | feita (26-set) |
+| 7.5b | motor: as quatro fontes da receita — a busca com licença Creative Commons conferida vídeo a vídeo (pela API, com a cota de 100 buscas por dia, ou pelo yt-dlp), os links (vídeo, playlist ou canal), a live da Twitch em blocos e a pasta do canal —; a origem gravada no projeto e em `source_licenses`; e o crédito no fim do texto de toda plataforma, sem nunca ser cortado | feita (26-set) |
+| 7.5c | motor: o laço (a cada 5 minutos, um vídeo por vez, parando quando a agenda do canal tem dois dias de posts), o fim do job (a caixa de aprovação ou a agenda do canal), a caixa de aprovação e o "não repetir" — a fonte, entre canais, e o corte, na mesma plataforma | feita (26-set) |
+| 7.5d | painel: a aba Automação do canal (a receita, a caixa de entrada de fontes e a de aprovação, com a prévia do corte), a agenda do canal nos Ajustes, o calendário da semana na Agenda e o resumo no Início | feita (26-set) |
+| 7.5e | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (26-set) |
+
+**Como a receita ficou, e por quê:**
+
+- **Quando postar e se espera aprovação são do canal, não da receita.** As
+  janelas valem para tudo o que o canal posta — pela receita, pela aprovação ou
+  à mão —, e a trava do agendador trabalha por conta: duas receitas no mesmo
+  canal (a de cortes e, na 7.7, a de IA) postariam pelas mesmas janelas de
+  qualquer jeito. A agenda fica nos ajustes do canal; a aprovação, onde está
+  desde a 7.1. A receita só as mostra.
+- **O idioma é o do canal** (7.1): é nele que a busca procura e que o crédito é
+  escrito. Os títulos e a legenda saem na língua falada do vídeo, como sempre.
+- **A busca só traz licença conferida**, e por isso roda sem pedir nada a quem
+  usa. Links, live e pasta pedem a confirmação de que a pessoa tem os direitos,
+  e **trocar a fonte apaga a confirmação**: quem confirmou uma lista de links não
+  confirmou a próxima.
+- **O estoque manda, não o relógio.** Com dois dias de posts na agenda (ou
+  cortes esperando a aprovação), a receita não corta mais nada — senão, um canal
+  que posta 3 por dia e corta 5 por vídeo acumularia uma pilha que ninguém vai
+  postar.
+- **O crédito nunca é o que se corta.** Quando o texto passa do limite da
+  plataforma, quem encolhe é a descrição que a IA escreveu; o crédito, que a
+  licença exige, vai inteiro.
+- **Aprovar e não caber em conta nenhuma não some**: o corte volta a esperar, e
+  a tela diz por quê.
+
+**Onde a 7.5 está (26-set-2026).** O "pronto quando" roda inteiro nos testes do
+motor (`tests/test_automacao.py`): o canal infantil acha um vídeo Creative
+Commons (a busca é imitada; o resto é o motor de verdade, com o `/api/process`
+inteiro), corta, e posta às 11h, 15h e 19h de Brasília com o crédito na
+descrição — com e sem a aprovação. As telas foram conferidas com o motor de
+verdade, um banco de demonstração com três canais (o infantil, com aprovação e
+busca; um de finanças, com links e sem aprovação; um de fatos, com a pasta) e um
+navegador (Playwright), no computador e no celular: a aba Automação, o modelo
+do nicho no editor, a caixa de entrada (na fila, cortados e fora, com o motivo
+de cada um), a caixa de aprovação com a prévia, a agenda do canal, o calendário,
+o Início, e as Ferramentas apontando para as receitas. Na conferência saíram
+cinco acertos de tela — o texto do "agendar" citava as janelas da instalação com
+o destino num canal que tem as dele, a caixa de aprovação listava os cortes de
+trás para a frente, e, no celular, as miniaturas esticavam, os layouts da
+receita não cabiam e a fila cortava a hora do agendado — e três textos que ainda
+anunciavam a automação como futura. Na revisão do código, o "feito para
+crianças" passou a olhar também o canal da **conta** de destino, e não só o do
+projeto: um projeto sem canal publicado na conta do canal infantil sairia
+desmarcado. **O que falta ver no PC do autor** é a rede de verdade: a busca no
+YouTube, o corte de um vídeo achado por ela e o post com o crédito. O roteiro
+está no `COMO-EXECUTAR.md`, Passo 13.
 
 ### 7.6 — Séries em partes
 
@@ -681,6 +741,12 @@ vieram.
 `COMO-EXECUTAR.md` à medida que ela fica pronta, para que o teste do final seja
 seguir a lista, e não lembrar o que mudou.
 
+**26-set-2026, ao fechar a 7.4:** "prossiga", para a 7.5. No meio da 7.5d a
+sessão bateu no limite de uso, e a mensagem seguinte foi "prossiga para fase 4":
+lido como seguir com a quarta parte da 7.5 (a 7.5d, o painel), que estava em
+andamento; a Fase 4 do plano original (auth e multiusuário) já estava pronta.
+Se era outra coisa, é só dizer.
+
 ## Fontes
 
 As regras externas foram conferidas em 25-set-2026:
@@ -692,3 +758,9 @@ As regras externas foram conferidas em 25-set-2026:
 - TikTok, postagem e métricas: [Content Sharing Guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines),
   [Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post),
   [List Videos](https://developers.tiktok.com/docs/en/tiktok-api-v1-video-list).
+- YouTube, busca e licença (7.5): [Search: list](https://developers.google.com/youtube/v3/docs/search/list)
+  (o parâmetro `videoLicense=creativeCommon`) e o recurso [Videos](https://developers.google.com/youtube/v3/docs/videos)
+  (o campo `status.license`); o texto das licenças que o crédito cita,
+  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) e
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), com a troca de uma
+  para a outra no YouTube pesquisada em 26-set-2026 (anotada em `licencas.py`).

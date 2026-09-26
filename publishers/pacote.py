@@ -70,19 +70,20 @@ def slug(texto: str) -> str:
     return _limitar_bytes(limpo, MAX_NOME_BYTES)
 
 
-def dia_de(timestamp: float) -> str:
-    """A data ISO de um mtime, no fuso da maquina que roda o servidor.
+def dia_de(timestamp: float, fuso=None) -> str:
+    """A data ISO de um mtime, no fuso de quem usa.
 
-    Fuso local, e nao UTC: "o pacote de hoje" e uma frase sobre o dia de quem
-    vai publicar. Num container sem `TZ` isso e UTC mesmo, e a diferenca
-    aparece nos cortes gerados de noite -- entao a data vai escrita no nome do
-    arquivo e dentro do LEIA-ME, para que nunca haja duvida de qual dia e.
+    Fuso de quem usa, e nao UTC: "o pacote de hoje" e uma frase sobre o dia de
+    quem vai publicar. Desde a etapa 7.5 o painel manda o fuso ao motor
+    (`fuso.py`), porque num container sem `TZ` o processo esta em UTC e os
+    cortes gerados de noite caiam no pacote do dia seguinte. Sem `fuso`, o do
+    processo -- e a data continua escrita no nome do arquivo e no LEIA-ME.
     """
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(timestamp, tz=fuso).strftime("%Y-%m-%d")
 
 
-def hoje() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+def hoje(fuso=None) -> str:
+    return datetime.now(tz=fuso).strftime("%Y-%m-%d")
 
 
 def nome_do_pacote(dia: str, plataforma: str) -> str:
@@ -132,6 +133,10 @@ def leia_me(itens: list, dia: str, plataforma: str,
         sufixo = f"  ·  {duracao:.0f}s" if duracao else ""
         linhas.append(f"{i:02d}. {titulo}{sufixo}")
         linhas.append(f"    {base}.mp4")
+        if plataforma == "youtube" and item.meta.made_for_kids:
+            # A COPPA (etapa 7.5): pela API o programa marca sozinho; postando a
+            # mao, quem marca e a pessoa, e o YouTube pergunta na hora de subir.
+            linhas.append("    Canal infantil: marque \"Sim, é conteúdo para crianças\".")
         linhas.append("")
     if faltando:
         linhas += [

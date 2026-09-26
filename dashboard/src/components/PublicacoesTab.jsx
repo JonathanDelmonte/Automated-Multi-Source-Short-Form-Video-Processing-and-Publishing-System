@@ -9,7 +9,10 @@ import FilaDePublicacoes from './FilaDePublicacoes';
 import ConexaoDaConta from './ConexaoDaConta';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
-import { caminhoDoPacote, corpoDoDestino, plataformasDoPacote } from '../lib/publicacoes';
+import {
+  caminhoDaAgenda, caminhoDoPacote, canalDoDestino, corpoDoDestino, plataformasDoPacote,
+} from '../lib/publicacoes';
+import { janelasEmTexto } from '../lib/receita.js';
 import { useAplicativos } from '../lib/aplicativo';
 import { TIPOS_DE, situacaoDoAplicativo } from '../lib/conexoes';
 import { hrefDe } from '../lib/rota';
@@ -64,10 +67,6 @@ export default function PublicacoesTab({
         apiFetch('/api/publicacoes'),
         apiFetch(canal ? `/api/jobs?canal=${encodeURIComponent(canal)}` : '/api/jobs'),
       ]);
-      try {
-        const rAgenda = await apiFetch('/api/agenda');
-        setAgenda(rAgenda.ok ? await rAgenda.json() : null);
-      } catch { setAgenda(null); }
       const prontos = rJobs.ok
         ? ((await rJobs.json()).jobs || []).filter((j) => j.clip_count > 0)
         : [];
@@ -176,6 +175,20 @@ export default function PublicacoesTab({
   destinoAtual.current = destino;
   const podePublicar = corpoDoDestino(envio.job_id, destino) && !ocupado;
   const destinoEhCanal = destino.startsWith('canal:');
+  // A agenda que o "agendar" vai seguir: a do canal do destino (7.5) -- o
+  // canal inteiro, ou o canal da conta escolhida --, ou a da instalação para
+  // uma conta solta. Pedida de novo a cada troca de destino: o texto não pode
+  // descrever as janelas de outro canal.
+  const canalDaAgenda = canalDoDestino(destino, contas);
+  const nomeDoCanalDaAgenda = canalDaAgenda ? canais.porId[canalDaAgenda]?.name : null;
+  useEffect(() => {
+    let vivo = true;
+    apiFetch(caminhoDaAgenda(canalDaAgenda))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((dados) => { if (vivo) setAgenda(dados); })
+      .catch(() => { if (vivo) setAgenda(null); });
+    return () => { vivo = false; };
+  }, [canalDaAgenda]);
 
   return (
       <div className="space-y-6">
@@ -427,13 +440,24 @@ export default function PublicacoesTab({
               {agenda && (
                 // O horário aparece ANTES de agendar. Descobrir a que horas o
                 // sistema publicou depois do post é tarde para discordar.
-                <p className="text-muted text-[12px] leading-snug">
-                  <strong className="text-ink2">agendar</strong> espalha os
-                  cortes em {agenda.janelas.map((h) => `${h}h`).join(', ')}, no
+                <p className="text-muted text-[12px] leading-snug" data-agenda={canalDaAgenda || 'instalacao'}>
+                  <strong className="text-ink2">agendar</strong>{' '}
+                  {nomeDoCanalDaAgenda
+                    ? <>segue a agenda de <span className="text-ink2">{nomeDoCanalDaAgenda}</span>:</>
+                    : 'espalha os cortes em'}{' '}
+                  {janelasEmTexto(agenda.janelas)}
+                  {agenda.fuso?.nome ? ` (${agenda.fuso.nome})` : ''}, no
                   máximo {agenda.por_dia} por dia em cada conta, com ±{agenda.jitter_min} min
                   de variação — horário exato todo dia é um dos sinais que a
                   detecção de automação cruza. Se o computador estiver desligado na
                   hora, os atrasados saem um de cada vez quando ele voltar.
+                  {nomeDoCanalDaAgenda && (
+                    <>
+                      {' '}
+                      <a href={hrefDe(`/canais/${canalDaAgenda}/ajustes`)}
+                         className="underline underline-offset-2 hover:text-ink2">mudar a agenda do canal</a>
+                    </>
+                  )}
                 </p>
               )}
             </>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, CalendarDays, Image, Plus, Scissors } from 'lucide-react';
+import AutomacaoNoInicio from '../components/automacao/AutomacaoNoInicio';
 import CartaoDoCanal from '../components/CartaoDoCanal';
 import NumerosDoDia from '../components/analises/NumerosDoDia';
 import PrimeirosPassos from '../components/PrimeirosPassos';
@@ -9,8 +10,9 @@ import { SituacaoDosCanais } from './Canais';
 import { usePainel } from '../lib/painel';
 import { hrefDe, ir } from '../lib/rota';
 
-// Início (etapa 7.1): os canais, os números do dia (7.4), o que está em
-// andamento e o próximo passo.
+// Início (etapa 7.1): os canais, a automação (7.5: o que espera a sua
+// aprovação e o que cada receita está fazendo), os números do dia (7.4), o que
+// está em andamento e o próximo passo.
 // Para quem chega pela primeira vez, os primeiros passos vêm antes de tudo;
 // eles somem sozinhos quando os quatro estão feitos, ou quando a pessoa manda.
 
@@ -92,6 +94,8 @@ export default function Inicio() {
           </div>
         )}
       </section>
+
+      <AutomacaoNoInicio />
 
       <NumerosDoDia />
 

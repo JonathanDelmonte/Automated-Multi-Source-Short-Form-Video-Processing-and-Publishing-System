@@ -22,7 +22,7 @@ import os
 import re
 
 from .base import (Account, Cost, PostMeta, PublishOptions, PublishResult,
-                   Publisher, RenderedClip)
+                   Publisher, RenderedClip, com_credito)
 
 #: Quantas hashtags cada plataforma aceita num post. **O Instagram passou a
 #: limitar a 5 por post e por Reel em dez-2025** (eram 30) e ignora as que
@@ -85,15 +85,6 @@ def limitar_hashtags(texto: str, maximo: int) -> str:
     return saida.strip()
 
 
-def _cortar(texto: str, maximo: int) -> str:
-    """No maximo `maximo` caracteres, cortando num espaco quando da."""
-    if len(texto) <= maximo:
-        return texto
-    corte = texto[:maximo]
-    espaco = corte.rfind(" ")
-    return (corte[:espaco] if espaco > maximo * 0.8 else corte).rstrip()
-
-
 def render_caption(meta: PostMeta, platform: str) -> str:
     """O texto que a pessoa cola. Titulo, linha em branco, descricao, hashtags.
 
@@ -111,8 +102,9 @@ def render_caption(meta: PostMeta, platform: str) -> str:
     texto = "\n\n".join(partes)
     if platform in MAX_HASHTAGS:
         texto = limitar_hashtags(texto, MAX_HASHTAGS[platform])
-    if platform in MAX_CARACTERES:
-        texto = _cortar(texto, MAX_CARACTERES[platform])
+    # O credito da fonte (7.5) entra depois do limite de hashtags e nunca e o
+    # que se corta: quem encolhe para caber e o resto do texto.
+    texto = com_credito(texto, meta.credit, MAX_CARACTERES.get(platform))
     return texto + "\n"
 
 

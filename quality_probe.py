@@ -8,6 +8,12 @@ transcription and rendering on a 360p-only source.
 Prints JSON to stdout: {"max_height": int, "mode": str, "cookies_invalid": bool}
 Always exits 0 — the caller treats probe failures as "unknown" and starts the
 job anyway (fail-open), where the in-job warning still applies.
+
+Desde a etapa 7.5 a mesma extracao devolve tambem a ORIGEM do video (`origem`:
+titulo, canal, link, data de envio e a licenca que a pagina mostra). E de
+graca -- a pagina ja foi aberta para medir a qualidade -- e e o que deixa todo
+projeto feito de um link do YouTube saber de onde veio e, se a licenca for
+Creative Commons, sair com o credito na descricao.
 """
 import argparse
 import json
@@ -33,12 +39,35 @@ def _find_cookies_path(url: str = "https://www.youtube.com/"):
     return sources.jar_em_disco(url)
 
 
+def _origem(info: dict):
+    """Titulo, canal, link, data e licenca, como a pagina do video mostra.
+
+    `license` so existe quando a pagina tem a linha de licenca -- os videos
+    Creative Commons. A ausencia nao e afirmada aqui: quem le decide
+    (`licencas.normalizar` devolve `desconhecida`).
+    """
+    try:
+        return {
+            "id": info.get("id"),
+            "url": info.get("webpage_url"),
+            "title": info.get("title"),
+            "author": info.get("channel") or info.get("uploader"),
+            "author_url": info.get("channel_url") or info.get("uploader_url"),
+            "published_at": info.get("upload_date"),
+            "license": info.get("license"),
+            "license_text": info.get("license"),
+        }
+    except Exception:
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe available YouTube quality for a URL.")
     parser.add_argument("--url", required=True)
     args = parser.parse_args()
 
-    result = {"max_height": 0, "mode": None, "cookies_invalid": False, "duration": 0}
+    result = {"max_height": 0, "mode": None, "cookies_invalid": False, "duration": 0,
+              "origem": None}
     try:
         import yt_dlp
 
@@ -111,6 +140,8 @@ def main() -> int:
                     result["mode"] = mode
                 if not result["duration"]:
                     result["duration"] = int(info.get('duration') or 0)
+                if result["origem"] is None:
+                    result["origem"] = _origem(info)
                 if result["max_height"] >= 1080:
                     break
             except Exception:

@@ -267,3 +267,32 @@ def kwargs_de_legenda(spec: dict | None) -> dict:
             continue
         base[traducao.get(chave, chave)] = valor
     return base
+
+
+#: O arquivo que o `/api/process` escreve na pasta do job quando a receita (ou
+#: quem pediu) escolhe um template (etapa 7.5), e a variavel que diz ao
+#: `main.py` onde ele esta.
+ARQUIVO_DO_JOB = "caption_template.json"
+VARIAVEL_DO_JOB = "CAPTION_TEMPLATE_FILE"
+
+
+def kwargs_do_arquivo(caminho: str | None) -> dict | None:
+    """Os argumentos do `generate_ass` do template gravado em `caminho`, com a
+    `margin_v` da `safeArea` -- ou None, e o corte sai no estilo de sempre.
+
+    Nunca levanta: um template torto nao pode custar a legenda do corte (a
+    regra do `auto_caption_clip`, que chama isto).
+    """
+    if not caminho:
+        return None
+    try:
+        import json
+
+        with open(caminho, encoding="utf-8") as f:
+            spec = json.load(f)
+        kwargs = kwargs_de_legenda(spec)
+        kwargs["margin_v"] = margem_vertical(spec)
+        return kwargs
+    except (OSError, ValueError, TemplateInvalido) as e:
+        print(f"   ⚠️ Template de legenda ilegivel ({e}); vale o estilo padrao.")
+        return None

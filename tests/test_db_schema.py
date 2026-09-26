@@ -82,7 +82,12 @@ class TestTenantEmTodaTabela:
                      # 7.3: quando e onde a publicacao foi ao ar.
                      "publication_posts",
                      # 7.4: curtidas, comentarios e o resto de uma leitura.
-                     "metric_details"}
+                     "metric_details",
+                     # 7.5: a automacao por canal -- os ajustes do canal, a
+                     # receita, os videos que ela achou, a licenca de cada
+                     # fonte e a caixa de aprovacao.
+                     "channel_settings", "recipes", "candidates",
+                     "source_licenses", "clip_approvals"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

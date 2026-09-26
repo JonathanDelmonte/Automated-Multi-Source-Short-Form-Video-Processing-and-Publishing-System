@@ -100,6 +100,13 @@ class PostMeta:
     descriptions: dict = field(default_factory=dict)
     hashtags: tuple[str, ...] = ()
     language: str = ""
+    # O credito que a licenca da fonte exige (etapa 7.5, `licencas.credito`):
+    # vai no FIM do texto de toda plataforma, e nunca e cortado para caber --
+    # quem corta e a descricao (`com_credito`).
+    credit: str = ""
+    # "Feito para criancas" (COPPA): o canal infantil marca todo envio
+    # (etapa 7.5, `receitas.feito_para_criancas`).
+    made_for_kids: bool = False
 
     def description_for(self, platform: str) -> str:
         texto = (self.descriptions.get(platform) or "").strip()
@@ -109,6 +116,38 @@ class PostMeta:
             if (valor or "").strip():
                 return valor.strip()
         return ""
+
+
+def com_credito(texto: str, credito: str, limite: Optional[int] = None) -> str:
+    """O texto do post com o credito da fonte no fim.
+
+    **O credito nunca e o que se corta.** A licenca Creative Commons exige o
+    credito; a descricao que o detector escreveu, nao. Com `limite`, o texto
+    encolhe (num espaco, quando da) para o credito caber inteiro. Os tres
+    lugares que montam texto de post -- a descricao do YouTube, a legenda do
+    TikTok e a legenda pronta para colar -- passam por aqui, e um teste confere
+    os tres.
+    """
+    texto = (texto or "").strip()
+    credito = (credito or "").strip()
+    if not credito:
+        return _encolher(texto, limite) if limite else texto
+    separador = "\n\n" if texto else ""
+    if limite:
+        sobra = limite - len(credito) - len(separador)
+        if sobra <= 0:
+            return credito[:limite]
+        texto = _encolher(texto, sobra)
+    return f"{texto}{separador}{credito}"
+
+
+def _encolher(texto: str, maximo: int) -> str:
+    """No maximo `maximo` caracteres, cortando num espaco quando da."""
+    if len(texto) <= maximo:
+        return texto
+    corte = texto[:maximo]
+    espaco = corte.rfind(" ")
+    return (corte[:espaco] if espaco > maximo * 0.8 else corte).rstrip()
 
 
 @dataclass(frozen=True)

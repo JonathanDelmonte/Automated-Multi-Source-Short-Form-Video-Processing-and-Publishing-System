@@ -36,8 +36,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import (CheckConstraint, DateTime, Float, ForeignKeyConstraint,
-                        Index, Integer, String, Text, UniqueConstraint, func)
+from sqlalchemy import (Boolean, CheckConstraint, DateTime, Float,
+                        ForeignKeyConstraint, Index, Integer, String, Text,
+                        UniqueConstraint, func)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -432,9 +433,108 @@ class Metric(Base, TenantScoped):
     )
 
 
+# --------------------------------------------------------------------------- #
+# 10-12. canais -- o centro da Fase 7 (docs/PLANO-DA-PLATAFORMA.md)
+# --------------------------------------------------------------------------- #
+#
+# **Por que tres tabelas, e nao uma coluna `channel_id` em `accounts` e em
+# `jobs`.** O motor cria o banco no boot com `create_all` (`db_seed.seed()`), e
+# ninguem roda `alembic upgrade` na maquina de quem usa. O `create_all` cria
+# tabela que falta, mas NUNCA acrescenta coluna a tabela que ja existe: uma
+# coluna nova em `accounts` nao chegaria ao banco do autor, e a primeira
+# consulta que a lesse quebraria. Tabela nova chega sozinha. Entao a ligacao
+# mora em tabela propria, e a regra vale para o que vier: campo novo em tabela
+# existente, tabela nova.
+
+class Channel(Base, TenantScoped):
+    """Um canal: a marca que publica num nicho, com as contas de cada
+    plataforma ligadas a ele. O mesmo canal no YouTube e no TikTok e o caso
+    mais comum -- e o que faz dele o centro, e nao a conta."""
+    __tablename__ = "channels"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    niche: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # A imagem do canal como data URL, ja reduzida no navegador. Na linha e nao
+    # num arquivo: o painel a recebe junto do canal, sem mais uma rota de
+    # arquivo que precisaria do token de midia para abrir num <img>.
+    avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    color: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Espera aprovacao antes de postar? E escolha de quem usa, feita ao criar o
+    # canal (decisao do autor, 26-set-2026) -- por isso nao anulavel.
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_channels_tenant"),
+        # Dois "Canal infantil" no mesmo painel seriam dois lugares para o mesmo
+        # trabalho, e a pessoa nunca saberia em qual olhar.
+        UniqueConstraint("tenant_id", "name", name="uq_channels_tenant_name"),
+        Index("ix_channels_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+class ChannelAccount(Base, TenantScoped):
+    """Liga uma conta de plataforma a um canal. Uma conta pertence a no maximo
+    um canal; conta sem linha aqui e conta solta, e continua publicando."""
+    __tablename__ = "channel_accounts"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    account_id: Mapped[str] = mapped_column(ID, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_channel_accounts_tenant"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_channel_accounts_channel"),
+        ForeignKeyConstraint(["tenant_id", "account_id"],
+                             ["accounts.tenant_id", "accounts.id"],
+                             ondelete="CASCADE", name="fk_channel_accounts_account"),
+        UniqueConstraint("tenant_id", "account_id",
+                         name="uq_channel_accounts_tenant_account"),
+        Index("ix_channel_accounts_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_channel_accounts_tenant_channel", "tenant_id", "channel_id"),
+    )
+
+
+class ChannelJob(Base, TenantScoped):
+    """Liga um projeto a um canal. Sem linha, o projeto foi feito sem canal.
+
+    O projeto tambem guarda o canal na propria pasta (`.canal`, ao lado do
+    `.tenant`): a lista de projetos vem do disco e o banco falha aberto, entao
+    esta tabela serve as consultas do lado do banco, e a pasta, a lista."""
+    __tablename__ = "channel_jobs"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    job_id: Mapped[str] = mapped_column(ID, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_channel_jobs_tenant"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_channel_jobs_channel"),
+        ForeignKeyConstraint(["tenant_id", "job_id"], ["jobs.tenant_id", "jobs.id"],
+                             ondelete="CASCADE", name="fk_channel_jobs_job"),
+        UniqueConstraint("tenant_id", "job_id", name="uq_channel_jobs_tenant_job"),
+        Index("ix_channel_jobs_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_channel_jobs_tenant_channel", "tenant_id", "channel_id"),
+    )
+
+
 #: Toda tabela do schema menos `tenants`, que E o tenant. O teste de estrutura
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
     "users", "accounts", "templates", "sources", "jobs", "clips",
-    "publications", "metrics",
+    "publications", "metrics", "channels", "channel_accounts", "channel_jobs",
 )

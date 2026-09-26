@@ -174,6 +174,15 @@ escolhido, e ver os projetos dele no canal e em Projetos. Todo o resto do mapa t
 lugar visível, marcado "em breve". E nada do que funciona hoje para de funcionar:
 cortar sem canal, publicar, agendar, YouTube Studio, chaves, atualizar pelo botão.
 
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.1a | limpar as sobras do projeto original | feita (26-set) |
+| 7.1b | motor: tabelas, `canais.py`, `/api/canais`, o canal no projeto (`.canal` + `channel_jobs`), `PUT /api/jobs/{id}/canal` | feita (26-set) |
+| 7.1c | painel: navegação com endereço, páginas, canais, ícones | em curso |
+| 7.1d | conferir as telas no computador e no celular, docs, CI | falta |
+
 ### 7.2 — Qualidade dos cortes
 
 **Fica para o fim, a pedido do autor** (ver a ordem). Ele pode puxá-la antes,

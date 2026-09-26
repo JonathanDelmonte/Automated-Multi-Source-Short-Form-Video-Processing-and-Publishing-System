@@ -72,9 +72,13 @@ class TestTenantEmTodaTabela:
                 continue
             assert issubclass(cls, TenantScoped), f"{cls.__name__} sem o mixin"
 
-    def test_as_nove_tabelas_da_secao_7_existem(self):
+    def test_as_nove_tabelas_da_secao_7_e_as_dos_canais_existem(self):
         esperadas = {"tenants", "users", "accounts", "templates", "sources",
-                     "jobs", "clips", "publications", "metrics"}
+                     "jobs", "clips", "publications", "metrics",
+                     # Fase 7 (7.1): o canal e as duas ligacoes dele. Tabelas
+                     # novas, e nao colunas: o boot usa create_all, que nunca
+                     # acrescenta coluna a tabela existente.
+                     "channels", "channel_accounts", "channel_jobs"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

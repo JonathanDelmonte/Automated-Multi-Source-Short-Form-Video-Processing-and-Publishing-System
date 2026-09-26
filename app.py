@@ -9,6 +9,7 @@ import atualizar_motor
 import sources
 import publishers
 import publish_queue
+import canais
 import auth
 import scheduler
 import metrics_collector
@@ -660,6 +661,40 @@ def _gravar_tenant_do_job(job_path: str, tenant_id: str) -> None:
         print(f"⚠️ Nao consegui gravar o tenant do job em {job_path}: {e}")
 
 
+#: O canal de um projeto (Fase 7), gravado ao lado dos arquivos dele. Mesmo
+#: motivo do `.tenant`: a lista de projetos vem do disco, e o banco falha aberto
+#: -- a linha de `channel_jobs` (`canais.ligar_job`) serve as consultas do lado
+#: do banco, e esta pasta e quem manda na lista. Sem o arquivo, o projeto foi
+#: feito sem canal (todo projeto anterior a Fase 7).
+ARQUIVO_CANAL = ".canal"
+
+
+def _canal_do_disco(job_path: str) -> Optional[str]:
+    try:
+        with open(os.path.join(job_path, ARQUIVO_CANAL), encoding="utf-8") as fh:
+            valor = fh.read().strip()
+    except OSError:
+        return None
+    return valor if canais.id_valido(valor) else None
+
+
+def _gravar_canal_do_job(job_path: str, canal_id: Optional[str]) -> bool:
+    """Grava (ou apaga, com None) o canal do projeto. False se o disco recusou."""
+    caminho = os.path.join(job_path, ARQUIVO_CANAL)
+    try:
+        if canal_id is None:
+            if os.path.exists(caminho):
+                os.remove(caminho)
+            return True
+        os.makedirs(job_path, exist_ok=True)
+        with open(caminho, "w", encoding="utf-8") as fh:
+            fh.write(canal_id)
+        return True
+    except OSError as e:
+        print(f"⚠️ Nao consegui gravar o canal do projeto em {job_path}: {e}")
+        return False
+
+
 def _recover_jobs_from_disk():
     """Rebuild completed jobs from OUTPUT_DIR after a restart (issue #46 / #18).
 
@@ -702,6 +737,7 @@ def _recover_jobs_from_disk():
                 'output_dir': job_path,
                 'user_id': owner,
                 'tenant_id': _tenant_do_disco(job_path),
+                'channel_id': _canal_do_disco(job_path),
                 'result': {'clips': clips, 'cost_analysis': data.get('cost_analysis')},
             }
             recovered += 1
@@ -1106,6 +1142,7 @@ def _resume_interrupted_jobs() -> set:
             # self-host e o certo, porque e o unico tenant que existia quando
             # ele foi escrito.
             'tenant_id': m.get("tenant_id") or db.SELF_HOST_TENANT_ID,
+            'channel_id': _canal_do_disco(job_path),
         }
         _enqueue_job(job_id, int(m.get("priority", 2)))
         resumed += 1
@@ -2829,6 +2866,7 @@ async def process_endpoint(
     thumbnail_session_id: Optional[str] = Form(None),
     captions: Optional[str] = Form(None),
     upload_id: Optional[str] = Form(None),
+    channel_id: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
     text_llm_ok = (llm_backend.active() or llm_cascade.has_text_provider()) and not BILLING_ENABLED
@@ -2867,6 +2905,7 @@ async def process_endpoint(
         thumbnail_session_id = body.get("thumbnail_session_id")
         captions = body.get("captions")
         upload_id = body.get("upload_id")
+        channel_id = body.get("channel_id")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -2914,6 +2953,17 @@ async def process_endpoint(
 
     if url and DISABLE_YOUTUBE_URL:
         raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment. Please upload a file you own.")
+
+    # O canal para o qual o projeto e feito (Fase 7). Conferido aqui, antes do
+    # probe e do upload, para que um id errado vire um 400 na hora e nao um
+    # projeto com canal fantasma. Banco fora do ar NAO impede o video: o
+    # pipeline nunca dependeu do banco, e o canal fica gravado na pasta.
+    channel_id = (channel_id or "").strip() or None
+    if channel_id is not None:
+        if not canais.id_valido(channel_id):
+            raise HTTPException(status_code=400, detail="channel_id invalido.")
+        if await canais.existe(channel_id) is False:
+            raise HTTPException(status_code=400, detail="Canal nao encontrado.")
 
     # O tenant desta requisicao, lido UMA vez e carregado junto do job. O worker
     # roda depois da resposta, numa tarefa que nao herda o contexto (bloco 4.2)
@@ -3178,6 +3228,7 @@ async def process_endpoint(
         'webhook_secret': webhook_secret,
         'base_url': api_base,
         'tenant_id': tenant_do_job,
+        'channel_id': channel_id,
     }
 
     # Registra a fonte e o job no banco (Fase 3, bloco 3.3). Falha aberto: o
@@ -3189,13 +3240,15 @@ async def process_endpoint(
         entrada=url or os.path.basename(input_path or "upload"),
         duration_ms=int(source_seconds_for_db * 1000) if source_seconds_for_db else None,
         storage_key=None if url else input_path)
-    if source_id:
-        await job_registry.registrar_job(job_id, source_id)
+    if source_id and await job_registry.registrar_job(job_id, source_id) and channel_id:
+        await canais.ligar_job(job_id, channel_id)
 
     # O tenant vai para a pasta do job pelo mesmo motivo do `.owner` logo
     # abaixo: o manifesto de resume some quando o job termina, e um projeto
     # completo recuperado do disco precisa continuar sabendo de quem e.
     _gravar_tenant_do_job(job_output_dir, tenant_do_job)
+    if channel_id:
+        _gravar_canal_do_job(job_output_dir, channel_id)
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
     # restart (see _recover_jobs_from_disk).
@@ -3245,6 +3298,7 @@ def _job_view_from_disk(job_id):
         # apareceria sem dono -- e `_assert_job_owner` deixaria qualquer tenant
         # cancelar ou apagar o video de outro no meio do processamento.
         'tenant_id': m.get("tenant_id") or _tenant_do_disco(job_path),
+        'channel_id': _canal_do_disco(job_path),
         'result': None,
     }
 
@@ -3478,17 +3532,17 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
         "clip_count": len(clipes),
         "first_clip_url": capa,
         "created_at": criado,
+        "channel_id": job.get('channel_id'),
         **_stage_view(job),
     }
 
 
-@app.get("/api/jobs")
-async def list_jobs(request: Request):
-    """Os projetos deste usuario, do mais recente para o mais antigo.
+async def _jobs_do_pedido(request: Request) -> list:
+    """(job_id, job) de tudo o que quem pediu pode ver, memoria e disco.
 
-    Junta memoria e disco porque as duas metades sao parciais: a memoria perde
-    tudo num restart do container, e o disco nao conhece um job que ainda esta
-    na fila (a pasta so nasce quando o `main.py` comeca a escrever).
+    Junta as duas metades porque as duas sao parciais: a memoria perde tudo num
+    restart do container, e o disco nao conhece um job que ainda esta na fila
+    (a pasta so nasce quando o `main.py` comeca a escrever).
     """
     _recover_jobs_from_disk()
     vistos = []
@@ -3500,9 +3554,59 @@ async def list_jobs(request: Request):
             await _assert_job_owner(request, job)
         except HTTPException:
             continue
-        vistos.append(_resumo_do_job(job_id, job))
+        vistos.append((job_id, job))
+    return vistos
+
+
+@app.get("/api/jobs")
+async def list_jobs(request: Request, canal: Optional[str] = None):
+    """Os projetos deste usuario, do mais recente para o mais antigo.
+
+    `?canal=<id>` fica so com os de um canal (Fase 7).
+    """
+    vistos = [_resumo_do_job(job_id, job)
+              for job_id, job in await _jobs_do_pedido(request)
+              if not canal or job.get('channel_id') == canal]
     vistos.sort(key=lambda j: j.get('created_at') or 0, reverse=True)
     return {"jobs": vistos}
+
+
+@app.put("/api/jobs/{job_id}/canal")
+async def mover_projeto(job_id: str, request: Request):
+    """Poe o projeto num canal, ou tira (`{"channel_id": null}`).
+
+    E o caminho dos projetos feitos antes dos canais existirem: todos nasceram
+    sem canal. A pasta muda primeiro, porque e dela que a lista le; o banco
+    acompanha falhando aberto, como no submit.
+    """
+    _exigir_json(request)
+    if not _JOB_ID_RE.match(job_id or ""):
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = jobs.get(job_id) or _job_view_from_disk(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _assert_job_owner(request, job)
+    try:
+        corpo = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Corpo invalido.")
+    if not isinstance(corpo, dict) or "channel_id" not in corpo:
+        raise HTTPException(status_code=400, detail="Falta o channel_id (ou null para tirar do canal).")
+    canal_id = corpo["channel_id"] or None
+    if canal_id is not None:
+        if not canais.id_valido(canal_id):
+            raise HTTPException(status_code=400, detail="channel_id invalido.")
+        existe = await canais.existe(canal_id)
+        if existe is None:
+            raise _erro_da_fila(RuntimeError("conferir o canal"))
+        if not existe:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado.")
+    pasta = job.get('output_dir') or os.path.join(OUTPUT_DIR, job_id)
+    if not _gravar_canal_do_job(pasta, canal_id):
+        raise HTTPException(status_code=500, detail="Nao consegui gravar na pasta do projeto.")
+    job['channel_id'] = canal_id
+    await canais.ligar_job(job_id, canal_id)
+    return {"job_id": job_id, "channel_id": canal_id}
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -6387,6 +6491,132 @@ async def listar_usuarios(request: Request):
              "pode_entrar": u.password_hash is not None} for u in usuarios]}
     except Exception as e:
         raise _erro_da_fila(e)
+
+
+# --- Canais (Fase 7, etapa 7.1) ----------------------------------------------
+# O canal e o centro da plataforma: a marca num nicho, com as contas de cada
+# plataforma e os projetos feitos para ela. O desenho esta em
+# docs/PLANO-DA-PLATAFORMA.md; as regras, em `canais.py`.
+
+def _erro_do_canal(e: Exception) -> HTTPException:
+    if isinstance(e, canais.CanalDuplicado):
+        return HTTPException(status_code=409, detail=str(e))
+    if isinstance(e, canais.CanalError):
+        return HTTPException(status_code=400, detail=str(e))
+    return _erro_da_fila(e)
+
+
+async def _corpo_json(request: Request) -> dict:
+    _exigir_json(request)
+    try:
+        corpo = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Corpo invalido.")
+    if not isinstance(corpo, dict):
+        raise HTTPException(status_code=400, detail="O pedido tem de ser um objeto.")
+    return corpo
+
+
+async def _projetos_por_canal(request: Request) -> dict:
+    """{channel_id: quantos projetos}, da MESMA fonte da lista de projetos (a
+    pasta de cada um), e nao do banco: as duas telas tem de concordar."""
+    contagem: dict = {}
+    for _job_id, job in await _jobs_do_pedido(request):
+        canal_id = job.get('channel_id')
+        if canal_id:
+            contagem[canal_id] = contagem.get(canal_id, 0) + 1
+    return contagem
+
+
+def _soltar_projetos_do_canal(canal_id: str) -> int:
+    """Tira o `.canal` dos projetos de um canal apagado; devolve quantos.
+
+    Varre a pasta de saida, e nao so a memoria: um projeto que falhou antes de
+    um restart nao volta para a memoria, mas a pasta dele continua dizendo o
+    canal -- e diria o de um canal que nao existe mais.
+    """
+    for job in list(jobs.values()):
+        if job.get('channel_id') == canal_id:
+            job['channel_id'] = None
+    try:
+        entradas = os.listdir(OUTPUT_DIR)
+    except OSError:
+        return 0
+    soltos = 0
+    for nome in entradas:
+        pasta = os.path.join(OUTPUT_DIR, nome)
+        if _canal_do_disco(pasta) == canal_id and _gravar_canal_do_job(pasta, None):
+            soltos += 1
+    return soltos
+
+
+@app.get("/api/canais")
+async def listar_canais(request: Request):
+    """Os canais, cada um com as contas ligadas e quantos projetos tem."""
+    try:
+        lista = await canais.listar()
+    except Exception as e:
+        raise _erro_do_canal(e)
+    contagem = await _projetos_por_canal(request)
+    return {"canais": [{**c, "projetos": contagem.get(c["id"], 0)} for c in lista],
+            "plataformas": list(publish_queue.PLATAFORMAS)}
+
+
+@app.post("/api/canais")
+async def criar_canal(request: Request):
+    """Cria o canal, e as contas novas dele na mesma gravacao (`novas_contas`).
+
+    `requires_approval` e obrigatorio: se o canal espera aprovacao antes de
+    postar e escolha de quem cria, e nenhum padrao decide por ela."""
+    corpo = await _corpo_json(request)
+    try:
+        canal = await canais.criar(corpo)
+    except Exception as e:
+        raise _erro_do_canal(e)
+    print(f"📺 Canal criado: {canal['name']}")
+    return {**canal, "projetos": 0}
+
+
+@app.get("/api/canais/{canal_id}")
+async def ver_canal(canal_id: str, request: Request):
+    try:
+        canal = await canais.obter(canal_id)
+    except Exception as e:
+        raise _erro_do_canal(e)
+    if canal is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado.")
+    contagem = await _projetos_por_canal(request)
+    return {**canal, "projetos": contagem.get(canal["id"], 0)}
+
+
+@app.patch("/api/canais/{canal_id}")
+async def editar_canal(canal_id: str, request: Request):
+    """Edita so os campos que vierem. `contas`, quando vem, e a lista inteira:
+    conta que ficou de fora se solta, e conta de outro canal muda para este."""
+    corpo = await _corpo_json(request)
+    try:
+        canal = await canais.atualizar(canal_id, corpo)
+    except Exception as e:
+        raise _erro_do_canal(e)
+    if canal is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado.")
+    contagem = await _projetos_por_canal(request)
+    return {**canal, "projetos": contagem.get(canal["id"], 0)}
+
+
+@app.delete("/api/canais/{canal_id}")
+async def apagar_canal(canal_id: str):
+    """Apaga o canal. As contas e os projetos FICAM, soltos: apagar um canal e
+    reorganizar, e a resposta diz quantos de cada um se soltaram."""
+    try:
+        resumo = await canais.apagar(canal_id)
+    except Exception as e:
+        raise _erro_do_canal(e)
+    if resumo is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado.")
+    soltos = await asyncio.to_thread(_soltar_projetos_do_canal, canal_id)
+    print(f"🗑️  Canal apagado: {resumo['name']} ({soltos} projeto(s) ficaram sem canal)")
+    return {"success": True, **resumo, "projetos_desligados": soltos}
 
 
 # --- Fila de publicacao (Fase 3, bloco 3.5) ---------------------------------

@@ -47,7 +47,7 @@ def conta_para_driver(linha) -> publishers.Account:
         credentials_ref=linha.credentials_ref, driver_pref=linha.driver_pref)
 
 
-def _conta_json(linha) -> dict:
+def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
     conta = conta_para_driver(linha)
     return {
         "id": linha.id,
@@ -58,18 +58,27 @@ def _conta_json(linha) -> dict:
         "credentials_ref": linha.credentials_ref,
         "driver_agora": publishers.resolve(linha.platform, conta).id,
         "capabilities": publishers.capabilities_de(conta),
+        # O canal a que a conta pertence (Fase 7), ou None se esta solta.
+        "channel_id": canal_id,
     }
 
 
 async def listar_contas() -> list:
     async with db.tenant() as t:
         linhas = await t.all(db_models.Account)
-    return [_conta_json(l) for l in linhas]
+        canal_de = {l.account_id: l.channel_id
+                    for l in await t.all(db_models.ChannelAccount)}
+    return [_conta_json(l, canal_de.get(l.id)) for l in linhas]
 
 
-async def criar_conta(platform: str, handle: str, driver_pref: str = "auto",
-                      credentials_ref: Optional[str] = None) -> dict:
-    if platform not in ("youtube", "tiktok", "instagram"):
+PLATAFORMAS = ("youtube", "tiktok", "instagram")
+
+
+def validar_conta(platform: str, handle: str, driver_pref: str = "auto",
+                  credentials_ref: Optional[str] = None) -> None:
+    """As regras de uma conta nova, num lugar so: quem cria conta pela fila e
+    quem cria pelo canal (`canais.py`) recusam exatamente as mesmas coisas."""
+    if platform not in PLATAFORMAS:
         raise FilaError(f"plataforma desconhecida: {platform}")
     if driver_pref not in db_models.DRIVER_PREFS:
         raise FilaError(f"preferencia de driver desconhecida: {driver_pref}")
@@ -84,16 +93,28 @@ async def criar_conta(platform: str, handle: str, driver_pref: str = "auto",
             vault.partes(credentials_ref)
         except vault.VaultError as e:
             raise FilaError(str(e))
+
+
+async def acrescentar_conta(t, platform: str, handle: str, driver_pref: str = "auto",
+                            credentials_ref: Optional[str] = None):
+    """Valida e acrescenta a conta DENTRO da sessao de quem chama, sem commit:
+    o canal cria as contas dele e as ligacoes na mesma transacao."""
+    validar_conta(platform, handle, driver_pref, credentials_ref)
+    existentes = await t.all(db_models.Account,
+                             db_models.Account.platform == platform,
+                             db_models.Account.handle == handle.strip())
+    if existentes:
+        raise FilaError(f"ja existe uma conta {platform}/{handle}")
+    return t.add(db_models.Account(
+        platform=platform, handle=handle.strip(), driver_pref=driver_pref,
+        credentials_ref=credentials_ref or db_models.vault_ref(
+            "env", platform, handle.strip())))
+
+
+async def criar_conta(platform: str, handle: str, driver_pref: str = "auto",
+                      credentials_ref: Optional[str] = None) -> dict:
     async with db.tenant() as t:
-        existentes = await t.all(db_models.Account,
-                                 db_models.Account.platform == platform,
-                                 db_models.Account.handle == handle.strip())
-        if existentes:
-            raise FilaError(f"ja existe uma conta {platform}/{handle}")
-        linha = t.add(db_models.Account(
-            platform=platform, handle=handle.strip(), driver_pref=driver_pref,
-            credentials_ref=credentials_ref or db_models.vault_ref(
-                "env", platform, handle.strip())))
+        linha = await acrescentar_conta(t, platform, handle, driver_pref, credentials_ref)
         await t.commit()
         return _conta_json(linha)
 

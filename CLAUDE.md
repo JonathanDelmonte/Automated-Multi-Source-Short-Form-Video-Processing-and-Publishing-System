@@ -1238,6 +1238,8 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
+| GET/POST/PATCH/DELETE | `/api/canais`, `/api/canais/{id}` | Os canais (Fase 7): nome, nicho, avatar, contas ligadas, aprovacao |
+| PUT | `/api/jobs/{id}/canal` | Poe (ou tira) um projeto num canal |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -2435,6 +2437,37 @@ do codigo que ela mudou.
   (ninguem conectou o YouTube), entao ainda nao morde.
 - **O estilo do video de IA e configurado por quem usa**, nunca deduzido do
   nicho ("nao coloca estilo 3D no infantil automaticamente").
+
+**Os canais no motor** (`canais.py`, `/api/canais`, etapa 7.1):
+
+- **O canal de um projeto mora na PASTA dele** (`.canal`, ao lado do
+  `.tenant`), e a linha de `channel_jobs` acompanha falhando aberto
+  (`canais.ligar_job`). A lista de projetos vem do disco; o banco serve as
+  consultas do lado dele (as analises por canal da 7.4). Marcador com texto que
+  nao e id vale "sem canal" -- ele chega do disco, e nao vira caminho.
+- **O CRUD levanta, ao contrario do registro do pipeline**: criar ou editar
+  canal e acao de quem esta na tela, e banco fora do ar e 503 com o que rodar.
+  Ja o `channel_id` do `/api/process` (Form e JSON) so recusa id malformado ou
+  canal que o banco diz nao existir -- banco fora do ar nao impede o video.
+- **`requires_approval` e obrigatorio ao criar**: decisao do autor, e nenhum
+  padrao decide por ele. O campo so e guardado por enquanto; quem o usa e a
+  automacao (7.5).
+- **Nome unico sem diferenca de maiuscula**, conferido no codigo; a unicidade
+  do schema e exata e fica de rede para dois pedidos ao mesmo tempo.
+- **Uma conta pertence a um canal so**: `contas` no PATCH e a lista inteira, e
+  pedir a conta de outro canal a MOVE. Conta que sai fica solta, com o
+  historico dela. `novas_contas` cria na mesma gravacao do canal, pelas mesmas
+  regras do `POST /api/contas` (`publish_queue.validar_conta`): uma recusada
+  desfaz tudo.
+- **Apagar canal solta contas e projetos**, e varre as pastas: um `.canal` de
+  canal apagado sairia apontando para o nada.
+- **O avatar e data URL png/jpeg/webp**, reduzido a 256 px no navegador, com
+  teto de 200 mil caracteres -- ele viaja dentro da lista de canais. Nunca
+  `svg`: e documento com script, desenhado num `<img>` de todo painel.
+- `PUT /api/jobs/{id}/canal` poe ou tira um projeto de um canal: todo projeto
+  anterior a Fase 7 nasceu sem. Esta no `test_todo_endpoint_de_job_recusa_o_vizinho`.
+- `tests/test_canais.py` inclui o banco ANTIGO: derruba as tres tabelas, roda o
+  boot e confere que elas voltam sem levar as contas que ja existiam.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

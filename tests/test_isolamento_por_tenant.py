@@ -129,7 +129,7 @@ class TestListaDeProjetos:
 class TestEndpointsDeJob:
 
     def test_todo_endpoint_de_job_recusa_o_vizinho(self, dois_donos, ambiente):
-        """A guarda esta em `_assert_job_owner`, que estes nove ja chamavam.
+        """A guarda esta em `_assert_job_owner`, que todos estes chamam.
 
         Conferir um por um aqui e o que garante que ela continua sendo chamada
         -- um endpoint que pare de faze-lo nao da erro, so passa a responder
@@ -142,6 +142,8 @@ class TestEndpointsDeJob:
             ("GET", f"/api/jobs/{meu}/download-all"),
             ("POST", f"/api/jobs/{meu}/cancel"),
             ("DELETE", f"/api/jobs/{meu}"),
+            # Fase 7: por o projeto num canal tambem e mexer no projeto.
+            ("PUT", f"/api/jobs/{meu}/canal"),
         ]
         for metodo, url in casos:
             r = _chama(metodo, url, corpo={}, token=b)

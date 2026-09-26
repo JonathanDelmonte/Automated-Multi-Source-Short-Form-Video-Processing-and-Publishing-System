@@ -458,3 +458,13 @@ def test_a_conta_do_instagram_diz_o_caminho_dela():
     assert "hrefDe('/agenda')" in bloco
     assert "pacote do dia" in bloco and "5 hashtags" in bloco and "já publiquei" in bloco
 
+
+
+def test_a_grade_de_cortes_se_divide_pelo_espaco_que_sobra():
+    """Com o menu lateral da 7.1, o `xl:grid-cols-2` dava cartoes de ~330 px
+    numa tela de 1280, e os rotulos dos botoes se sobrepunham (achado na
+    conferencia da 7.3e). A grade conta o espaco do container, nao a janela."""
+    projeto = _fonte("pages", "Projeto.jsx")
+    grade = next(linha for linha in projeto.splitlines() if "grid gap-4 pb-10" in linha)
+    assert "grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))]" in grade
+    assert "xl:grid-cols-2" not in grade

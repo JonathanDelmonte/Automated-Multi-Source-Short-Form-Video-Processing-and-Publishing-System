@@ -560,8 +560,12 @@ export default function Projeto({ jobId }) {
           )}
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
+            {/* Colunas pelo espaço que SOBRA, não pela largura da janela: com o
+                menu lateral (7.1), o `xl:grid-cols-2` de antes dava cartões de
+                ~330 px numa tela de 1280, e os rótulos dos botões se sobrepunham.
+                Duas colunas só quando cada cartão ganha pelo menos 24rem. */}
             {results && results.clips && results.clips.length > 0 ? (
-              <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'}`}>
+              <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))]' : 'grid-cols-1'}`}>
                 {rankedClips.map(({ clip, index: i }) => (
                   <ResultCard
                     key={`${jobId}-${i}-${clip.video_url || ''}`}

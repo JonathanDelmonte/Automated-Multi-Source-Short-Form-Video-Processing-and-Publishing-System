@@ -263,7 +263,7 @@ conta não saem juntos.
 | 7.3b | cadastro de aplicativo por pessoa (Configurações → aplicativos, com o passo a passo) e "Conectar YouTube" pelo site, para publicar e para medir | feita (26-set) |
 | 7.3c | TikTok pela Content Posting API (Direct Post), privado até a auditoria: o cadastro do app do TikTok nas Configurações, o "conectar" da conta pelo site e o driver `tiktok-api` na cascata | feita (26-set) |
 | 7.3d | Instagram na versão simples: o galho do Instagram sai pelo pacote do dia (agora escolhido por plataforma no painel) e volta pelo "já publiquei" com o link; a legenda respeita o limite de 5 hashtags do app; a publicação pela API fica para depois (o porquê está logo abaixo) | feita (26-set) |
-| 7.3e | conferir as telas no computador e no celular, docs, CI | a fazer |
+| 7.3e | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI; de quebra, a grade de cortes do projeto passou a se dividir pelo espaço que sobra (a 1280 px os botões dos cartões se sobrepunham desde o menu lateral da 7.1) | feita (26-set) |
 
 A trava tem o teste que o "pronto quando" pede
 (`tests/test_agendador.py::TestTravaNoLaco::test_cinco_posts_vencidos_da_mesma_conta_nao_saem_juntos`):
@@ -327,6 +327,26 @@ O que mudaria isso: a Meta documentar o envio direto com o token do Instagram,
 ou o programa ganhar um jeito seguro de servir o corte por HTTPS só durante o
 post. Medir o Instagram (7.4) é outra conversa: ler métricas não envia vídeo, e
 o token de leitura pode ser colado do painel da Meta.
+
+**Onde a 7.3 está (26-set-2026).** O código está inteiro e conferido até onde
+dá daqui: a trava tem o teste que o "pronto quando" pede; os galhos, o "já
+publiquei" com link, o "conectar" do YouTube e do TikTok e o pacote por
+plataforma rodaram no navegador; e todas as telas da 7.3 (Agenda, a visão geral,
+a agenda e os publicados do canal, Configurações → aplicativos e → contas, e o
+projeto) abrem sem erro e sem rolagem para o lado no computador e no celular.
+**O que falta para fechar o "pronto quando" depende das contas do autor**, e o
+roteiro está no `COMO-EXECUTAR.md`, Passo 8:
+
+1. **YouTube pela API, privado**: cadastrar o projeto dele no Google Cloud em
+   Configurações → aplicativos, conectar a conta, publicar um corte e conferir
+   no YouTube Studio;
+2. **TikTok pela API, privado**: o app dele no TikTok for Developers em
+   Sandbox, a conta de teste PRIVADA no app, publicar e conferir no app;
+3. **Instagram à mão**: o pacote do dia do Instagram, postar e colar o link no
+   "já publiquei".
+
+Os três no mesmo corte de um canal ligado são o "primeiro corte com os galhos
+rastreados" do critério.
 
 ### 7.4 — Análises por canal
 

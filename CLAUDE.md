@@ -2692,6 +2692,10 @@ do codigo que ela mudou.
   (`openshorts_session`, com os cortes inteiros); agora recarregar, voltar ou
   mandar o link reabre a mesma tela perguntando ao motor. Endereco que nao e
   tela (o `#app` das versoes antigas) cai no Inicio.
+- **A grade de cortes do projeto se divide pelo espaco que SOBRA** (7.3e):
+  `repeat(auto-fill, minmax(min(100%, 24rem), 1fr))`, e nao `xl:grid-cols-2`.
+  O menu lateral come 256 px, e a 1280 px o breakpoint dava cartoes de ~330 px
+  com os rotulos dos botoes um sobre o outro.
 - **O `App.jsx` e so o esqueleto**: sessao, navegacao (uma definicao, `NAV`,
   para o trilho, a gaveta e a barra do celular), avisos e qual pagina abre.
   O que as paginas dividem -- a chave do navegador, `keysMissing`, o

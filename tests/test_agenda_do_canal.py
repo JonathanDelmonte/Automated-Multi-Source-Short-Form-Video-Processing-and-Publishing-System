@@ -365,13 +365,14 @@ class TestAgendarNoFuso:
         assert agendas[solta["id"]].teto == app_module._teto_do_agendador()
         assert agendas[solta["id"]].fuso.utcoffset(None) == timedelta(hours=-3)
 
-    def test_a_trava_reagenda_nas_janelas_do_canal(self, ambiente):
+    def _tres_vencidas(self, ambiente, agora):
+        """Tres cortes agendados no canal (janelas 10h e 20h), todos vencidos
+        em `agora` -- o PC que ficou desligado --, e uma volta do laco."""
         _chama("PUT", "/api/fuso", {"nome": "Etc/GMT+3", "offset_min": -180})
         canal = _canal(ajustes={"agenda": {"janelas": [10, 20], "por_dia": 3}})
         job_id = _projeto(ambiente, 3)
         assert _chama("POST", "/api/agendar", {"job_id": job_id,
                                                "channel_id": canal["id"]}).json()["agendados"] == 3
-        agora = datetime.now(timezone.utc)
 
         async def _vencer():
             async with db.tenant() as t:
@@ -381,10 +382,28 @@ class TestAgendarNoFuso:
         corre(_vencer)
         feito = corre(lambda: app_module._uma_volta_do_agendador(agora))
         assert len(feito["publicadas"]) == 1 and len(feito["reagendadas"]) == 2
-        for quando in feito["reagendadas"].values():
-            local = quando.astimezone(BRASILIA)
+        return sorted(q.astimezone(BRASILIA) for q in feito["reagendadas"].values())
+
+    def test_a_trava_reagenda_nas_janelas_do_canal(self, ambiente):
+        """A hora e FIXA, e longe da janela seguinte: com o relogio de verdade
+        o teste dependia da hora em que rodava. O CI rodou as 17h07 de
+        Brasilia, e a janela das 20h virou 20h07 -- o caso do teste abaixo."""
+        agora = datetime(2026, 9, 28, 6, 0, tzinfo=BRASILIA)
+        for local in self._tres_vencidas(ambiente, agora):
             minutos = local.hour * 60 + local.minute
             assert any(abs(minutos - h * 60) <= 5 for h in (10, 20)), local
+
+    def test_a_janela_perto_do_post_de_agora_e_empurrada(self, ambiente):
+        """O post que sai agora conta para o espacamento (a regra 2 do
+        `scheduler.proximos_horarios`): a janela das 20h, a menos de 3 h dele,
+        vai para 3 h depois dele -- e nao para a janela seguinte, que e a regra
+        de quando o ocupado vem DEPOIS."""
+        agora = datetime(2026, 9, 28, 17, 7, tzinfo=BRASILIA)
+        primeiro, segundo = self._tres_vencidas(ambiente, agora)
+        assert primeiro == agora + timedelta(hours=3)
+        minutos = segundo.hour * 60 + segundo.minute
+        assert segundo.date() == agora.date() + timedelta(days=1)
+        assert abs(minutos - 10 * 60) <= 5, segundo
 
 
 class TestPacoteNoDiaDeQuemUsa:

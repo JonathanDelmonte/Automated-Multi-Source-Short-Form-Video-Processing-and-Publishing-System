@@ -409,6 +409,14 @@ class TestProjetoNoCanal:
         app_module._recover_jobs_from_disk()
         assert app_module.jobs[job_id]["channel_id"] == canal["id"]
 
+    def test_o_status_diz_o_canal(self, ambiente):
+        """A tela do projeto le o canal do `/api/status`."""
+        canal = _canal("A")
+        job_id = _projeto(ambiente, canal["id"])
+        assert _chama("GET", f"/api/status/{job_id}").json()["channel_id"] == canal["id"]
+        sem = _projeto(ambiente)
+        assert _chama("GET", f"/api/status/{sem}").json()["channel_id"] is None
+
     def test_marcador_estragado_vale_sem_canal(self, ambiente):
         job_id = _projeto(ambiente)
         (ambiente / job_id / app_module.ARQUIVO_CANAL).write_text("../../etc")

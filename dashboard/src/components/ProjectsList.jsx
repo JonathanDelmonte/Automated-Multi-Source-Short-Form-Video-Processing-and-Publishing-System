@@ -1,6 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Trash2, Loader2, Film, AlertTriangle, RotateCcw } from 'lucide-react';
 import { apiFetch, apiJson } from '../lib/api';
+import AvatarDoCanal from './ui/AvatarDoCanal';
+import { usePainel } from '../lib/painel';
+import { hrefDe } from '../lib/rota';
 
 // Lista de projetos: o que existe em `output/`, do mais novo para o mais velho.
 //
@@ -12,6 +15,9 @@ import { apiFetch, apiJson } from '../lib/api';
 //
 // Por isso apagar aqui chama `DELETE /api/jobs/{id}`, que cancela antes de
 // remover, em vez de mexer no disco.
+//
+// Desde a 7.1 ela e a lista curta do Inicio: os `limite` mais recentes, com o
+// canal de cada um, e o link para a grade completa em Projetos.
 
 const RELOGIO = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
 
@@ -40,22 +46,30 @@ const ROTULOS = {
   cancelled: 'cancelado',
 };
 
-export default function ProjectsList({ onOpen, onApagado, refreshKey = 0 }) {
+export default function ProjectsList({ onOpen, onApagado, refreshKey = 0, limite = 6, titulo = 'projetos', aoCarregar = null }) {
+  const { canais } = usePainel();
   const [projetos, setProjetos] = useState(null);   // null = ainda carregando
+  // Quem mostra os primeiros passos precisa saber se ja existe projeto. Numa
+  // ref, e nao nas dependencias do `carregar`: a funcao chega nova a cada
+  // render de quem chama, e o efeito de carga rodaria sem parar.
+  const avisar = useRef(aoCarregar);
+  useEffect(() => { avisar.current = aoCarregar; });
   const [erro, setErro] = useState(null);
   const [apagando, setApagando] = useState(null);
 
   const carregar = useCallback(async () => {
+    let lista = [];
     try {
       const res = await apiFetch('/api/jobs');
       if (!res.ok) throw new Error('falhou');
       const data = await res.json();
-      setProjetos(data.jobs || []);
+      lista = data.jobs || [];
       setErro(null);
     } catch (e) {
       setErro('Não consegui carregar os projetos.');
-      setProjetos([]);
     }
+    setProjetos(lista);
+    if (avisar.current) avisar.current(lista);
   }, []);
 
   useEffect(() => { carregar(); }, [carregar, refreshKey]);
@@ -95,20 +109,29 @@ export default function ProjectsList({ onOpen, onApagado, refreshKey = 0 }) {
     );
   }
 
-  if (projetos.length === 0) return null;   // primeira visita: so o formulário
+  if (projetos.length === 0) return null;   // primeira visita: nada a listar
+
+  const lista = limite ? projetos.slice(0, limite) : projetos;
 
   return (
     <div className="w-full text-left space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="eyebrow">projetos</p>
-        <button
-          type="button"
-          onClick={carregar}
-          title="Atualizar a lista"
-          className="text-muted hover:text-ink transition-colors"
-        >
-          <RotateCcw size={13} />
-        </button>
+        <p className="eyebrow">{titulo}</p>
+        <span className="flex items-center gap-3">
+          {limite && projetos.length > limite && (
+            <a href={hrefDe('/projetos')} className="text-xs text-muted hover:text-ink2 transition-colors">
+              ver todos ({projetos.length})
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={carregar}
+            title="Atualizar a lista"
+            className="text-muted hover:text-ink transition-colors"
+          >
+            <RotateCcw size={13} />
+          </button>
+        </span>
       </div>
 
       {erro && (
@@ -118,7 +141,7 @@ export default function ProjectsList({ onOpen, onApagado, refreshKey = 0 }) {
       )}
 
       <div className="space-y-1.5">
-        {projetos.map((p) => (
+        {lista.map((p) => (
           <div
             key={p.job_id}
             role="button"
@@ -127,7 +150,9 @@ export default function ProjectsList({ onOpen, onApagado, refreshKey = 0 }) {
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(p.job_id); } }}
             className="w-full card px-3.5 py-2.5 flex items-center gap-3 hover:border-rule2 transition-colors cursor-pointer text-left"
           >
-            <Film size={15} className="shrink-0 text-muted" />
+            {p.channel_id && canais.porId[p.channel_id]
+              ? <AvatarDoCanal canal={canais.porId[p.channel_id]} size={22} />
+              : <Film size={15} className="shrink-0 text-muted" />}
 
             <div className="min-w-0 flex-1">
               <p className="text-sm text-ink2 truncate">

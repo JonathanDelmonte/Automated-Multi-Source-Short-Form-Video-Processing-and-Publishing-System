@@ -124,6 +124,10 @@ def test_todo_job_nasce_com_o_log_que_guarda_hora():
 
 
 def test_o_painel_nao_inventa_mais_a_hora():
-    fonte = (RAIZ / "dashboard" / "src" / "App.jsx").read_text(encoding="utf-8")
-    assert "new Date().toLocaleTimeString()" not in fonte
-    assert "log_times" in fonte
+    # O log mora na pagina do projeto desde a 7.1 (`pages/Projeto.jsx`), e o
+    # App.jsx nao pode voltar a desenhar log nenhum com a hora de quem olha.
+    src = RAIZ / "dashboard" / "src"
+    projeto = (src / "pages" / "Projeto.jsx").read_text(encoding="utf-8")
+    assert "new Date().toLocaleTimeString()" not in projeto
+    assert "log_times" in projeto
+    assert "new Date().toLocaleTimeString()" not in (src / "App.jsx").read_text(encoding="utf-8")

@@ -1,35 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Trash2, Loader2, Plus, CheckCircle2, Youtube,
-         Instagram, AlertTriangle, Send, Clock } from 'lucide-react';
+import { Download, Trash2, Loader2, Plus, CheckCircle2,
+         AlertTriangle, Send, Clock } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { getApiUrl } from '../config';
-import { CartaoDeTempo } from './OndeVaiOTempo';
+import IconePlataforma from './ui/IconePlataforma';
+import AvatarDoCanal from './ui/AvatarDoCanal';
+import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
+import { usePainel } from '../lib/painel';
+import { hrefDe } from '../lib/rota';
 
-// A tela de publicação (Fase 3, bloco 3.5).
+// A publicação (Fase 3, bloco 3.5), em partes desde a 7.1: o pacote do dia, o
+// publicar e a fila moram na Agenda; as contas, nas Configurações; e a página
+// de cada canal usa a fila filtrada pelas contas dele (`contasDoCanal`) e pelo
+// estado (`status`). Quem desenha o cabeçalho é a página.
 //
-// **A adição é deliberadamente pequena**, pelo mesmo motivo do bloco 2.3b: o
-// frontend inteiro vai ser trocado, e investir num componente marcado para sair
-// é trabalho jogado fora. O que é durável aqui é o contrato do backend que
-// estes controles exercitam — o pacote do dia, as contas e a fila.
-//
-// A ordem da tela é a ordem de importância do §6, não a de implementação: o
+// A ordem das partes é a ordem de importância do §6, não a de implementação: o
 // **pacote do dia** primeiro, porque o driver `manual` é o default e o que
-// entrega valor hoje; as contas depois, porque é lá que se liga o automático.
-
-const PLATAFORMAS = {
-  youtube: { nome: 'YouTube', Icone: Youtube },
-  instagram: { nome: 'Instagram', Icone: Instagram },
-  tiktok: { nome: 'TikTok', Icone: Send },
-};
-
-// O que cada driver significa em uma linha. É o que responde "por que este
-// corte não subiu sozinho?" sem obrigar ninguém a ler o plano.
-const DRIVERS = {
-  'youtube-api': 'sobe sozinho pela API oficial',
-  aggregator: 'agregador (não configurado)',
-  manual: 'fila manual — o corte e a legenda ficam prontos',
-  browser: 'navegador (desligado por decisão)',
-};
+// entrega valor hoje.
 
 const ESTADO = {
   // `scheduled` cobre duas esperas: a fila manual (sem data, esperando uma
@@ -42,7 +29,16 @@ const ESTADO = {
   cancelled: { texto: 'cancelado', cor: 'text-muted' },
 };
 
-export default function PublicacoesTab() {
+export default function PublicacoesTab({
+  secoes = ['pacote', 'publicar', 'fila'],
+  canal = null,
+  contasDoCanal = null,
+  status = null,
+  tituloDaFila = 'fila',
+  vazioDaFila = 'Nada publicado ainda.',
+}) {
+  const { canais } = usePainel();
+  const mostra = (secao) => secoes.includes(secao);
   const [dias, setDias] = useState([]);
   const [contas, setContas] = useState(null);
   const [quota, setQuota] = useState(null);
@@ -62,7 +58,7 @@ export default function PublicacoesTab() {
         apiFetch('/api/publicacoes/dias'),
         apiFetch('/api/contas'),
         apiFetch('/api/publicacoes'),
-        apiFetch('/api/jobs'),
+        apiFetch(canal ? `/api/jobs?canal=${encodeURIComponent(canal)}` : '/api/jobs'),
       ]);
       try {
         const rAgenda = await apiFetch('/api/agenda');
@@ -86,7 +82,7 @@ export default function PublicacoesTab() {
     } catch {
       setErro('Não consegui falar com o servidor.');
     }
-  }, []);
+  }, [canal]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -151,6 +147,14 @@ export default function PublicacoesTab() {
   });
 
   const maisRecente = dias[0];
+  // Na página de um canal, só o que é dele: as contas dele como destino, e a
+  // fila das publicações que saíram (ou vão sair) por elas.
+  const contasDestino = contasDoCanal
+    ? (contas || []).filter((c) => contasDoCanal.includes(c.id))
+    : (contas || []);
+  const filaVisivel = fila.filter((p) =>
+    (!contasDoCanal || contasDoCanal.includes(p.account?.id))
+    && (!status || p.status === status));
   // A publicação precisa dos dois: um projeto com cortes e uma conta de
   // destino. O driver NÃO entra aqui de propósito — quem escolhe é o
   // resolvedor do backend, e um seletor de driver na tela seria a porta que o
@@ -158,15 +162,7 @@ export default function PublicacoesTab() {
   const podePublicar = envio.job_id && envio.account_id && !ocupado;
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar animate-fade px-4 py-5 sm:p-6">
-      <div className="max-w-3xl mx-auto space-y-6">
-        <div>
-          <p className="eyebrow">publicação</p>
-          <h2 className="font-display uppercase tracking-wide text-2xl sm:text-3xl text-ink">
-            pacote e fila
-          </h2>
-        </div>
-
+      <div className="space-y-6">
         {erro && (
           <div className="card p-3 flex items-start gap-2 text-sm text-danger">
             <AlertTriangle size={15} className="mt-0.5 shrink-0" />
@@ -175,6 +171,7 @@ export default function PublicacoesTab() {
         )}
 
         {/* 1. O pacote do dia — o que o driver `manual` entrega. */}
+        {mostra('pacote') && (
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">pacote do dia</h3>
           <p className="text-muted text-[13px] leading-snug">
@@ -202,8 +199,10 @@ export default function PublicacoesTab() {
             <p className="text-muted text-[13px]">Nenhum corte em disco ainda.</p>
           )}
         </section>
+        )}
 
         {/* 2. Contas — onde se liga o automático. */}
+        {mostra('contas') && (
         <section className="card p-4 space-y-3">
           <div className="flex items-baseline justify-between gap-3">
             <h3 className="text-ink text-sm font-medium">contas</h3>
@@ -223,13 +222,21 @@ export default function PublicacoesTab() {
           ) : (
             <ul className="space-y-2">
               {contas.map((c) => {
-                const { nome, Icone } = PLATAFORMAS[c.platform] || PLATAFORMAS.youtube;
+                const nome = PLATAFORMAS[c.platform]?.nome || c.platform;
+                const doCanal = c.channel_id ? canais.porId[c.channel_id] : null;
                 return (
                   <li key={c.id}
-                      className="flex items-center gap-3 text-sm border-t border-rule pt-2 first:border-0 first:pt-0">
-                    <Icone size={15} className="text-muted shrink-0" />
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm border-t border-rule pt-2 first:border-0 first:pt-0">
+                    <IconePlataforma platform={c.platform} size={17} title={nome} />
                     <span className="text-ink">{c.handle}</span>
-                    <span className="text-muted text-xs">{nome}</span>
+                    {doCanal ? (
+                      <a href={hrefDe(`/canais/${doCanal.id}`)}
+                         className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink2">
+                        <AvatarDoCanal canal={doCanal} size={16} /> {doCanal.name}
+                      </a>
+                    ) : (
+                      <span className="text-muted text-xs">sem canal</span>
+                    )}
                     <span className="text-muted text-xs ml-auto text-right">
                       {DRIVERS[c.driver_agora] || c.driver_agora}
                     </span>
@@ -275,13 +282,13 @@ export default function PublicacoesTab() {
               value={nova.platform}
               onChange={(e) => setNova({ ...nova, platform: e.target.value })}
             >
-              {Object.entries(PLATAFORMAS).map(([id, p]) => (
-                <option key={id} value={id}>{p.nome}</option>
+              {ORDEM_DAS_PLATAFORMAS.map((id) => (
+                <option key={id} value={id}>{PLATAFORMAS[id].nome}</option>
               ))}
             </select>
             <input
               className="input-field text-sm py-1.5 flex-1 min-w-[10rem]"
-              placeholder="nome do canal"
+              placeholder="@ da conta"
               value={nova.handle}
               onChange={(e) => setNova({ ...nova, handle: e.target.value })}
             />
@@ -294,18 +301,21 @@ export default function PublicacoesTab() {
           <p className="text-muted text-[12px] leading-snug">
             Para o YouTube subir sozinho, rode <code>python youtube_oauth.py</code>{' '}
             uma vez — sem isso a conta usa a fila manual, que continua entregando
-            o corte e a legenda prontos.
+            o corte e a legenda prontos. Para ligar a conta a um canal, use os
+            ajustes do canal.
           </p>
         </section>
+        )}
 
         {/* 3. Publicar um projeto. */}
+        {mostra('publicar') && (
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">publicar</h3>
-          {projetos.length === 0 || (contas || []).length === 0 ? (
+          {projetos.length === 0 || contasDestino.length === 0 ? (
             <p className="text-muted text-[13px]">
               {projetos.length === 0
                 ? 'Nenhum projeto com cortes ainda.'
-                : 'Adicione uma conta acima para escolher um destino.'}
+                : 'Ligue uma conta a um canal (ou cadastre uma nas Configurações) para escolher um destino.'}
             </p>
           ) : (
             <>
@@ -329,8 +339,10 @@ export default function PublicacoesTab() {
                   onChange={(e) => setEnvio({ ...envio, account_id: e.target.value })}
                 >
                   <option value="">conta…</option>
-                  {(contas || []).map((c) => (
-                    <option key={c.id} value={c.id}>{c.handle}</option>
+                  {contasDestino.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {PLATAFORMAS[c.platform]?.nome || c.platform} · {c.handle}
+                    </option>
                   ))}
                 </select>
                 <button className="btn-primary text-sm inline-flex items-center gap-1.5"
@@ -374,19 +386,18 @@ export default function PublicacoesTab() {
             </ul>
           )}
         </section>
+        )}
 
-        {/* 4. Onde vai o tempo — não é sobre publicação, e está aqui porque é
-            onde o autor já olha. Quando houver uma aba de diagnóstico, muda. */}
-        <CartaoDeTempo />
-
-        {/* 5. A fila. */}
+        {/* 4. A fila. ("Onde vai o tempo" morava aqui, "porque é onde o autor já
+            olha"; foi para Configurações -> Desempenho na 7.1.) */}
+        {mostra('fila') && (
         <section className="card p-4 space-y-3">
-          <h3 className="text-ink text-sm font-medium">fila</h3>
-          {fila.length === 0 ? (
-            <p className="text-muted text-[13px]">Nada publicado ainda.</p>
+          <h3 className="text-ink text-sm font-medium">{tituloDaFila}</h3>
+          {filaVisivel.length === 0 ? (
+            <p className="text-muted text-[13px]">{vazioDaFila}</p>
           ) : (
             <ul className="space-y-2">
-              {fila.map((p) => {
+              {filaVisivel.map((p) => {
                 const estado = ESTADO[p.status] || { texto: p.status, cor: 'text-muted' };
                 return (
                   <li key={p.id}
@@ -394,7 +405,8 @@ export default function PublicacoesTab() {
                     <span className="text-ink truncate flex-1">
                       {p.clip.title || `corte ${(p.clip.index ?? 0) + 1}`}
                     </span>
-                    <span className="text-muted text-xs hidden sm:inline">
+                    <span className="text-muted text-xs hidden sm:inline-flex items-center gap-1.5">
+                      <IconePlataforma platform={p.account.platform} size={14} />
                       {p.account.handle}
                     </span>
                     <span className={`text-xs ${estado.cor}`}>
@@ -434,7 +446,7 @@ export default function PublicacoesTab() {
             </ul>
           )}
         </section>
+        )}
       </div>
-    </div>
   );
 }

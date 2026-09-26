@@ -16,11 +16,17 @@ const getYouTubeId = (url) => {
 const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, syncTrigger }) => {
   const [videoSrc, setVideoSrc] = useState(null);
   const [isYouTube, setIsYouTube] = useState(false);
+  // A prévia pode não abrir: a cópia que o motor guarda saiu pelo teto de
+  // disco, ou o navegador não toca aquele formato (um .mov em HEVC, por
+  // exemplo). Sem isto a caixa ficava preta, e uma caixa preta parece defeito.
+  // O texto não chuta qual das causas foi.
+  const [semPrevia, setSemPrevia] = useState(false);
   const videoRef = useRef(null);
   const iframeRef = useRef(null);
 
   useEffect(() => {
     if (!media) return;
+    setSemPrevia(false);
 
     if (media.type === 'file') {
       const url = URL.createObjectURL(media.payload);
@@ -117,6 +123,10 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
             frameBorder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           />
+        ) : semPrevia ? (
+          <div className="w-full h-full flex items-center justify-center bg-paper text-muted text-xs px-4 text-center">
+            sem prévia do vídeo original
+          </div>
         ) : videoSrc ? (
           <video
             ref={videoRef}
@@ -126,6 +136,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
             muted
             loop
             playsInline
+            onError={() => setSemPrevia(true)}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-paper">

@@ -3667,6 +3667,9 @@ async def get_status(job_id: str, request: Request):
         "log_times": horas,
         "result": job.get('result'),
         "timings": _job_timings(job_id),
+        # O canal do projeto (Fase 7): a tela do projeto mostra de qual canal
+        # ele e, e o "novo" dela ja abre o Criar nesse canal.
+        "channel_id": job.get('channel_id'),
         **_stage_view(job),
     }
 

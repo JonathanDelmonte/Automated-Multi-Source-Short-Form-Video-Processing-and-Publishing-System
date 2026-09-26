@@ -87,7 +87,7 @@ Ajuda             primeiros passos e respostas curtas
 | Projetos | **Projetos**, com filtro por canal |
 | Publicação → pacote do dia | **Agenda**: o pacote é "o que postar hoje à mão" |
 | Publicação → contas | **Canais** (ligar) e **Configurações → Contas conectadas** |
-| Publicação → publicar e fila | **Criar** e **Publicados** de cada canal, e a **Agenda** |
+| Publicação → publicar e fila | **Agenda** (a de todos os canais e a aba Agenda de cada canal); o que já saiu, na aba **Publicados** do canal |
 | Publicação → onde vai o tempo | **Configurações → Desempenho**: nunca foi publicação |
 | YouTube Studio | **Ferramentas** |
 | AI Agent | **sai**: é a página do projeto original, em inglês. O "Conectar um agente" das Configurações já cobre |
@@ -180,8 +180,16 @@ cortar sem canal, publicar, agendar, YouTube Studio, chaves, atualizar pelo bot�
 |---|---|---|
 | 7.1a | limpar as sobras do projeto original | feita (26-set) |
 | 7.1b | motor: tabelas, `canais.py`, `/api/canais`, o canal no projeto (`.canal` + `channel_jobs`), `PUT /api/jobs/{id}/canal` | feita (26-set) |
-| 7.1c | painel: navegação com endereço, páginas, canais, ícones | em curso |
-| 7.1d | conferir as telas no computador e no celular, docs, CI | falta |
+| 7.1c | painel: navegação com endereço, as dez páginas, canais, ícones | feita (26-set) |
+| 7.1d | conferir as telas no computador e no celular, docs, CI | feita (26-set) |
+
+Conferido com o motor de verdade e um navegador (Playwright), no computador e no
+celular: criar um canal pela tela com uma conta nova (o botão só acende depois de
+escolher a aprovação), mover um projeto de canal pelo cartão, mandar um vídeo com
+o canal marcado e cair na tela do projeto, recarregar sem perder a aba, apagar o
+canal soltando o projeto e a conta, e o `#app` das versões antigas abrindo o
+Início. Com um motor de antes dos canais, as telas de canal dizem para atualizar
+e o Criar segue sem o seletor.
 
 ### 7.2 — Qualidade dos cortes
 

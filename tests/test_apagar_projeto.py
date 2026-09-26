@@ -152,7 +152,18 @@ class TestPainelSoltaOProjetoApagado:
             # `apiFetch` nao falha em 409; so o `apiJson` leva o erro a tela.
             assert "apiJson(`/api/jobs/${jobId}`, { method: 'DELETE' })" in fonte, nome
 
-    def test_o_app_fecha_o_projeto_aberto(self):
-        fonte = (RAIZ / "dashboard" / "src" / "App.jsx").read_text(encoding="utf-8")
-        assert "if (id === jobId) handleReset();" in fonte
-        assert fonte.count("onApagado={handleProjetoApagado}") == 2
+    def test_o_projeto_apagado_nao_fica_na_tela(self):
+        """Desde a 7.1 o projeto aberto tem endereco (`#/projetos/<id>`), e as
+        listas moram em outras telas: nao ha mais "projeto aberto" para soltar
+        ao apagar pela lista. O defeito de antes -- a tela seguir mostrando os
+        cortes de um projeto que nao existe -- agora so acontece se o projeto
+        some por fora (outra aba, a pasta apagada a mao), e a tela do projeto
+        trata o 404 como "nao existe mais" em vez de tentar para sempre."""
+        src = RAIZ / "dashboard" / "src"
+        projeto = (src / "pages" / "Projeto.jsx").read_text(encoding="utf-8")
+        assert "if (res.status === 404) throw new JobSumiu(" in projeto
+        assert "setStatus('sumiu')" in projeto
+        assert "Este projeto não existe mais." in projeto
+        # As listas avisam quem mostra contagem (os canais), nas tres telas.
+        for nome in ("Inicio.jsx", "Projetos.jsx", "Canal.jsx"):
+            assert "onApagado={() => canais.carregar()}" in (src / "pages" / nome).read_text(encoding="utf-8"), nome

@@ -122,8 +122,9 @@ def test_o_nome_gravado_no_build_e_o_que_o_cartao_le():
     cartao = (RAIZ / "dashboard" / "src" / "components" / "Versoes.jsx").read_text(encoding="utf-8")
     assert "__VERSAO_DO_SITE__: JSON.stringify(versaoDoSite())" in vite
     assert "typeof __VERSAO_DO_SITE__ !== 'undefined'" in cartao
-    app = (RAIZ / "dashboard" / "src" / "App.jsx").read_text(encoding="utf-8")
-    assert "<Versoes />" in app
+    # Desde a 7.1 as Configuracoes sao uma pagina propria, fora do App.jsx.
+    pagina = (RAIZ / "dashboard" / "src" / "pages" / "Configuracoes.jsx").read_text(encoding="utf-8")
+    assert "<Versoes />" in pagina
 
 
 CHROME = [

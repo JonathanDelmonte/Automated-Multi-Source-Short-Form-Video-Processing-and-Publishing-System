@@ -611,9 +611,11 @@ plataforma. A partir daqui existe, fora da cabeca de quem publicou, a linha
 - **`marcar_publicado` e o unico caminho para `published`** na fila manual, e e
   humano de proposito: o driver entregou o pacote e nao tem como saber que a
   pessoa apertou publicar.
-- No painel, a aba **Publicação** (`PublicacoesTab.jsx`): pacote do dia, contas
-  (com o driver que atenderia cada uma agora), publicar um projeto e a fila.
-  Pequena de proposito, como o bloco 2.3b -- o frontend vai ser trocado.
+- No painel, o `PublicacoesTab.jsx` (era a aba **Publicação**): pacote do dia,
+  contas (com o driver que atenderia cada uma agora), publicar um projeto e a
+  fila. Desde a 7.1 ele e desenhado em partes (`secoes`): pacote, publicar e
+  fila na **Agenda**; contas nas **Configuracoes**; a fila filtrada pelas contas
+  de um canal (`contasDoCanal`, `status`) nas abas Agenda e Publicados dele.
 
 > `publishers/__init__.py` **exporta os submodulos** (`from . import pacote,
 > quota`) porque o `app.py` so faz `import publishers`. Sem isso e
@@ -1040,7 +1042,7 @@ propria entra na Fase 3.)
 | `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
 | `hooks.py` | Hook text overlay generation with font rendering |
 | `subtitles.py` | SRT generation, FFmpeg subtitle burning, and dubbed video transcription |
-| `dashboard/src/App.jsx` | Main React component with state management |
+| `dashboard/src/App.jsx` | O esqueleto do painel: sessao, navegacao, avisos e qual pagina (`dashboard/src/pages/`) abre, pelo endereco |
 
 ### Sem superficie de SEO (ADR-009)
 
@@ -1372,17 +1374,18 @@ seguinte.
   sobre `PIPELINE_STAGES`. Nao ha porcentagem porque nao ha medicao: a
   transcricao nao reporta progresso e o render varia com o numero de cortes.
   Uma barra que mente e pior que barra nenhuma.
-- No painel: a aba **Projetos** (`ProjectsGrid.jsx`, ord 02) com uma grade de
+- No painel: a pagina **Projetos** (`ProjectsGrid.jsx`) com uma grade de
   cartoes, um por video -- abrir, apagar (com confirmacao, porque leva os
-  cortes junto) e criar novo. A **capa e o proprio clipe**
+  cortes junto), trocar o canal e criar novo. A **capa e o proprio clipe**
   (`<video preload="metadata">`): o navegador baixa so o cabecalho e desenha o
   primeiro quadro, entao nao ha campo de thumbnail a criar no pipeline. O
   `_resumo_do_job` manda `first_clip_url` para isso.
-- Dentro de um projeto o cabecalho tem **dois** botoes: `← projetos` (voltar) e
-  `+ novo`. Antes havia so "New Project", que **cria** em vez de voltar -- de um
-  projeto aberto nao existia caminho nenhum para escolher outro.
-- `ProjectsList.jsx` continua como a lista compacta sob o formulario da tela
-  inicial; as duas fazem polling de 5s **so** enquanto ha job vivo.
+- Dentro de um projeto (`pages/Projeto.jsx`, `#/projetos/<id>`) a barra de
+  cima tem **voltar** (ao canal do projeto, ou a Projetos) e `+ novo`. Antes
+  havia so "New Project", que **cria** em vez de voltar -- de um projeto aberto
+  nao existia caminho nenhum para escolher outro.
+- `ProjectsList.jsx` e a lista curta do Inicio (os mais recentes); as duas
+  fazem polling de 5s **so** enquanto ha job vivo.
 - `tests/test_job_control.py` cobre os tres endpoints e o marcador.
 
 ### A marca e Virtu Clips (24-set-2026)
@@ -1414,8 +1417,9 @@ preto por baixo.
   entao o `up -d` do `atualizar.bat` recria os tres no lugar, sem sobrar os
   antigos segurando as portas.
 - **Ficou o nome antigo no que ninguem ve, de proposito**, pelo mesmo motivo
-  do `SESSION_KEY` (que continua `openshorts_session`): renomear so teria
-  custo.
+  do token de sessao (`openshorts_auth` no localStorage): renomear so teria
+  custo. (O `openshorts_session`, que guardava o projeto aberto, saiu na 7.1:
+  o endereco da tela passou a ser a memoria, e o painel apaga a copia velha.)
   - as chaves de localStorage `cortes_*` e as variaveis `CORTES_*`;
   - no ajudante, o mutex `Local\CortesAjudante` e o valor `Cortes` do
     "iniciar com o Windows" (`ajudante.VALOR_NO_INICIO`): o instalador novo
@@ -1591,9 +1595,12 @@ limpezas que apagavam o trabalho sozinhas, e as duas foram desligadas:
 - **O registro no banco sai junto** (`job_registry.apagar_job`: job, cortes
   pelo cascade, fonte se ficou orfa), **menos o que ja foi publicado**: o
   cascade levaria `publications` e `metrics`, o historico que a calibracao le.
-- **O painel solta o projeto apagado**: `onApagado` nas duas listas chama o
-  `handleReset` quando o apagado e o aberto. Sem isso o Clip Generator seguia
-  mostrando os cortes de um projeto que nao existia mais.
+- **O painel solta o projeto apagado.** Era o `onApagado` das listas chamando
+  o `handleReset` quando o apagado era o aberto -- sem isso o Clip Generator
+  seguia mostrando os cortes de um projeto que nao existia mais. Desde a 7.1
+  lista e projeto sao telas diferentes (cada uma com endereco), e a tela do
+  projeto trata o 404 como "este projeto nao existe mais" em vez de perguntar
+  para sempre; o `onApagado` ficou para as contagens dos canais.
 - **Nada do processamento fica dentro do Docker.** Os dois temporarios que
   caiam no /tmp do container (os comandos do render e o WAV do Parakeet) vao
   para a pasta do projeto; `tests/test_nada_dentro_do_docker.py` falha num
@@ -2468,6 +2475,33 @@ do codigo que ela mudou.
   anterior a Fase 7 nasceu sem. Esta no `test_todo_endpoint_de_job_recusa_o_vizinho`.
 - `tests/test_canais.py` inclui o banco ANTIGO: derruba as tres tabelas, roda o
   boot e confere que elas voltam sem levar as contas que ja existiam.
+
+**O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
+
+- **Cada tela tem endereco** depois do `#` (`#/canais/<id>/agenda`,
+  `#/projetos/<id>`, `#/criar/cortes?canal=<id>`), com roteador feito a mao --
+  **sem biblioteca**, porque dependencia nova muda o `package.json` e o botao
+  "atualizar agora" do Docker recusa essa mudanca (40 min de imagem).
+  `tests/test_painel_da_plataforma.py` congela as dependencias. A parte pura
+  (`lib/endereco.js`) nao importa o React, para o teste rodar no `node` do job
+  do backend, que nao instala o painel.
+- **O endereco e a memoria.** O projeto aberto morava no localStorage
+  (`openshorts_session`, com os cortes inteiros); agora recarregar, voltar ou
+  mandar o link reabre a mesma tela perguntando ao motor. Endereco que nao e
+  tela (o `#app` das versoes antigas) cai no Inicio.
+- **O `App.jsx` e so o esqueleto**: sessao, navegacao (uma definicao, `NAV`,
+  para o trilho, a gaveta e a barra do celular), avisos e qual pagina abre.
+  O que as paginas dividem -- a chave do navegador, `keysMissing`, o
+  `pedirChave` e a lista de canais -- vai pelo `PainelContext`.
+- **O envio ao motor mora em `lib/processar.js`**, porque duas telas enviam (o
+  Criar e o "criar cortes" do YouTube Studio). O arquivo escolhido so existe na
+  aba que o enviou: `guardarMidia` o deixa para a tela do projeto mostrar a
+  previa.
+- **Motor antigo**: `/api/canais` responde 404 num motor de antes dos canais, e
+  a lista vira `situacao: 'motor-antigo'` -- as telas de canal dizem para
+  atualizar, e o Criar segue sem o seletor, mandando o video como antes. O site
+  e publicado antes de o motor de quem usa ser atualizado, entao esse caso e o
+  normal por algumas horas.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

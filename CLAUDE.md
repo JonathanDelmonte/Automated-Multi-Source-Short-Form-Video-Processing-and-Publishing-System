@@ -1237,9 +1237,9 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
-| GET/POST | `/api/aplicativos` | O cadastro do aplicativo do Google de quem usa (nunca devolve o segredo) |
-| POST/DELETE | `/api/contas/{id}/conectar`, `/api/contas/{id}/conexao` | "Conectar YouTube" (publicar ou medir), e desconectar |
-| GET `/`, POST `/api/oauth/volta` | a volta do Google | Pela raiz do motor (site) ou pelo painel do Docker |
+| GET/POST | `/api/aplicativos` | O cadastro do aplicativo de quem usa, do Google e do TikTok (nunca devolve o segredo) |
+| POST/DELETE | `/api/contas/{id}/conectar`, `/api/contas/{id}/conexao` | "Conectar" uma conta do YouTube (publicar ou medir) ou do TikTok (publicar), e desconectar |
+| GET `/`, POST `/api/oauth/volta` | a volta da autorizacao | Pela raiz do motor (site) ou pelo painel do Docker |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
 | GET/POST/PATCH/DELETE | `/api/canais`, `/api/canais/{id}` | Os canais (Fase 7): nome, nicho, avatar, contas ligadas, aprovacao |
@@ -2485,7 +2485,8 @@ do codigo que ela mudou.
   `users.password_hash` no boot -- num banco anterior a Fase 4 o seed inteiro
   morria, e com ele templates, auth e fila), `clips` sem faixa de palavras,
   `jobs.status` `cancelled`, `accounts.driver_pref` `auto` e `sources.adapter`
-  `direct`. A proxima seria o driver do TikTok no CHECK de `publications`.
+  `direct`. A seguinte ja passou por ele: o driver do TikTok no CHECK de
+  `publications` e de `accounts.driver_pref` (7.3c, migracao `d4a8f2c6b913`).
 - **O conserto e o procedimento do proprio SQLite** ("Making Other Kinds Of
   Table Schema Changes", os doze passos): com as FKs desligadas, cria a tabela
   com a regra nova, copia as linhas, apaga a velha, renomeia, recria os indices
@@ -2599,6 +2600,63 @@ do codigo que ela mudou.
 - `/api/contas` diz `conexao: {publicar, medir}` por conta, sem rede.
 - `tests/test_conexoes.py` roda o fluxo inteiro com o Google imitado, inclusive
   com senha ligada (conectar exige sessao; a volta, nao).
+
+**O TikTok pela API** (`publishers/tiktok_api.py`, 7.3c):
+
+- **O mesmo desenho do YouTube, com o app de quem usa**: client key e client
+  secret do app DELA no TikTok for Developers, colados em Configuracoes ->
+  aplicativos (`aplicativos.PLATAFORMAS["tiktok"]`), e o "conectar" da conta
+  pelo Login Kit. Guardado no cofre, em `vault://local/tiktok/<handle>`, com o
+  cadastro do app junto -- o refresh token so vale com o app que o emitiu.
+- **Antes da auditoria do TikTok, o Direct Post e so para testar**, e o motivo
+  e do TikTok: todo post sai `SELF_ONLY`, a conta precisa estar PRIVADA no app
+  na hora do post, e no maximo 5 contas por dia postam pelo mesmo app. **O
+  driver pede `SELF_ONLY` pedido o que for** (`escolher_privacidade`): o
+  `creator_info` fala da CONTA, nao do app, e oferece publico a uma conta
+  publica -- pedir publico so trocaria o post por um erro. `TIKTOK_APP_AUDITADO=1`
+  libera o publico quando pedido E oferecido. Ate la, publico e pelo pacote do
+  dia, e a tela diz isso no cartao do app e no da conta conectada.
+- **Programa de computador no Login Kit tem duas regras que custam caro se
+  copiadas do Google**: o desafio do PKCE e o SHA-256 em HEXADECIMAL, nao
+  base64url (`par_pkce(hexadecimal=True)`); e a volta so aceita `localhost` e
+  `127.0.0.1`, sempre com porta -- o `[::1]` que o Google aceita, o TikTok nao
+  (`volta_de(origem, "tiktok")`, e `voltaPossivel` na tela). A pessoa cadastra
+  `http://localhost:*/` e `http://127.0.0.1:*/` no app (o `*` e qualquer
+  porta), o que cobre o site, o painel do Docker e o ajudante.
+- **A resposta do TikTok lista os escopos que a pessoa AUTORIZOU**, que podem
+  ser menos que os pedidos: sem `video.publish` a conexao "funcionaria" e
+  nenhum post sairia, entao a troca confere o que voltou e recusa (`escopo`).
+  Os escopos vao separados por VIRGULA.
+- **O refresh token pode mudar a cada renovacao**: o driver grava o novo antes
+  de seguir. Guardar o velho seria perder a conexao em silencio na publicacao
+  seguinte. **Por isso a credencial da conta mora SO no cofre local**
+  (`tiktok_api.ref_de` ignora o `vault://env/...` com que toda conta nasce): o
+  `env` e somente leitura, e ali a conexao morreria na primeira troca, com o
+  post pela metade. O `.env` so da o cadastro do app (`TIKTOK_CLIENT_KEY` /
+  `TIKTOK_CLIENT_SECRET`), como o do Google.
+- **O envio e em pedacos pelas regras do Media Transfer Guide**: ate 64 MB num
+  pedaco so; acima, pedacos de 10 MB com a contagem ARREDONDADA PARA BAIXO (o
+  ultimo leva o resto, ate 128 MB). Para cima daria um ultimo pedaco abaixo de
+  5 MB, que o TikTok recusa. O que o criador desligou (comentario, dueto,
+  costura) vai desligado no post: o TikTok recusa o post que liga o que ele
+  proibiu.
+- **O link so existe para post publico** (`publicaly_available_post_id`, com o
+  erro de grafia do proprio TikTok): o privado termina `published` sem URL.
+- **Medir o TikTok fica para a 7.4**: a conexao e so de publicar
+  (`conexoes.TIPOS_DE`), e a tela so desenha o que o motor conecta -- ha teste
+  comparando as duas listas.
+- **As frases dizem quem mostrou a tela**: "cancelada na tela do TikTok", e
+  nunca a pagina de permissoes do Google para quem estava no TikTok
+  (`conexoes.mensagem`, `mensagemDe(codigo, { plataforma })`).
+- **O site novo com o programa velho manda ATUALIZAR, nao cadastrar**
+  (`situacaoDoAplicativo`: `pronto` / `falta` / `motor-antigo`). O programa da
+  7.3b ja diz `conexao` da conta do TikTok, mas nao guarda o cadastro dele:
+  "cadastre o app do TikTok" levaria a uma pagina sem o cartao. O site e
+  publicado antes do programa de quem usa, entao esse caso e o normal por
+  algumas horas.
+- `tests/test_tiktok_api.py` roda o driver com a rede do TikTok imitada (a
+  resposta como a documentacao descreve); a rede de verdade nao e alcancavel
+  daqui, e o primeiro post real e o roteiro do `COMO-EXECUTAR.md`.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

@@ -155,7 +155,7 @@ class User(Base, TenantScoped):
 # teste do bloco 3.1 que mostrou isso: um valor default virou, sem querer, uma
 # decisao. Com `auto` no lugar, `manual` na coluna volta a significar o que
 # parece significar: "esta conta eu publico a mao, nao automatize".
-DRIVER_PREFS = ("auto", "manual", "youtube-api", "aggregator", "browser")
+DRIVER_PREFS = ("auto", "manual", "youtube-api", "aggregator", "browser", "tiktok-api")
 
 
 class Account(Base, TenantScoped):
@@ -365,7 +365,10 @@ class Clip(Base, TenantScoped):
 # 8. publications -- um corte entregue por um driver (secao 6)
 # --------------------------------------------------------------------------- #
 
-DRIVERS = ("manual", "youtube-api", "aggregator", "browser")
+#: `tiktok-api` entrou na etapa 7.3. Um banco criado antes recebe o CHECK novo
+#: pelo `db_acerto` no boot; sem ele, a primeira publicacao pelo TikTok morreria
+#: no banco, DEPOIS do upload.
+DRIVERS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api")
 PUB_STATUSES = ("scheduled", "publishing", "published", "failed", "cancelled")
 
 

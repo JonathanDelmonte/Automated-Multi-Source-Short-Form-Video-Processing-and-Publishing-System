@@ -166,3 +166,51 @@ def test_canal_que_nao_existe(ambiente):
     job_id = _projeto(ambiente, 1)
     r = _chama("POST", "/api/agendar", {"job_id": job_id, "channel_id": str(uuid.uuid4())})
     assert r.status_code == 404
+
+
+def test_o_galho_do_tiktok_conectado_sobe_pela_api_e_so_para_voce(ambiente, monkeypatch):
+    """O "pronto quando" da 7.3 pelo lado do TikTok: o canal publica, o galho do
+    TikTok vai pelo Direct Post (privado, antes da auditoria) com o texto do
+    TikTok, e o post fica registrado -- sem link, porque privado nao tem. O
+    galho do YouTube, sem conectar, fica na fila manual."""
+    from publishers import tiktok_api
+    vault = pytest.importorskip("vault")
+    monkeypatch.delenv("TIKTOK_APP_AUDITADO", raising=False)
+    job_id = _projeto(ambiente, 1)
+    canal = _canal(("youtube", "tiktok"))
+    tiktok = next(c for c in canal["contas"] if c["platform"] == "tiktok")
+    vault.gravar(f"vault://local/tiktok/{tiktok['handle']}", {
+        "client_key": "sbawabcdef123456", "client_secret": "s" * 20, "refresh_token": "R"})
+
+    enviado = {}
+
+    def pedir(url, *, token=None, json=None, data=None, timeout=60.0):
+        if url == tiktok_api.CREATOR_INFO:
+            return {"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE", "SELF_ONLY"],
+                             "creator_username": "infantil", "max_video_post_duration_sec": 600}}
+        if url == tiktok_api.INICIAR:
+            enviado["init"] = json
+            return {"data": {"publish_id": "P", "upload_url": "https://upload.tiktok/x"}}
+        if url == tiktok_api.STATUS:
+            return {"data": {"status": "PUBLISH_COMPLETE"}}
+        raise AssertionError(url)
+    monkeypatch.setattr(tiktok_api, "renovar", lambda segredo: {"access_token": "A"})
+    monkeypatch.setattr(tiktok_api, "_pedir", pedir)
+    monkeypatch.setattr(tiktok_api, "_enviar_pedaco",
+                        lambda url, caminho, de, ate, total: enviado.setdefault("bytes", total))
+    monkeypatch.setattr(tiktok_api, "INTERVALO_DO_STATUS_S", 0)
+
+    r = _chama("POST", "/api/publicar", {"job_id": job_id, "channel_id": canal["id"],
+                                         "visibility": "public"})
+    assert r.status_code == 200, r.text
+    por_plataforma = {x["platform"]: x for x in r.json()["resultados"]}
+    assert por_plataforma["tiktok"]["driver"] == "tiktok-api"
+    assert por_plataforma["youtube"]["driver"] == "manual"
+    # Pedido publico, e o TikTok oferecendo: antes da auditoria, so para voce.
+    assert enviado["init"]["post_info"]["privacy_level"] == "SELF_ONLY"
+    assert enviado["init"]["post_info"]["title"] == "texto do TikTok 1 #fyp"
+    assert enviado["bytes"] == 64
+    fila = {p["account"]["platform"]: p for p in _fila()}
+    assert fila["tiktok"]["status"] == "published"
+    assert fila["tiktok"]["posted_at"] and fila["tiktok"]["url"] is None
+    assert fila["youtube"]["status"] == "scheduled" and fila["youtube"]["posted_at"] is None

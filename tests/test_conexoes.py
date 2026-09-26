@@ -77,6 +77,17 @@ def _com_aplicativo():
     assert r.status_code == 200, r.text
 
 
+CLIENT_KEY = "sbawabcdef123456"
+SEGREDO_TIKTOK = "segredoDoTikTok_1234567890"
+
+
+def _com_aplicativo_do_tiktok():
+    r = _chama("POST", "/api/aplicativos", {"plataforma": "tiktok",
+                                            "client_key": CLIENT_KEY,
+                                            "client_secret": SEGREDO_TIKTOK})
+    assert r.status_code == 200, r.text
+
+
 def _conta(plataforma="youtube", handle="@canalinfantil"):
     r = _chama("POST", "/api/contas", {"platform": plataforma, "handle": handle})
     assert r.status_code == 200, r.text
@@ -319,10 +330,22 @@ class TestConectar:
         r = self._conectar(conta["id"])
         assert r.status_code == 409 and r.json()["detail"]["erro"] == "sem_aplicativo"
 
-    def test_so_youtube_por_enquanto(self, ambiente):
+    def test_instagram_ainda_nao_conecta(self, ambiente):
+        _com_aplicativo()
+        conta = _conta("instagram", "@c")
+        assert self._conectar(conta["id"]).json()["detail"]["erro"] == "plataforma"
+
+    def test_o_tiktok_pede_o_cadastro_dele(self, ambiente):
+        """O cadastro do Google nao serve ao TikTok: cada plataforma, o seu."""
         _com_aplicativo()
         conta = _conta("tiktok", "@c")
-        assert self._conectar(conta["id"]).json()["detail"]["erro"] == "plataforma"
+        r = self._conectar(conta["id"])
+        assert r.status_code == 409 and r.json()["detail"]["erro"] == "sem_aplicativo"
+
+    def test_o_tiktok_nao_mede_ainda(self, ambiente):
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@c")
+        assert self._conectar(conta["id"], "medir").json()["detail"]["erro"] == "tipo"
 
     def test_o_painel_de_outro_aparelho_nao_conecta(self, ambiente):
         _com_aplicativo()
@@ -457,3 +480,156 @@ class TestComSenha:
         assert v.status_code == 200
         assert _chama("POST", "/api/oauth/volta", {"state": "inventado",
                                                    "code": "C"}).status_code == 400
+
+
+class TestTikTok:
+    """O "conectar" do TikTok: o app de desenvolvedor de quem usa, Login Kit
+    para programa de computador (PKCE com o desafio em HEXADECIMAL) e o
+    Direct Post."""
+
+    def test_o_cadastro_do_tiktok_e_guardado_sem_o_segredo_voltar(self, ambiente):
+        _com_aplicativo_do_tiktok()
+        estado = _chama("GET", "/api/aplicativos")
+        assert SEGREDO_TIKTOK not in estado.text
+        assert estado.json()["aplicativos"]["tiktok"] == {
+            "configurado": True, "origem": "site", "client_id": CLIENT_KEY}
+
+    def test_o_cadastro_do_tiktok_limpa_o_que_se_cola(self):
+        assert aplicativos.limpar("tiktok", "client_key", f" TIKTOK_CLIENT_KEY={CLIENT_KEY} ") == CLIENT_KEY
+        assert aplicativos.limpar("tiktok", "client_key", "awABCdef12345678") == "awABCdef12345678"
+        for torto in ("aw-com-hifen", "curta", "tem espaco no meio"):
+            with pytest.raises(aplicativos.AplicativoInvalido) as e:
+                aplicativos.limpar("tiktok", "client_key", torto)
+            assert e.value.codigo == "formato" and e.value.campo == "client_key"
+
+    def test_a_url_do_tiktok(self, ambiente):
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@canalinfantil")
+        r = _chama("POST", f"/api/contas/{conta['id']}/conectar",
+                   {"tipo": "publicar", "volta": "http://localhost:8001"})
+        assert r.status_code == 200, r.text
+        url = r.json()["url"]
+        q = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+        assert url.startswith(conexoes.AUTORIZACAO_TIKTOK)
+        assert q["client_key"] == CLIENT_KEY
+        assert q["scope"] == "user.info.basic,video.publish"
+        assert q["redirect_uri"] == "http://localhost:8001/"
+        assert q["code_challenge_method"] == "S256"
+        # O desafio do TikTok em programa de computador e o SHA-256 em hex.
+        pedido = app_module.PEDIDOS_DE_CONEXAO._pedidos[q["state"]]
+        assert q["code_challenge"] == hashlib.sha256(pedido.verifier.encode()).hexdigest()
+
+    def test_conectar_o_tiktok_de_ponta_a_ponta(self, ambiente, monkeypatch):
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@canalinfantil")
+        r = _chama("POST", f"/api/contas/{conta['id']}/conectar",
+                   {"tipo": "publicar", "volta": "http://localhost:8000"})
+        state = _state_de(r.json()["url"])
+        monkeypatch.setattr(conexoes, "trocar_codigo_tiktok", lambda app, codigo, pedido, **kw:
+                            {"refresh_token": "R-TT", "open_id": "OPEN-1"})
+        volta = _chama("GET", f"/?state={state}&code=C&scopes=user.info.basic,video.publish")
+        assert volta.status_code == 200 and "publicar no TikTok" in volta.text
+        assert vault.resolve("vault://local/tiktok/@canalinfantil") == {
+            "client_key": CLIENT_KEY, "client_secret": SEGREDO_TIKTOK,
+            "refresh_token": "R-TT", "open_id": "OPEN-1"}
+        depois = _estado_da_conta(conta["id"])
+        assert depois["credentials_ref"] == "vault://local/tiktok/@canalinfantil"
+        assert depois["conexao"] == {"publicar": True, "medir": False}
+        assert depois["driver_agora"] == "tiktok-api"
+        # Desconectar devolve a conta a fila manual.
+        assert _chama("DELETE", f"/api/contas/{conta['id']}/conexao?tipo=publicar").status_code == 200
+        assert _estado_da_conta(conta["id"])["driver_agora"] == "manual"
+
+    def _cliente(self, status, corpo):
+        class Resposta:
+            status_code = status
+
+            def json(self):
+                return corpo
+
+        class Cliente:
+            enviados = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def post(self, url, data):
+                Cliente.enviados = data
+                return Resposta()
+        return Cliente
+
+    def test_a_troca_manda_o_verifier(self):
+        cliente = self._cliente(200, {"access_token": "a", "refresh_token": "R", "open_id": "O",
+                                      "scope": "user.info.basic,video.publish"})
+        pedido = conexoes.Pedido("t", "a", "h", "tiktok", "publicar", "http://localhost:8000/", "V")
+        assert conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
+                                             "C", pedido, cliente=cliente) == \
+            {"refresh_token": "R", "open_id": "O"}
+        assert cliente.enviados["code_verifier"] == "V"
+        assert cliente.enviados["client_key"] == CLIENT_KEY
+
+    def test_sem_a_permissao_de_postar_nao_conecta(self):
+        """A resposta lista os escopos AUTORIZADOS, que podem ser menos que
+        os pedidos: sem `video.publish` a conexao "funcionaria" e nenhum post
+        sairia."""
+        cliente = self._cliente(200, {"access_token": "a", "refresh_token": "R",
+                                      "scope": "user.info.basic"})
+        pedido = conexoes.Pedido("t", "a", "h", "tiktok", "publicar", "v", "V")
+        with pytest.raises(conexoes.ConexaoError) as e:
+            conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
+                                          "C", pedido, cliente=cliente)
+        assert e.value.codigo == "escopo"
+
+    def test_o_tiktok_recusando_a_troca(self):
+        cliente = self._cliente(400, {"error": "invalid_grant", "error_description": "x"})
+        pedido = conexoes.Pedido("t", "a", "h", "tiktok", "publicar", "v", "V")
+        with pytest.raises(conexoes.ConexaoError) as e:
+            conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
+                                          "C", pedido, cliente=cliente)
+        assert e.value.codigo == "troca" and "invalid_grant" in e.value.detalhe
+
+    @pytest.mark.parametrize("origem, volta", [
+        ("http://localhost:8000", "http://localhost:8000/"),
+        ("http://127.0.0.1:5175/", "http://127.0.0.1:5175/"),
+    ])
+    def test_a_volta_do_tiktok(self, origem, volta):
+        assert conexoes.volta_de(origem, "tiktok") == volta
+
+    @pytest.mark.parametrize("origem", [
+        # O Login Kit for Desktop so aceita localhost e 127.0.0.1, sempre com
+        # porta: fora disso a recusa viria na tela do TikTok, depois do clique.
+        "http://[::1]:8000",
+        "http://localhost",
+        "http://127.0.0.1/",
+    ])
+    def test_a_volta_que_o_tiktok_nao_aceita_e_recusada_antes(self, origem):
+        assert conexoes.volta_de(origem) is not None       # o Google aceita
+        with pytest.raises(conexoes.ConexaoError) as e:
+            conexoes.volta_de(origem, "tiktok")
+        assert e.value.codigo == "volta"
+
+    def test_o_conectar_recusa_a_volta_que_o_tiktok_nao_aceita(self, ambiente):
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@canalinfantil")
+        r = _chama("POST", f"/api/contas/{conta['id']}/conectar",
+                   {"tipo": "publicar", "volta": "http://[::1]:8000"})
+        assert r.status_code == 400 and r.json()["detail"]["erro"] == "volta"
+        assert len(app_module.PEDIDOS_DE_CONEXAO) == 0
+
+    def test_a_pagina_de_volta_fala_do_tiktok(self):
+        """Quem mostrou a tela de autorizacao foi o TikTok: mandar a pessoa a
+        pagina de permissoes do Google seria mandar ao lugar errado."""
+        for codigo in ("recusada", "troca", "sem_refresh"):
+            texto = conexoes.mensagem(codigo, "tiktok")
+            assert "TikTok" in texto and "Google" not in texto, codigo
+            assert "Google" in conexoes.mensagem(codigo, "youtube"), codigo
+        pagina = conexoes.pagina_de_volta(False, plataforma="tiktok", codigo="recusada")
+        assert "tela do TikTok" in pagina
+
+    def test_toda_frase_da_pagina_de_volta_se_monta(self):
+        for plataforma in ("youtube", "tiktok"):
+            for codigo in conexoes.MENSAGENS:
+                assert "{" not in conexoes.mensagem(codigo, plataforma)

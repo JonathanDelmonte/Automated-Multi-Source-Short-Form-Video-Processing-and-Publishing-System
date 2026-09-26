@@ -18,6 +18,7 @@ export const ORDEM_DAS_PLATAFORMAS = ['youtube', 'tiktok', 'instagram'];
 // este corte não subiu sozinho?" sem obrigar ninguém a ler o plano.
 export const DRIVERS = {
   'youtube-api': 'sobe sozinho pela API oficial',
+  'tiktok-api': 'sobe sozinho pela API do TikTok',
   aggregator: 'agregador (não configurado)',
   manual: 'fila manual: o corte e a legenda ficam prontos',
   browser: 'navegador (desligado por decisão)',

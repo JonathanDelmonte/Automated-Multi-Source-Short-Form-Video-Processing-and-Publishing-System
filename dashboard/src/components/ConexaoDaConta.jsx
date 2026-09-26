@@ -1,33 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, ExternalLink, Link2, Loader2, Unplug } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Link2, Loader2, Lock, Unplug } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { API_BASE_URL } from '../config';
 import { hrefDe } from '../lib/rota';
-import { mensagemDe, origemDoMotor, voltaPossivel } from '../lib/conexoes';
+import { PLATAFORMAS } from '../lib/plataformas';
+import {
+  DESCRICAO_DOS_TIPOS, TIPOS_DE, empresaDe, mensagemDe, origemDoMotor, voltaPossivel,
+} from '../lib/conexoes';
 
-// "Conectar YouTube" numa conta (etapa 7.3). Dois consentimentos, como o
-// `youtube_oauth.py` sempre fez: um para PUBLICAR (sobe o vídeo, não lê) e
+// O "conectar" de uma conta (etapa 7.3). No YouTube, dois consentimentos, como
+// o `youtube_oauth.py` sempre fez: um para PUBLICAR (sobe o vídeo, não lê) e
 // outro para MEDIR (lê views e retenção, não publica). Duas credenciais
-// pequenas em vez de uma grande.
+// pequenas em vez de uma grande. No TikTok (7.3c), só publicar por enquanto.
 //
-// O clique abre a aba do Google ANTES de perguntar ao motor: aberta depois de
-// um `await`, o bloqueador de pop-up a trataria como propaganda. Sem aba
-// (bloqueada mesmo assim), o link aparece para clicar.
+// O clique abre a aba da autorização ANTES de perguntar ao motor: aberta
+// depois de um `await`, o bloqueador de pop-up a trataria como propaganda. Sem
+// aba (bloqueada mesmo assim), o link aparece para clicar.
 //
 // Depois do consentimento, quem recebe a volta é o motor (ou o painel do
 // Docker), não esta aba: por isso ela pergunta ao motor de 3 em 3 segundos se
 // a conta já está conectada, por até 10 minutos.
 
-const TIPOS = [
-  { id: 'publicar', ligado: 'publica sozinho', botao: 'conectar para publicar',
-    dica: 'O programa sobe os cortes sozinho, na hora marcada. Não lê nem apaga nada.' },
-  { id: 'medir', ligado: 'mede as visualizações', botao: 'conectar para medir',
-    dica: 'O programa lê as visualizações e a retenção dos cortes. Não publica nada.' },
-];
+const CADASTRO = { youtube: 'o aplicativo do Google', tiktok: 'o app do TikTok' };
 
 const ESPERA_MAXIMA_MS = 10 * 60 * 1000;
 
-export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
+export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
   const [esperando, setEsperando] = useState(null);
   const [erro, setErro] = useState(null);
   const [linkManual, setLinkManual] = useState(null);
@@ -37,7 +35,7 @@ export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
   const conexao = conta?.conexao;
   const conectadoAgora = esperando && conexao?.[esperando];
 
-  // Enquanto espera a volta do Google, pergunta ao motor.
+  // Enquanto espera a volta da autorização, pergunta ao motor.
   useEffect(() => {
     if (!esperando || conectadoAgora) return undefined;
     const inicio = Date.now();
@@ -55,12 +53,22 @@ export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
     if (conectadoAgora) { setEsperando(null); setLinkManual(null); }
   }, [conectadoAgora]);
 
-  // Motor de antes da 7.3 não diz o estado da conexão; conta de outra
-  // plataforma ainda não conecta por aqui (TikTok vem na 7.3c).
-  if (!conexao || conta.platform !== 'youtube') return null;
+  // Motor de antes da 7.3 não diz o estado da conexão; o Instagram ainda não
+  // conecta por aqui (7.3d).
+  const plataforma = conta?.platform;
+  if (!conexao || !TIPOS_DE[plataforma]) return null;
 
+  const tipos = TIPOS_DE[plataforma].map((id) => ({ id, ...DESCRICAO_DOS_TIPOS[plataforma][id] }));
+  const empresa = empresaDe(plataforma);
   const origem = origemDoMotor(API_BASE_URL, window.location.origin);
-  const podeVoltar = voltaPossivel(origem);
+  const podeVoltar = voltaPossivel(origem, plataforma);
+  const tudoLigado = tipos.every((t) => conexao[t.id]);
+  // `aplicativo` é a situação do cadastro (`situacaoDoAplicativo`).
+  const aplicativoPronto = aplicativo === 'pronto';
+  // Antes da auditoria do TikTok, o post sai só para a própria conta, e a
+  // conta precisa estar privada no app. O motor diz qual é o caso.
+  const soPrivado = plataforma === 'tiktok' && conexao.publicar
+    && conta.capabilities?.['tiktok-api'] === 'private_only';
 
   const conectar = async (tipo) => {
     setErro(null);
@@ -75,7 +83,7 @@ export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (aba) aba.close();
-        setErro(mensagemDe(data?.detail?.erro));
+        setErro(mensagemDe(data?.detail?.erro, { plataforma }));
         return;
       }
       if (aba) {
@@ -107,7 +115,7 @@ export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
   return (
     <div className="space-y-1.5 text-[12px]">
       <div className="flex flex-wrap gap-1.5">
-        {TIPOS.map((t) => {
+        {tipos.map((t) => {
           if (conexao[t.id]) {
             return confirmando === t.id ? (
               <span key={t.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-rule2">
@@ -139,33 +147,46 @@ export default function ConexaoDaConta({ conta, aplicativoPronto, aoMudar }) {
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-rule2 text-ink2 hover:text-ink hover:border-[color:var(--color-accent)]"
             >
               {esperando === t.id ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-              {esperando === t.id ? 'esperando o Google…' : t.botao}
+              {esperando === t.id ? `esperando o ${empresa}…` : t.botao}
             </button>
           );
         })}
       </div>
-      {!aplicativoPronto && !(conexao.publicar && conexao.medir) && (
+      {soPrivado && (
+        <p className="text-muted flex gap-1">
+          <Lock size={12} className="shrink-0 mt-0.5" />
+          Até a auditoria do TikTok, o post sai só para você, e a conta precisa estar privada no app na hora
+          de postar. Para postar público, use o pacote do dia.
+        </p>
+      )}
+      {aplicativo === 'falta' && !tudoLigado && (
         <p className="text-muted">
           Para conectar, primeiro{' '}
           <a href={hrefDe('/configuracoes/aplicativos')} className="text-ink2 underline underline-offset-2">
-            cadastre o aplicativo do Google
+            cadastre {CADASTRO[plataforma]}
           </a>.
         </p>
       )}
-      {aplicativoPronto && !podeVoltar && !(conexao.publicar && conexao.medir) && (
+      {aplicativo === 'motor-antigo' && !tudoLigado && (
         <p className="text-muted">
-          Para conectar, abra o painel neste computador (em localhost): o Google só devolve a conexão para ele.
+          Para conectar, atualize o programa deste computador: esta versão ainda não conecta
+          o {PLATAFORMAS[plataforma]?.nome}. O aviso no topo do site tem o botão.
+        </p>
+      )}
+      {aplicativoPronto && !podeVoltar && !tudoLigado && (
+        <p className="text-muted">
+          Para conectar, abra o painel neste computador (em localhost): o {empresa} só devolve a conexão para ele.
         </p>
       )}
       {esperando && (
         <p className="text-muted">
-          Autorize na aba do Google. Esta tela percebe sozinha quando terminar.
+          Autorize na aba do {empresa}. Esta tela percebe sozinha quando terminar.
         </p>
       )}
       {linkManual && (
         <a href={linkManual} target="_blank" rel="noopener noreferrer"
            className="inline-flex items-center gap-1 text-ink2 underline underline-offset-2">
-          <ExternalLink size={12} /> abrir a tela do Google
+          <ExternalLink size={12} /> abrir a tela do {empresa}
         </a>
       )}
       {erro && <p className="text-danger flex items-center gap-1"><Unplug size={12} /> {erro}</p>}

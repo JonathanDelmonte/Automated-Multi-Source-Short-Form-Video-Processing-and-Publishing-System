@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, Unplug } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { dadosDaVolta, mensagemDe } from '../lib/conexoes';
+import { PLATAFORMAS } from '../lib/plataformas';
 
-// A volta do consentimento do Google no painel do Docker (etapa 7.3).
+// A volta do consentimento no painel do Docker (etapa 7.3): a do Google
+// (YouTube) e, desde a 7.3c, a do TikTok, que volta do mesmo jeito.
 //
-// No painel do Docker a API é relativa, e a volta do Google chega à raiz do
-// PAINEL (o Vite), com `?state=...&code=...`. Esta tela manda o código ao
+// No painel do Docker a API é relativa, e a volta chega à raiz do PAINEL (o
+// Vite), com `?state=...&code=...`. Esta tela manda o código ao
 // motor (`POST /api/oauth/volta`) e diz o resultado. No site do Cloudflare
 // ela não aparece: lá quem recebe a volta é o próprio motor.
 //
@@ -51,21 +53,22 @@ export default function VoltaDoGoogle() {
         {resultado === null ? (
           <>
             <Loader2 size={26} className="mx-auto animate-spin text-muted" />
-            <p className="text-ink">Terminando a conexão com o Google…</p>
+            <p className="text-ink">Terminando a conexão…</p>
           </>
         ) : resultado.ok ? (
           <>
             <CheckCircle2 size={28} className="mx-auto text-ok" />
             <p className="text-ink">
               {resultado.handle} está conectada para{' '}
-              {resultado.tipo === 'medir' ? 'medir as visualizações' : 'publicar sozinha'}.
+              {resultado.tipo === 'medir' ? 'medir as visualizações' : 'publicar sozinha'}
+              {PLATAFORMAS[resultado.plataforma] ? ` no ${PLATAFORMAS[resultado.plataforma].nome}` : ''}.
             </p>
           </>
         ) : (
           <>
             <Unplug size={26} className="mx-auto text-danger" />
             <p className="text-ink">Não conectou.</p>
-            <p className="text-muted text-sm">{mensagemDe(resultado.codigo)}</p>
+            <p className="text-muted text-sm">{mensagemDe(resultado.codigo, { plataforma: resultado.plataforma })}</p>
           </>
         )}
         {resultado !== null && (

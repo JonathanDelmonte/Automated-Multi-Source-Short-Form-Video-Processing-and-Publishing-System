@@ -6889,21 +6889,24 @@ async def conectar_conta(account_id: str, req: ConectarIn, request: Request):
         raise _erro_da_fila(e)
     if conta is None:
         raise HTTPException(status_code=404, detail="Conta nao encontrada")
-    if conta.platform != "youtube":
+    if conta.platform not in conexoes.TIPOS_DE:
         return _erro_de_conexao("plataforma")
-    app_google = APLICATIVOS.credenciais("google")
-    if not app_google:
+    if req.tipo not in conexoes.TIPOS_DE[conta.platform]:
+        return _erro_de_conexao("tipo")
+    app_da_plataforma = APLICATIVOS.credenciais(conexoes.APLICATIVO_DE[conta.platform])
+    if not app_da_plataforma:
         return _erro_de_conexao("sem_aplicativo", 409)
     try:
-        volta = conexoes.volta_de(req.volta)
+        volta = conexoes.volta_de(req.volta, conta.platform)
     except conexoes.ConexaoError as e:
         return _erro_de_conexao(e.codigo)
-    verifier, desafio = conexoes.par_pkce()
+    verifier, desafio = conexoes.par_pkce(hexadecimal=conta.platform == "tiktok")
     state = PEDIDOS_DE_CONEXAO.novo(conexoes.Pedido(
         tenant_id=db.tenant_atual(), account_id=conta.id, handle=conta.handle,
         plataforma=conta.platform, tipo=req.tipo, volta=volta, verifier=verifier))
     return {"url": conexoes.url_de_consentimento(
-                app_google["client_id"], volta, conta.platform, req.tipo, state, desafio),
+                conexoes.id_do_app(app_da_plataforma), volta, conta.platform, req.tipo,
+                state, desafio),
             "expira_em_s": conexoes.VALIDADE_S}
 
 
@@ -6920,18 +6923,18 @@ async def _concluir_conexao(state: Optional[str], code: Optional[str],
     base = {"plataforma": pedido.plataforma, "tipo": pedido.tipo, "handle": pedido.handle}
     if error or not code:
         return {"ok": False, "codigo": "recusada", **base}
-    app_google = APLICATIVOS.credenciais("google")
-    if not app_google:
+    app_da_plataforma = APLICATIVOS.credenciais(conexoes.APLICATIVO_DE[pedido.plataforma])
+    if not app_da_plataforma:
         return {"ok": False, "codigo": "sem_aplicativo", **base}
     try:
-        refresh = await asyncio.to_thread(conexoes.trocar_codigo, app_google, code, pedido)
+        extra = await asyncio.to_thread(conexoes.trocar, app_da_plataforma, code, pedido)
     except conexoes.ConexaoError as e:
         return {"ok": False, "codigo": e.codigo, "detalhe": e.detalhe, **base}
     ref = conexoes.ref_do_cofre(pedido.plataforma, pedido.tipo, pedido.handle)
     try:
-        vault.gravar(ref, {"client_id": app_google["client_id"],
-                           "client_secret": app_google["client_secret"],
-                           "refresh_token": refresh})
+        # O cadastro do app vai junto do token: o refresh token so vale com o
+        # app que o emitiu, e trocar o cadastro depois nao pode quebrar a conta.
+        vault.gravar(ref, {**app_da_plataforma, **extra})
     except (OSError, vault.VaultError) as e:
         print(f"⚠️ [conectar] nao consegui gravar no cofre: {type(e).__name__}", flush=True)
         return {"ok": False, "codigo": "gravar", **base}
@@ -6999,7 +7002,7 @@ async def desconectar_conta(account_id: str, tipo: str):
             conta = await t.get(db_models.Account, account_id)
             if conta is None:
                 raise HTTPException(status_code=404, detail="Conta nao encontrada")
-            if conta.platform != "youtube":
+            if tipo not in conexoes.TIPOS_DE.get(conta.platform, ()):
                 return _erro_de_conexao("plataforma")
             ref = conexoes.ref_do_cofre(conta.platform, tipo, conta.handle)
             try:
@@ -7014,7 +7017,9 @@ async def desconectar_conta(account_id: str, tipo: str):
         raise
     except Exception as e:
         raise _erro_da_fila(e)
-    if refresh:
+    if refresh and conta.platform == "youtube":
+        # O TikTok so revoga com access token; a credencial local ja saiu, e a
+        # permissao some da conta em "Aplicativos" do proprio app do TikTok.
         await asyncio.to_thread(conexoes.revogar, refresh)
     return {"success": True, "havia": apagou}
 

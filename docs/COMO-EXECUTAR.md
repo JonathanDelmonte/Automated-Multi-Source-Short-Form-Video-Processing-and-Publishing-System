@@ -1123,6 +1123,42 @@ cadastro dividem as 100) e zera à meia-noite no horário do Pacífico.
 **Até o Google aprovar a auditoria do seu projeto, o vídeo enviado pela API sobe
 privado.** Você o deixa público no YouTube Studio, ou posta pelo pacote do dia.
 
+### Para o TikTok subir sozinho (serve para testar, até a auditoria)
+
+**Leia isto antes, porque é do TikTok e não do programa:** até o TikTok aprovar
+a auditoria do seu app, o que sobe pela API **sai só para você** (privado), **a
+conta precisa estar privada no app na hora do post**, e no máximo 5 contas por
+dia postam pelo seu app. Serve para conferir que o caminho funciona; para
+postar público, o caminho continua sendo o pacote do dia.
+
+**1. O cadastro do app** (Configurações → **aplicativos**, cartão do TikTok),
+no <https://developers.tiktok.com/apps/>:
+
+1. criar um app;
+2. em *Products*, adicionar o **Login Kit** e o **Content Posting API**, e no
+   Content Posting API ligar o **Direct Post**;
+3. no Login Kit, plataforma **Desktop**, cadastrar os dois endereços de volta:
+   `http://localhost:*/` e `http://127.0.0.1:*/` (o `*` vale qualquer porta —
+   cobre o site, o painel do Docker e o ajudante);
+4. conferir em *Scopes* que estão o `user.info.basic` e o `video.publish`;
+5. para não esperar a revisão do app: criar um **Sandbox** e pôr a sua conta do
+   TikTok em *Target users*;
+6. colar o **client key** e o **client secret** (os do Sandbox, se for o caso)
+   no site.
+
+**2. Conectar a conta.** Na visão geral do canal, a conta do TikTok ganha
+**conectar para publicar**. O botão abre a tela do TikTok; depois de autorizar,
+ela devolve você **para este computador**, e a tela do site percebe sozinha.
+
+**O primeiro post de verdade** (é o que o CI não consegue provar): deixe a conta
+privada no app do TikTok, publique um corte nela pela fila e confira no app que
+o vídeo apareceu, só para você, com a legenda certa. Se o TikTok recusar, a
+linha da fila diz o motivo em português — "a conta precisa estar PRIVADA no
+app", "o seu app já teve 5 contas postando hoje" — e o corte não se perde.
+
+Quando o app passar na auditoria, ponha `TIKTOK_APP_AUDITADO=1` no `.env`: aí o
+programa passa a pedir "público" quando você pedir e o TikTok oferecer.
+
 ### Na primeira vez, publique privado
 
 O padrão já é `private`. Publique um corte, confira no YouTube Studio que o

@@ -47,6 +47,7 @@ from .base import (CAPABILITIES, DRIVER_IDS, Account, Cost, DriverDesligado,
                    PublisherError, QuotaEsgotada, RenderedClip)
 from .browser import BrowserPublisher
 from .manual import ManualPublisher
+from .tiktok_api import TikTokApiPublisher
 from .youtube_api import YouTubeApiPublisher
 
 # O teto de risco da cascata automatica. Zero, e nao "baixo": nao existe risco
@@ -61,6 +62,9 @@ RISCO_MAXIMO_AUTOMATICO = 0.0
 # proposito, para que nem um erro no teto de risco o torne alcancavel.
 REGISTRY: tuple[type[Publisher], ...] = (
     YouTubeApiPublisher,
+    # O TikTok pela API oficial (etapa 7.3): risco zero como o do YouTube, e
+    # antes do agregador e do piso pela mesma razao.
+    TikTokApiPublisher,
     AggregatorPublisher,
     ManualPublisher,
     BrowserPublisher,

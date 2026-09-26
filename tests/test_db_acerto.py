@@ -230,6 +230,8 @@ class TestBancoAntigo:
                   f"VALUES ('a2', 'tiktok', 'outro', 'auto', '{T}')")
         c.execute("INSERT INTO clips (id, job_id, start_word_idx, end_word_idx, tenant_id) "
                   f"VALUES ('c2', 'j1', NULL, NULL, '{T}')")
+        c.execute("INSERT INTO publications (id, clip_id, account_id, driver, status, tenant_id) "
+                  f"VALUES ('p2', 'c2', 'a2', 'tiktok-api', 'published', '{T}')")
         c.commit()
 
     def test_as_chaves_entre_tabelas_continuam_valendo(self, antigo, monkeypatch):
@@ -265,8 +267,11 @@ class TestBancoAntigo:
         linhas = []
         feito = db_acerto.acertar(str(antigo), log=linhas.append)
         assert feito["erro"] is None
-        assert set(feito["reconstruidas"]) == {"users", "accounts", "sources", "jobs", "clips"}
+        assert set(feito["reconstruidas"]) == {"users", "accounts", "sources", "jobs", "clips",
+                                               "publications"}
         assert "coluna nova password_hash" in feito["reconstruidas"]["users"]
+        # O caso que motivou o acerto: o driver do TikTok (etapa 7.3).
+        assert "regra ck_publications_driver mudou" in feito["reconstruidas"]["publications"]
         assert "start_word_idx passou a aceitar nulo" in feito["reconstruidas"]["clips"]
         assert "regra ck_jobs_status mudou" in feito["reconstruidas"]["jobs"]
         assert any("tabela users refeita" in l for l in linhas)

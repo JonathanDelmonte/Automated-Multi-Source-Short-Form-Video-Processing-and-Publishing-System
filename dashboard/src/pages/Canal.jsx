@@ -10,7 +10,8 @@ import IconePlataforma from '../components/ui/IconePlataforma';
 import Pagina, { EmBreve, Secao } from '../components/ui/Pagina';
 import { SituacaoDosCanais } from './Canais';
 import { apiFetch } from '../lib/api';
-import { useAplicativoDoGoogle } from '../lib/aplicativo';
+import { useAplicativos } from '../lib/aplicativo';
+import { situacaoDoAplicativo } from '../lib/conexoes';
 import { apagarCanal, IDIOMAS } from '../lib/canais';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
@@ -43,7 +44,7 @@ function VisaoGeral({ canal }) {
   const { canais } = usePainel();
   const [contas, setContas] = useState(null);
   const [publicacoes, setPublicacoes] = useState(null);
-  const aplicativo = useAplicativoDoGoogle();
+  const aplicativos = useAplicativos();
 
   const carregar = useCallback(async () => {
     try {
@@ -101,7 +102,8 @@ function VisaoGeral({ canal }) {
                   </span>
                 </div>
                 {porId[c.id] && (
-                  <ConexaoDaConta conta={porId[c.id]} aplicativoPronto={!!aplicativo.pronto} aoMudar={carregar} />
+                  <ConexaoDaConta conta={porId[c.id]} aplicativo={situacaoDoAplicativo(aplicativos.prontos, p)}
+                                  aoMudar={carregar} />
                 )}
               </div>
             ));

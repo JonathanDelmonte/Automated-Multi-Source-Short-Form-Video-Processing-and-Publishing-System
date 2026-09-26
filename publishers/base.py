@@ -21,9 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Os quatro ids da secao 6. Mesma lista de `db_models.DRIVERS`, repetida aqui
-# para que este modulo nao dependa do SQLAlchemy -- um teste compara as duas.
-DRIVER_IDS = ("manual", "youtube-api", "aggregator", "browser")
+# Os quatro ids da secao 6, mais o do TikTok (etapa 7.3). Mesma lista de
+# `db_models.DRIVERS`, repetida aqui para que este modulo nao dependa do
+# SQLAlchemy -- um teste compara as duas.
+DRIVER_IDS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api")
 
 # O que `capability()` pode responder, da secao 6.
 CAPABILITIES = ("public", "private_only", "draft", "none")

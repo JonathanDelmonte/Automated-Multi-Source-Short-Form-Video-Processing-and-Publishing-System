@@ -59,10 +59,15 @@ def _conexao(linha) -> dict:
     """O que a conta tem conectado (etapa 7.3): a credencial de publicar (o
     endereco que o driver le) e a de medir (a que o coletor procura). Sem rede:
     e so ver se o cofre responde."""
+    import vault
+    if linha.platform == "tiktok":
+        from publishers import tiktok_api
+        conta = conta_para_driver(linha)
+        return {"publicar": vault.existe(tiktok_api.ref_de(conta), tiktok_api.CAMPOS),
+                "medir": False}
     if linha.platform != "youtube":
         return {"publicar": False, "medir": False}
     import metrics_collector
-    import vault
     return {"publicar": vault.existe(linha.credentials_ref, vault.CAMPOS),
             "medir": metrics_collector.credencial_de_leitura(linha.handle) is not None}
 

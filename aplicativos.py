@@ -35,11 +35,19 @@ ARQUIVO = "aplicativos.json"
 #: Os campos de cada cadastro, e de que variavel do ambiente cada um cai.
 PLATAFORMAS = {
     "google": {"client_id": "YOUTUBE_CLIENT_ID", "client_secret": "YOUTUBE_CLIENT_SECRET"},
+    # O app de desenvolvedor do TikTok (developers.tiktok.com), com o Login
+    # Kit e o Content Posting API. O TikTok chama o id do app de `client_key`.
+    "tiktok": {"client_key": "TIKTOK_CLIENT_KEY", "client_secret": "TIKTOK_CLIENT_SECRET"},
 }
 
 _FORMATOS = {
     ("google", "client_id"): re.compile(r"\d{4,30}-[A-Za-z0-9_]{8,80}\.apps\.googleusercontent\.com"),
     ("google", "client_secret"): re.compile(r"[A-Za-z0-9_-]{16,100}"),
+    # `aw...` em producao, `sbaw...` no sandbox. Folgado de proposito: uma
+    # chave errada o TikTok recusa na hora de conectar, e um formato apertado
+    # demais trancaria uma chave certa sem saida nenhuma.
+    ("tiktok", "client_key"): re.compile(r"[A-Za-z0-9]{8,64}"),
+    ("tiktok", "client_secret"): re.compile(r"[A-Za-z0-9_-]{16,100}"),
 }
 
 TOKEN_GOOGLE = "https://oauth2.googleapis.com/token"
@@ -157,9 +165,9 @@ class Aplicativos:
             saida[plataforma] = {
                 "configurado": dados is not None,
                 "origem": origem,
-                # O Client ID nao e segredo (viaja na URL de consentimento), e
+                # O id do app nao e segredo (viaja na URL de consentimento), e
                 # e o que a pessoa reconhece. O segredo nunca sai.
-                "client_id": dados.get("client_id") if dados else None,
+                "client_id": (dados.get("client_id") or dados.get("client_key")) if dados else None,
             }
         return saida
 

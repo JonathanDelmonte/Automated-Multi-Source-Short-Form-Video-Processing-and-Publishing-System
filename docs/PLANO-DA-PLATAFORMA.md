@@ -261,7 +261,7 @@ conta não saem juntos.
 |---|---|---|
 | 7.3a | motor: cota nova do YouTube (100 envios/dia), agenda por conta, a trava do post atrasado, "já publiquei" com link, os galhos do canal no publicar e no agendar; e o acerto do banco que já existe (`db_acerto`) | feita (26-set) |
 | 7.3b | cadastro de aplicativo por pessoa (Configurações → aplicativos, com o passo a passo) e "Conectar YouTube" pelo site, para publicar e para medir | feita (26-set) |
-| 7.3c | TikTok pela Content Posting API, privado até a auditoria | a fazer |
+| 7.3c | TikTok pela Content Posting API (Direct Post), privado até a auditoria: o cadastro do app do TikTok nas Configurações, o "conectar" da conta pelo site e o driver `tiktok-api` na cascata | feita (26-set) |
 | 7.3d | Instagram na versão simples | a fazer |
 | 7.3e | conferir as telas no computador e no celular, docs, CI | a fazer |
 
@@ -286,6 +286,18 @@ Dois defeitos antigos apareceram no caminho e foram consertados junto: a linha
 agendada que caía na fila manual era entregue de novo a cada minuto, para
 sempre; e a agenda mostrava as horas com a diferença do fuso (3 h no Brasil),
 porque o banco devolve a hora sem ele.
+
+O TikTok foi conferido no navegador do mesmo jeito: a conta do TikTok manda
+cadastrar o app **do TikTok** (e não o do Google); a client key torta é recusada
+dizendo qual campo; o "conectar" abre a tela do TikTok com a client key, os dois
+escopos (`user.info.basic,video.publish`), a volta para este computador e o
+desafio do PKCE em hexadecimal; a volta com código falso diz "o TikTok não
+aceitou", e não "o Google"; conectada, a conta diz "sobe sozinho pela API do
+TikTok" e avisa que, até a auditoria, o post sai só para ela e a conta precisa
+estar privada. **Até a auditoria, o driver pede sempre o privado**, mesmo que
+se peça público e a conta ofereça: o TikTok recusaria o post. **O que falta ver
+no PC do autor** é o post de verdade, com o app dele no TikTok for Developers
+(em Sandbox) e a conta de teste privada (`COMO-EXECUTAR.md`, Passo 8).
 
 ### 7.4 — Análises por canal
 

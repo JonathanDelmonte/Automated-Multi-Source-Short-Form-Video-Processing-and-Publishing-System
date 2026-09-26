@@ -297,3 +297,126 @@ def test_a_aba_do_google_abre_antes_de_esperar_o_motor():
 def test_a_volta_no_painel_vem_antes_da_tranca():
     """A volta vale pelo `state` do pedido, nao pela sessao."""
     assert APP.index("return <VoltaDoGoogle />;") < APP.index("return <Tranca />;")
+
+
+# --------------------------------------------------------------------------- #
+# O TikTok (etapa 7.3c)
+# --------------------------------------------------------------------------- #
+
+@precisa_node
+def test_a_tela_conecta_o_que_o_motor_conecta():
+    """Uma plataforma que a tela nao conhece nao ganha botao; uma que o motor
+    nao conecta daria "plataforma" no clique. As duas listas andam juntas."""
+    conexoes = pytest.importorskip("conexoes")
+    assert _conexoes("c.TIPOS_DE") == {p: list(t) for p, t in conexoes.TIPOS_DE.items()}
+    assert _conexoes("c.APLICATIVO_DE") == conexoes.APLICATIVO_DE
+    descricoes = _conexoes("c.DESCRICAO_DOS_TIPOS")
+    for plataforma, tipos in conexoes.TIPOS_DE.items():
+        for tipo in tipos:
+            assert descricoes[plataforma][tipo]["botao"], (plataforma, tipo)
+
+
+@precisa_node
+@pytest.mark.parametrize("origem, plataforma, pode", [
+    ("http://[::1]:8000", "youtube", True),
+    # O Login Kit for Desktop do TikTok so aceita localhost e 127.0.0.1, sempre
+    # com porta -- o mesmo que `conexoes.volta_de` recusa no motor.
+    ("http://[::1]:8000", "tiktok", False),
+    ("http://localhost", "tiktok", False),
+    ("http://localhost:8001", "tiktok", True),
+    ("http://127.0.0.1:5175", "tiktok", True),
+])
+def test_a_volta_do_tiktok_e_mais_estreita(origem, plataforma, pode):
+    assert _conexoes(f"c.voltaPossivel({json.dumps(origem)}, {json.dumps(plataforma)})") is pode
+    conexoes = pytest.importorskip("conexoes")
+    try:
+        conexoes.volta_de(origem, plataforma)
+        aceita = True
+    except conexoes.ConexaoError:
+        aceita = False
+    assert aceita is pode, "a tela e o motor discordam sobre essa volta"
+
+
+@precisa_node
+def test_a_frase_diz_quem_mostrou_a_tela():
+    """Mandar quem cancelou no TikTok a pagina de permissoes do Google seria
+    mandar ao lugar errado."""
+    for codigo in ("recusada", "troca", "volta"):
+        tiktok = _conexoes(f"c.mensagemDe({json.dumps(codigo)}, {{ plataforma: 'tiktok' }})")
+        google = _conexoes(f"c.mensagemDe({json.dumps(codigo)})")
+        assert "TikTok" in tiktok and "Google" not in tiktok, codigo
+        assert "Google" in google, codigo
+    assert "myaccount.google.com" not in _conexoes("c.mensagemDe('sem_refresh', { plataforma: 'tiktok' })")
+    assert "{" not in "".join(_conexoes(
+        "Object.keys(c.MENSAGENS).map((k) => c.mensagemDe(k, { plataforma: 'tiktok' }))"))
+
+
+@precisa_node
+@pytest.mark.parametrize("plataforma, campo, trecho", [
+    ("google", "client_id", ".apps.googleusercontent.com"),
+    ("google", "client_secret", "GOCSPX-"),
+    ("tiktok", "client_key", "client key do TikTok"),
+    ("tiktok", "client_secret", "client secret do TikTok"),
+])
+def test_o_formato_errado_diz_qual_campo(plataforma, campo, trecho):
+    frase = _conexoes(f"c.mensagemDoCadastro('formato', {{ plataforma: {json.dumps(plataforma)}, "
+                      f"campo: {json.dumps(campo)} }})")
+    assert trecho in frase
+
+
+@precisa_node
+@pytest.mark.parametrize("prontos, plataforma, situacao", [
+    ({"google": True, "tiktok": False}, "youtube", "pronto"),
+    ({"google": True, "tiktok": False}, "tiktok", "falta"),
+    # O site e publicado antes de o programa ser atualizado: o motor da 7.3b
+    # nao conhece o TikTok, e mandar cadastrar levaria a uma pagina sem o
+    # cartao dele.
+    ({"google": True}, "tiktok", "motor-antigo"),
+    ({"google": True, "tiktok": True}, "instagram", "motor-antigo"),
+    # Ainda nao se sabe (ou motor de antes da 7.3): nada de botao.
+    (None, "youtube", None),
+])
+def test_o_cadastro_que_serve_a_cada_conta(prontos, plataforma, situacao):
+    assert _conexoes(f"c.situacaoDoAplicativo({json.dumps(prontos)}, {json.dumps(plataforma)})") \
+        == situacao
+
+
+@precisa_node
+def test_todo_driver_do_motor_tem_nome_na_tela():
+    """Um driver sem linha aparece cru ("tiktok-api") no cartao da conta."""
+    publishers = pytest.importorskip("publishers")
+    modulo = (SRC / "lib" / "plataformas.js").as_uri()
+    codigo = (f"import * as p from {json.dumps(modulo)};\n"
+              "console.log(JSON.stringify(Object.keys(p.DRIVERS)));\n")
+    saida = subprocess.run([NODE, "--input-type=module", "-e", codigo], capture_output=True,
+                           encoding="utf-8", check=True, timeout=60).stdout
+    assert set(publishers.DRIVER_IDS) <= set(json.loads(saida))
+
+
+def test_o_cartao_do_tiktok_manda_cadastrar_os_dois_enderecos():
+    """O TikTok compara a volta com o que foi cadastrado no app; o `*` e a
+    porta, e sem os dois hosts o painel aberto em 127.0.0.1 nao conectaria."""
+    cadastro = _fonte("components", "CadastroDoAplicativo.jsx")
+    assert "http://localhost:*/" in cadastro and "http://127.0.0.1:*/" in cadastro
+    assert "plataforma: 'tiktok'" in cadastro
+
+
+def test_a_conta_do_tiktok_ganha_o_botao_nas_duas_telas():
+    publicacoes = _fonte("components", "PublicacoesTab.jsx")
+    canal = _fonte("pages", "Canal.jsx")
+    assert "c.platform === 'youtube'" not in publicacoes
+    assert "{c.conexao && TIPOS_DE[c.platform] && (" in publicacoes
+    assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}" in publicacoes
+    assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, p)}" in canal
+
+
+def test_o_programa_antigo_manda_atualizar_e_nao_cadastrar():
+    """Com o programa de antes da 7.3c, o cartao do TikTok nao existe nas
+    Configuracoes: mandar "cadastre o app do TikTok" seria um beco."""
+    conexao = _fonte("components", "ConexaoDaConta.jsx")
+    cadastro = _fonte("components", "CadastroDoAplicativo.jsx")
+    assert "aplicativo === 'motor-antigo'" in conexao
+    assert "aplicativo === 'falta'" in conexao
+    assert "atualize o programa deste computador" in conexao
+    assert "estados[app.plataforma] === undefined ? (" in cadastro
+    assert "Atualize o\n            programa" in cadastro or "Atualize o programa" in cadastro

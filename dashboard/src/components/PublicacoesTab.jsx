@@ -10,7 +10,8 @@ import ConexaoDaConta from './ConexaoDaConta';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 import { corpoDoDestino } from '../lib/publicacoes';
-import { useAplicativoDoGoogle } from '../lib/aplicativo';
+import { useAplicativos } from '../lib/aplicativo';
+import { TIPOS_DE, situacaoDoAplicativo } from '../lib/conexoes';
 import { hrefDe } from '../lib/rota';
 
 // A publicação (Fase 3, bloco 3.5), em partes desde a 7.1: o pacote do dia, o
@@ -52,7 +53,7 @@ export default function PublicacoesTab({
   const [confirmando, setConfirmando] = useState(null);
   const [agenda, setAgenda] = useState(null);
   const destinoAtual = useRef('');
-  const aplicativo = useAplicativoDoGoogle();
+  const aplicativos = useAplicativos();
 
   const carregar = useCallback(async () => {
     try {
@@ -278,9 +279,10 @@ export default function PublicacoesTab({
                         <Trash2 size={14} />
                       </button>
                     )}
-                    {c.conexao && c.platform === 'youtube' && (
+                    {c.conexao && TIPOS_DE[c.platform] && (
                       <div className="basis-full pl-7">
-                        <ConexaoDaConta conta={c} aplicativoPronto={!!aplicativo.pronto} aoMudar={carregar} />
+                        <ConexaoDaConta conta={c} aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}
+                                        aoMudar={carregar} />
                       </div>
                     )}
                   </li>

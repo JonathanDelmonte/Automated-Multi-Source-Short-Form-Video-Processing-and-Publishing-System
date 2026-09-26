@@ -50,6 +50,8 @@ from urllib.parse import urlencode, urlsplit
 AUTORIZACAO_GOOGLE = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_GOOGLE = "https://oauth2.googleapis.com/token"
 REVOGAR_GOOGLE = "https://oauth2.googleapis.com/revoke"
+AUTORIZACAO_TIKTOK = "https://www.tiktok.com/v2/auth/authorize/"
+TOKEN_TIKTOK = "https://open.tiktokapis.com/v2/oauth/token/"
 
 #: Os escopos de cada consentimento. Os mesmos do `youtube_oauth.py`, que o
 #: teste compara: dois caminhos para a mesma credencial nao podem pedir coisas
@@ -58,18 +60,24 @@ ESCOPOS = {
     ("youtube", "publicar"): ("https://www.googleapis.com/auth/youtube.upload",),
     ("youtube", "medir"): ("https://www.googleapis.com/auth/youtube.readonly",
                            "https://www.googleapis.com/auth/yt-analytics.readonly"),
+    # O TikTok (7.3c): o perfil basico e o Direct Post. Medir vem na 7.4.
+    ("tiktok", "publicar"): ("user.info.basic", "video.publish"),
 }
 TIPOS = ("publicar", "medir")
+#: O que cada plataforma conecta, e qual cadastro de aplicativo ela usa.
+TIPOS_DE = {"youtube": ("publicar", "medir"), "tiktok": ("publicar",)}
+APLICATIVO_DE = {"youtube": "google", "tiktok": "tiktok"}
 
 #: Quanto tempo um pedido espera a volta do Google.
 VALIDADE_S = 600
 
 _HOSTS_LOCAIS = ("localhost", "127.0.0.1", "::1")
+_HOSTS_DO_TIKTOK = ("localhost", "127.0.0.1")
 
 
 class ConexaoError(ValueError):
     """`codigo`: plataforma | tipo | volta | sem_aplicativo | expirou |
-    recusada | troca | sem_refresh."""
+    recusada | troca | sem_refresh | escopo."""
 
     def __init__(self, codigo: str, detalhe: str = ""):
         super().__init__(detalhe or codigo)
@@ -77,10 +85,17 @@ class ConexaoError(ValueError):
         self.detalhe = detalhe
 
 
-def volta_de(origem: str) -> str:
+def volta_de(origem: str, plataforma: str = "youtube") -> str:
     """O endereco de volta, a partir da origem pela qual o NAVEGADOR fala com o
     motor (o site manda `http://localhost:8000`; o painel do Docker, a propria
-    origem). So localhost; a volta e a raiz, com barra."""
+    origem). So localhost; a volta e a raiz, com barra.
+
+    **O TikTok e mais estreito que o Google** (Login Kit for Desktop): so
+    `localhost` e `127.0.0.1` -- o `[::1]` nao --, e sempre com porta. A pessoa
+    cadastra `http://localhost:*/` e `http://127.0.0.1:*/` no app dela (o `*` e
+    qualquer porta), e uma volta fora disso seria recusada na tela do TikTok,
+    depois do clique: aqui ela e recusada antes.
+    """
     try:
         partes = urlsplit((origem or "").strip())
         host = (partes.hostname or "").lower()
@@ -91,16 +106,24 @@ def volta_de(origem: str) -> str:
         raise ConexaoError("volta")
     if partes.path not in ("", "/") or partes.query or partes.fragment:
         raise ConexaoError("volta")
+    if plataforma == "tiktok" and (host not in _HOSTS_DO_TIKTOK or not porta):
+        raise ConexaoError("volta")
     nome = f"[{host}]" if ":" in host else host
     return f"http://{nome}:{porta}/" if porta else f"http://{nome}/"
 
 
-def par_pkce() -> tuple:
-    """`(verifier, challenge)` no formato S256 do Google (base64url sem `=`)."""
+def par_pkce(hexadecimal: bool = False) -> tuple:
+    """`(verifier, challenge)` do PKCE S256.
+
+    O Google quer o desafio em base64url sem `=` (o RFC 7636). **O TikTok, em
+    programa de computador, quer o SHA-256 em HEXADECIMAL** -- esta escrito na
+    documentacao do Login Kit for Desktop, e e o erro que se comete copiando o
+    PKCE de qualquer outro lugar."""
     verifier = secrets.token_urlsafe(64)[:96]
-    desafio = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
-    return verifier, desafio
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    if hexadecimal:
+        return verifier, digest.hex()
+    return verifier, base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 @dataclass
@@ -153,10 +176,25 @@ class Pedidos:
             return len(self._pedidos)
 
 
+def id_do_app(app: dict) -> str:
+    return app.get("client_id") or app.get("client_key") or ""
+
+
 def url_de_consentimento(client_id: str, volta: str, plataforma: str, tipo: str,
                          state: str, desafio: str) -> str:
     if (plataforma, tipo) not in ESCOPOS:
         raise ConexaoError("tipo")
+    if plataforma == "tiktok":
+        return AUTORIZACAO_TIKTOK + "?" + urlencode({
+            "client_key": client_id,
+            # O TikTok separa os escopos por VIRGULA.
+            "scope": ",".join(ESCOPOS[(plataforma, tipo)]),
+            "response_type": "code",
+            "redirect_uri": volta,
+            "state": state,
+            "code_challenge": desafio,
+            "code_challenge_method": "S256",
+        })
     return AUTORIZACAO_GOOGLE + "?" + urlencode({
         "client_id": client_id,
         "redirect_uri": volta,
@@ -176,8 +214,10 @@ def url_de_consentimento(client_id: str, volta: str, plataforma: str, tipo: str,
 def ref_do_cofre(plataforma: str, tipo: str, handle: str) -> str:
     """Onde a credencial mora: a de publicar, no endereco que o driver le; a de
     medir, no que o coletor de metricas procura."""
-    if plataforma != "youtube" or tipo not in TIPOS:
+    if tipo not in TIPOS_DE.get(plataforma, ()):
         raise ConexaoError("tipo")
+    if plataforma == "tiktok":
+        return f"vault://local/tiktok/{handle}"
     pasta = "youtube" if tipo == "publicar" else "youtube-metrics"
     return f"vault://local/{pasta}/{handle}"
 
@@ -216,6 +256,51 @@ def trocar_codigo(app: dict, codigo: str, pedido: Pedido,
     return refresh
 
 
+def trocar_codigo_tiktok(app: dict, codigo: str, pedido: Pedido,
+                         cliente=None, timeout: float = 30.0) -> dict:
+    """`{refresh_token, open_id}`, trocando o codigo que o TikTok devolveu. Rede.
+
+    Confere que a permissao de postar veio: a resposta lista os escopos que a
+    pessoa AUTORIZOU, que podem ser menos que os pedidos, e sem
+    `video.publish` a conexao "funciona" e nenhum post sai."""
+    if cliente is None:
+        import httpx
+
+        def cliente():
+            return httpx.Client(timeout=timeout)
+    try:
+        with cliente() as c:
+            r = c.post(TOKEN_TIKTOK, data={
+                "client_key": app["client_key"],
+                "client_secret": app["client_secret"],
+                "code": codigo,
+                "grant_type": "authorization_code",
+                "redirect_uri": pedido.volta,
+                "code_verifier": pedido.verifier,
+            })
+    except Exception as e:
+        raise ConexaoError("troca", f"sem resposta do TikTok ({type(e).__name__})")
+    try:
+        dados = r.json() or {}
+    except ValueError:
+        dados = {}
+    if r.status_code != 200 or dados.get("error"):
+        raise ConexaoError("troca", f"o TikTok recusou a troca ({dados.get('error') or r.status_code})")
+    if not dados.get("refresh_token"):
+        raise ConexaoError("sem_refresh")
+    escopos = {e.strip() for e in (dados.get("scope") or "").split(",") if e.strip()}
+    if escopos and "video.publish" not in escopos:
+        raise ConexaoError("escopo")
+    return {"refresh_token": dados["refresh_token"], "open_id": dados.get("open_id") or ""}
+
+
+def trocar(app: dict, codigo: str, pedido: Pedido) -> dict:
+    """O que guardar no cofre alem do cadastro do app, por plataforma."""
+    if pedido.plataforma == "tiktok":
+        return trocar_codigo_tiktok(app, codigo, pedido)
+    return {"refresh_token": trocar_codigo(app, codigo, pedido)}
+
+
 def revogar(token: str, timeout: float = 10.0) -> bool:
     """Avisa o Google que o token nao vale mais. Melhor esforco."""
     try:
@@ -226,29 +311,47 @@ def revogar(token: str, timeout: float = 10.0) -> bool:
         return False
 
 
+#: As frases da pagina de volta. `{empresa}` e quem mostrou a tela de
+#: autorizacao: o Google (YouTube) ou o TikTok.
 MENSAGENS = {
     "expirou": "Esse pedido de conexão venceu ou já foi usado. Volte ao Virtu Clips e clique em conectar de novo.",
-    "recusada": "A conexão foi cancelada na tela do Google. Nada mudou; dá para tentar de novo quando quiser.",
-    "troca": "O Google não aceitou o código de volta. Clique em conectar de novo.",
+    "recusada": "A conexão foi cancelada na tela do {empresa}. Nada mudou; dá para tentar de novo quando quiser.",
+    "troca": "O {empresa} não aceitou o código de volta. Clique em conectar de novo.",
     "sem_refresh": "O Google respondeu sem a autorização permanente. Tire o acesso do Virtu Clips em myaccount.google.com/permissions e conecte de novo.",
-    "sem_aplicativo": "O cadastro do aplicativo do Google sumiu das Configurações. Cole de novo e conecte outra vez.",
+    "sem_aplicativo": "O cadastro do aplicativo sumiu das Configurações. Cole de novo e conecte outra vez.",
+    "escopo": "A permissão de postar não veio. Conecte de novo e deixe marcada a opção de publicar vídeos.",
 }
+#: O que muda no TikTok: a pagina de permissoes do Google nao serve para ele.
+MENSAGENS_DO_TIKTOK = {
+    "sem_refresh": "O TikTok respondeu sem a autorização permanente. Clique em conectar de novo.",
+}
+_EMPRESA = {"youtube": "Google", "tiktok": "TikTok"}
+
+
+def mensagem(codigo: str, plataforma: str = "youtube") -> Optional[str]:
+    """A frase de um codigo de erro, com o nome de quem mostrou a tela."""
+    texto = (MENSAGENS_DO_TIKTOK.get(codigo) if plataforma == "tiktok" else None) \
+        or MENSAGENS.get(codigo)
+    return texto.format(empresa=_EMPRESA.get(plataforma, "Google")) if texto else None
+
 
 _NOMES = {("youtube", "publicar"): "publicar no YouTube",
-          ("youtube", "medir"): "medir as visualizações do YouTube"}
+          ("youtube", "medir"): "medir as visualizações do YouTube",
+          ("tiktok", "publicar"): "publicar no TikTok"}
 
 
 def pagina_de_volta(ok: bool, *, plataforma: str = "youtube", tipo: str = "publicar",
                     handle: str = "", codigo: str = "", detalhe: str = "") -> str:
-    """A pagina que a aba do Google mostra ao voltar. Tudo o que vem de fora
-    passa por `html.escape`: o `error` da volta e texto de quem montou a URL."""
+    """A pagina que a aba do consentimento mostra ao voltar. Tudo o que vem de
+    fora passa por `html.escape`: o `error` da volta e texto de quem montou a
+    URL."""
     if ok:
         titulo = "Conectado"
         texto = (f"A conta {handle} está conectada para "
                  f"{_NOMES.get((plataforma, tipo), tipo)}. Pode fechar esta aba e voltar ao Virtu Clips.")
     else:
         titulo = "Não conectou"
-        texto = MENSAGENS.get(codigo) or "Não deu para conectar. Volte ao Virtu Clips e tente de novo."
+        texto = mensagem(codigo, plataforma) or "Não deu para conectar. Volte ao Virtu Clips e tente de novo."
         if detalhe:
             texto += f" ({detalhe})"
     return f"""<!doctype html>

@@ -231,7 +231,7 @@ function App() {
 
   // O `#app` das versões antigas e qualquer endereço que não é tela caem no
   // início, em vez de numa tela vazia.
-  const [secao, sub, extra] = rota.partes;
+  const [secao, sub, extra, quarta] = rota.partes;
   const ativa = SECOES.has(secao) ? secao : 'inicio';
   const itemAtivo = NAV.find((n) => n.id === ativa);
   const canalDaRota = ativa === 'canais' && sub && sub !== 'novo' ? canais.porId[sub] : null;
@@ -242,7 +242,7 @@ function App() {
     case 'canais':
       if (!sub) pagina = <Canais />;
       else if (sub === 'novo') pagina = <NovoCanal />;
-      else pagina = <Canal key={sub} canalId={sub} aba={extra} />;
+      else pagina = <Canal key={sub} canalId={sub} aba={extra} subaba={quarta || null} />;
       break;
     case 'criar':
       pagina = <Criar key={`${sub || ''}-${rota.busca.get('canal') || ''}`} tipo={sub || null} canalInicial={rota.busca.get('canal')} />;

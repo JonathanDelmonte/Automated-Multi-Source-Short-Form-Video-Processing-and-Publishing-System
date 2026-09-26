@@ -14,8 +14,11 @@ import canais
 import auth
 import scheduler
 import metrics_collector
+import metricas_tiktok
+import metricas_instagram
 import timings_report
 import calibracao
+import analises
 import template as template_doc
 import db
 import db_models
@@ -5678,19 +5681,115 @@ async def apagar_template(template_id: str):
 
 
 @app.get("/api/calibracao")
-async def ver_calibracao():
+async def ver_calibracao(canal: Optional[str] = None, plataforma: Optional[str] = None):
     """O que a rubrica do modelo acertou, ate onde a amostra permite dizer.
 
     **Abaixo do minimo o relatorio nao publica coeficiente.** Com poucos
     cortes, um rho alto acontece por acaso com frequencia -- e uma vez escrito
     num relatorio, vira a razao de alguem mexer nos pesos. Os dados crus saem
     de qualquer jeito: da para olhar, e olhar e honesto.
+
+    `canal` (ou `sem`) e `plataforma` recortam o cruzamento (7.4).
     """
     try:
         itens = await publish_queue.cruzamento()
     except Exception as e:
         raise _erro_da_fila(e)
+    itens = [i for i in itens
+             if (not plataforma or i.get("platform") == plataforma)
+             and (not canal or (canal == "sem" and not i.get("channel_id"))
+                  or i.get("channel_id") == canal)]
     return {**calibracao.relatorio(itens), "clipes": itens}
+
+
+# --- Analises por canal (Fase 7, etapa 7.4) ---------------------------------
+# As contas sao lidas pelas APIs de cada plataforma (`coletar_metricas`), e as
+# telas somam o que foi lido. As regras de COMO somar estao em `analises.py`,
+# que e puro; aqui so se busca o que ele precisa.
+
+#: Quantos dias a serie cobre, no maximo. A tela pede 28; o teto existe para
+#: que um pedido torto nao vire uma conta de anos.
+DIAS_MAXIMOS_DA_SERIE = 120
+
+
+def _dias(valor: int, padrao: int) -> int:
+    try:
+        return max(1, min(DIAS_MAXIMOS_DA_SERIE, int(valor)))
+    except (TypeError, ValueError):
+        return padrao
+
+
+def _contas_para_medir(contas: list, canal: Optional[str], plataforma: Optional[str]) -> list:
+    """As contas do recorte e se cada uma esta conectada para medir -- para a
+    tela dizer "conecte para medir" em vez de mostrar zero."""
+    saida = []
+    for c in contas:
+        if plataforma and c["platform"] != plataforma:
+            continue
+        if canal == "sem" and c.get("channel_id"):
+            continue
+        if canal and canal != "sem" and c.get("channel_id") != canal:
+            continue
+        conexao = c.get("conexao") or {}
+        saida.append({"id": c["id"], "platform": c["platform"], "handle": c["handle"],
+                      "channel_id": c.get("channel_id"), "medir": bool(conexao.get("medir")),
+                      "medir_vencido": bool(conexao.get("medir_vencido"))})
+    return saida
+
+
+@app.get("/api/analises")
+async def ver_analises(canal: Optional[str] = None, plataforma: Optional[str] = None,
+                       dias: int = 28, fuso_min: int = 0):
+    """Os numeros de um canal (ou de todos), no geral ou de uma plataforma.
+
+    `canal`: o id, `sem` (os galhos de contas sem canal) ou nada (tudo).
+    `fuso_min`: o fuso do navegador, em minutos a leste de UTC -- o dia e a
+    faixa de horario sao os de quem olha, e o motor roda em UTC no Docker.
+    """
+    if canal and canal != "sem" and not canais.id_valido(canal):
+        raise HTTPException(status_code=400, detail="Canal invalido")
+    if plataforma and plataforma not in publish_queue.PLATAFORMAS:
+        raise HTTPException(status_code=400, detail="Plataforma invalida")
+    try:
+        galhos = await publish_queue.galhos_publicados()
+        contas = await publish_queue.listar_contas()
+    except Exception as e:
+        raise _erro_da_fila(e)
+    recorte = analises.filtrar(galhos, canal, plataforma)
+    return {**analises.resumo(recorte, datetime.now(timezone.utc), _dias(dias, 28), fuso_min),
+            "filtro": {"canal": canal, "plataforma": plataforma, "dias": _dias(dias, 28)},
+            "contas": _contas_para_medir(contas, canal, plataforma)}
+
+
+def _canal_curto(canal: dict) -> dict:
+    # Sem o avatar: ele viaja na lista de canais que o painel ja tem, e aqui
+    # seriam ate 200 mil caracteres por canal a cada visita.
+    return {"id": canal["id"], "name": canal["name"], "color": canal.get("color")}
+
+
+@app.get("/api/analises/canais")
+async def ver_analises_dos_canais(dias: int = 14, fuso_min: int = 0):
+    """Todos os canais lado a lado (Analises, no menu)."""
+    try:
+        galhos = await publish_queue.galhos_publicados()
+        lista = await canais.listar()
+    except Exception as e:
+        raise _erro_da_fila(e)
+    return {"canais": analises.lado_a_lado([_canal_curto(c) for c in lista], galhos,
+                                           datetime.now(timezone.utc), _dias(dias, 14),
+                                           fuso_min)}
+
+
+@app.get("/api/analises/hoje")
+async def ver_numeros_do_dia(fuso_min: int = 0):
+    """Os numeros do dia, para o Inicio."""
+    try:
+        galhos = await publish_queue.galhos_publicados()
+        lista = await canais.listar()
+    except Exception as e:
+        raise _erro_da_fila(e)
+    return analises.hoje([_canal_curto(c) for c in lista], galhos,
+                         datetime.now(timezone.utc), fuso_min)
 
 
 # --- Onde vai o tempo (Fase 5) ----------------------------------------------
@@ -5795,65 +5894,130 @@ INTERVALO_DE_METRICAS = int(os.environ.get("METRICS_TICK_SECONDS", str(6 * 3600)
 #: varias vezes num deploy mediria tudo a cada reinicio.
 ATRASO_INICIAL_DE_METRICAS = int(os.environ.get("METRICS_FIRST_TICK_SECONDS", "300"))
 
-#: Aviso de credencial ausente uma vez por processo, e nao a cada seis horas.
-_avisou_sem_credencial = False
+#: As contas ja avisadas de que falta a conexao de medir, uma vez por processo
+#: -- e nao a cada seis horas, que encheria o log de quem escolheu nao medir.
+_avisou_sem_credencial: set = set()
+
+#: Os numeros que uma leitura pode trazer, e que `gravar_metrica` guarda.
+_NUMEROS_DA_LEITURA = ("views", "retention_pct") + publish_queue.DETALHES
 
 
-async def _handle_da_conta(account_id: str) -> Optional[str]:
-    async with db.tenant() as t:
-        conta = await t.get(db_models.Account, account_id)
-    return conta.handle if conta else None
+def _falta_para_medir(plataforma: str, handle: str) -> Optional[str]:
+    """None se a conta pode ser medida; senao, a frase do que falta."""
+    if plataforma == "youtube":
+        if metrics_collector.credencial_de_leitura(handle) is None:
+            return "conecte a conta para medir (botao \"conectar para medir\")"
+    elif plataforma == "tiktok":
+        if metricas_tiktok.credencial(handle) is None:
+            return "conecte a conta para medir (botao \"conectar para medir\")"
+    elif plataforma == "instagram":
+        situacao = metricas_instagram.situacao(handle)
+        if situacao == "vencido":
+            return "o token de medir venceu; cole um novo na conta"
+        if situacao != "conectado":
+            return "cole o token de medir na conta"
+    else:
+        return "plataforma sem coleta"
+    return None
+
+
+def _medir_uma_conta(plataforma: str, handle: str, pubs: list) -> dict:
+    """`{publication_id: numeros | PublisherError}` de uma conta. Sincrono: roda
+    no executor, porque a rede das tres APIs e sincrona.
+
+    O YouTube mede video a video, e um video que falha vira o erro DELE; o
+    TikTok e o Instagram medem a conta de uma vez (ate 20 ids por consulta, e a
+    lista de posts do Instagram), e um erro ali e da conta inteira."""
+    if plataforma == "youtube":
+        saida = {}
+        for pub in pubs:
+            try:
+                saida[pub["id"]] = metrics_collector.medir(pub["remote_id"], handle)
+            except publishers.PublisherError as e:
+                saida[pub["id"]] = e
+        return saida
+    if plataforma == "tiktok":
+        numeros = metricas_tiktok.medir(handle, [p["remote_id"] for p in pubs])
+    else:
+        numeros = metricas_instagram.medir(
+            handle, [{"id": p["remote_id"], "duracao_s": p.get("duracao_s")} for p in pubs])
+    return {p["id"]: numeros[p["remote_id"]] for p in pubs if p["remote_id"] in numeros}
 
 
 async def coletar_metricas() -> dict:
     """Uma rodada de coleta. Devolve o que deu para medir.
 
-    **Falha aberto e por publicacao.** Um video apagado na plataforma, um token
-    vencido ou a API fora do ar nao podem impedir a medicao dos outros -- e
-    muito menos derrubar o laco, que e a unica coisa alimentando a Fase 5.
+    **Falha aberto, por publicacao e por conta.** Um video apagado na
+    plataforma, um token vencido ou a API fora do ar nao podem impedir a
+    medicao dos outros -- e muito menos derrubar o laco, que e a unica coisa
+    alimentando as analises. Conta sem a conexao de medir e pulada, com um
+    aviso por conta, e as outras seguem (7.4; ate ali a primeira conta sem
+    credencial encerrava a rodada inteira).
     """
-    global _avisou_sem_credencial
     try:
         pendentes = await publish_queue.publicadas_com_remote_id()
     except Exception as e:
         print(f"⚠️  Metricas: nao consegui ler as publicacoes ({e})")
         return {"medidas": 0, "erros": 0}
 
-    medidas = erros = 0
-    loop = asyncio.get_event_loop()
+    # Pela PLATAFORMA, e nao pelo driver: o corte postado a mao, com o link
+    # registrado no "ja publiquei", e um video do canal como qualquer outro.
+    por_conta: dict = {}
     for pub in pendentes:
-        # Hoje so o YouTube tem de onde medir. Pela PLATAFORMA, e nao pelo
-        # driver: o corte postado a mao, com o link registrado no "ja
-        # publiquei", e um video do canal como qualquer outro (etapa 7.3).
-        if pub.get("platform") != "youtube":
+        por_conta.setdefault((pub["tenant_id"], pub["account_id"]), []).append(pub)
+
+    medidas = erros = 0
+    sem_conexao = []
+    loop = asyncio.get_event_loop()
+    for (tenant_id, _conta), pubs in por_conta.items():
+        db.usar_tenant(tenant_id)
+        plataforma, handle = pubs[0].get("platform"), pubs[0].get("handle")
+        if not handle:
             continue
-        db.usar_tenant(pub["tenant_id"])
+        rotulo = f"{plataforma}/{handle}"
+        falta = _falta_para_medir(plataforma, handle)
+        if falta:
+            if plataforma in ("youtube", "tiktok", "instagram"):
+                sem_conexao.append(rotulo)
+                if rotulo not in _avisou_sem_credencial:
+                    print(f"📊 {rotulo}: {falta}.")
+                    _avisou_sem_credencial.add(rotulo)
+            continue
         try:
-            handle = await _handle_da_conta(pub["account_id"])
-            if not handle:
-                continue
-            # A rede e sincrona (httpx.get) e o loop e o do servidor: sem o
-            # executor, medir dez videos travaria o polling de todo mundo.
-            numeros = await loop.run_in_executor(
-                None, metrics_collector.medir, pub["remote_id"], handle)
-            if await publish_queue.gravar_metrica(pub["id"], **numeros):
-                medidas += 1
+            # A rede e sincrona e o loop e o do servidor: sem o executor, medir
+            # dez videos travaria o polling de todo mundo.
+            resultados = await loop.run_in_executor(
+                None, _medir_uma_conta, plataforma, handle, pubs)
         except publishers.PublisherError as e:
-            if "credencial de LEITURA" in str(e):
-                if not _avisou_sem_credencial:
-                    print(f"📊 {e}")
-                    _avisou_sem_credencial = True
-                return {"medidas": medidas, "erros": erros,
-                        "sem_credencial": True}
             erros += 1
-            print(f"⚠️  Metricas de {pub['id']}: {e}")
+            print(f"⚠️  Metricas de {rotulo}: {e}")
+            continue
         except Exception as e:
             erros += 1
-            print(f"⚠️  Metricas de {pub['id']}: {type(e).__name__}: {e}")
+            print(f"⚠️  Metricas de {rotulo}: {type(e).__name__}: {e}")
+            continue
+        for pub in pubs:
+            resultado = resultados.get(pub["id"])
+            if resultado is None:
+                continue
+            if isinstance(resultado, Exception):
+                erros += 1
+                print(f"⚠️  Metricas de {pub['id']}: {resultado}")
+                continue
+            numeros = {k: v for k, v in resultado.items() if k in _NUMEROS_DA_LEITURA}
+            try:
+                if await publish_queue.gravar_metrica(pub["id"], **numeros):
+                    medidas += 1
+            except Exception as e:
+                erros += 1
+                print(f"⚠️  Metricas de {pub['id']}: {type(e).__name__}: {e}")
     if medidas:
         print(f"📊 {medidas} publicacao(oes) medida(s)"
               + (f", {erros} com erro" if erros else ""))
-    return {"medidas": medidas, "erros": erros}
+    resumo = {"medidas": medidas, "erros": erros}
+    if sem_conexao:
+        resumo["sem_credencial"] = sem_conexao
+    return resumo
 
 
 async def _laco_de_metricas():
@@ -5869,11 +6033,16 @@ async def _laco_de_metricas():
 
 @app.get("/api/metricas")
 async def listar_metricas(publication_id: Optional[str] = None):
-    """As leituras ja coletadas, da mais recente para a mais antiga."""
+    """As leituras ja coletadas, da mais recente para a mais antiga.
+
+    `tem_credencial_de_leitura` diz se ALGUMA conta deste painel esta conectada
+    para medir -- ate a 7.4 perguntava por uma conta chamada "canal", o nome
+    que o `youtube_oauth.py --leitura` usava."""
     try:
+        contas = await publish_queue.listar_contas()
         return {"metricas": await publish_queue.historico(publication_id),
-                "tem_credencial_de_leitura": bool(
-                    metrics_collector.credencial_de_leitura("canal"))}
+                "tem_credencial_de_leitura": any(
+                    (c.get("conexao") or {}).get("medir") for c in contas)}
     except Exception as e:
         raise _erro_da_fila(e)
 
@@ -7002,6 +7171,12 @@ async def desconectar_conta(account_id: str, tipo: str):
             conta = await t.get(db_models.Account, account_id)
             if conta is None:
                 raise HTTPException(status_code=404, detail="Conta nao encontrada")
+            if conta.platform == "instagram" and tipo == "medir":
+                # O token colado (7.4): nao ha o que avisar a Meta, o token so
+                # deixa de ser usado. Quem quiser revoga-lo tira o app em
+                # "Apps e sites" do proprio Instagram.
+                return {"success": True,
+                        "havia": vault.apagar(metricas_instagram.ref_de(conta.handle))}
             if tipo not in conexoes.TIPOS_DE.get(conta.platform, ()):
                 return _erro_de_conexao("plataforma")
             ref = conexoes.ref_do_cofre(conta.platform, tipo, conta.handle)
@@ -7022,6 +7197,50 @@ async def desconectar_conta(account_id: str, tipo: str):
         # permissao some da conta em "Aplicativos" do proprio app do TikTok.
         await asyncio.to_thread(conexoes.revogar, refresh)
     return {"success": True, "havia": apagou}
+
+
+class TokenIn(BaseModel):
+    #: O token que o painel da Meta gerou ("Gerar token"). Nunca volta ao site
+    #: e nunca vai para o log.
+    token: str
+
+
+@app.post("/api/contas/{account_id}/token")
+async def colar_token_de_medir(account_id: str, req: TokenIn, request: Request):
+    """O token de MEDIR do Instagram, colado nas contas (7.4).
+
+    A Meta so devolve o login para endereco HTTPS cadastrado, e o programa
+    atende em `http://localhost`: por isso, no Instagram, conectar para medir e
+    colar o token que o painel do app dela gera. Antes de guardar, o Instagram
+    e perguntado de quem e o token -- de outra conta, e recusado: os numeros
+    entrariam na calibracao como se fossem destes cortes. So JSON.
+    """
+    _exigir_json(request)
+    try:
+        async with db.tenant() as t:
+            conta = await t.get(db_models.Account, account_id)
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if conta is None:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+    if conta.platform != "instagram":
+        return _erro_de_conexao("plataforma")
+    try:
+        segredo = await asyncio.to_thread(metricas_instagram.conferir, req.token, conta.handle)
+    except metricas_instagram.TokenRecusado as e:
+        corpo = {"erro": e.codigo}
+        if e.codigo == "outra_conta" and e.detalhe:
+            # O @ que o Instagram devolveu. Nao e segredo, e e o que deixa a
+            # pessoa entender o erro ("esse token e da @outra").
+            corpo["conta"] = e.detalhe
+        return JSONResponse(status_code=422, content={"detail": corpo})
+    try:
+        vault.gravar(metricas_instagram.ref_de(conta.handle), segredo)
+    except (OSError, vault.VaultError) as e:
+        print(f"⚠️ [token] nao consegui gravar no cofre: {type(e).__name__}", flush=True)
+        return _erro_de_conexao("gravar", 500)
+    print(f"🔗 instagram/{conta.handle} conectado para medir (token colado)", flush=True)
+    return {"success": True, "conta": segredo.get("username")}
 
 
 @app.get("/api/publicacoes")

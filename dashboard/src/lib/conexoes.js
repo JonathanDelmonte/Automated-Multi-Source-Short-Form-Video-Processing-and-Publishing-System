@@ -41,8 +41,9 @@ const EMPRESA = { youtube: 'Google', google: 'Google', tiktok: 'TikTok' };
 
 // O que cada plataforma conecta por aqui, e qual cadastro de aplicativo ela
 // usa. Espelho de `conexoes.TIPOS_DE` / `APLICATIVO_DE` do motor (há teste
-// comparando): o TikTok só publica por enquanto -- medir vem na 7.4.
-export const TIPOS_DE = { youtube: ['publicar', 'medir'], tiktok: ['publicar'] };
+// comparando). O Instagram mede por token COLADO (`TokenDoInstagram`), e não
+// por botão: a Meta só devolve o login para endereço HTTPS.
+export const TIPOS_DE = { youtube: ['publicar', 'medir'], tiktok: ['publicar', 'medir'] };
 export const APLICATIVO_DE = { youtube: 'google', tiktok: 'tiktok' };
 
 // O que cada botão de conectar diz, por plataforma e tipo.
@@ -51,13 +52,43 @@ export const DESCRICAO_DOS_TIPOS = {
     publicar: { ligado: 'publica sozinho', botao: 'conectar para publicar',
                 dica: 'O programa sobe os cortes sozinho, na hora marcada. Não lê nem apaga nada.' },
     medir: { ligado: 'mede as visualizações', botao: 'conectar para medir',
-             dica: 'O programa lê as visualizações e a retenção dos cortes. Não publica nada.' },
+             dica: 'O programa lê as visualizações, a retenção, as curtidas e os comentários dos cortes. Não publica nada.' },
   },
   tiktok: {
     publicar: { ligado: 'publica sozinho', botao: 'conectar para publicar',
                 dica: 'O programa sobe os cortes sozinho, na hora marcada, pelo Direct Post. Não lê nem apaga nada.' },
+    medir: { ligado: 'mede as visualizações', botao: 'conectar para medir',
+             dica: 'O programa lê as visualizações, curtidas, comentários e compartilhamentos dos vídeos públicos. Não publica nada.' },
   },
 };
+
+// O que o programa de ANTES da 7.4 conectava. O site é publicado antes de o
+// programa de quem usa ser atualizado: sem o `tipos` na conta (que o motor
+// passou a mandar na 7.4), vale esta lista, e o que falta nela a tela manda
+// atualizar -- um botão que o motor não conhece só daria erro no clique.
+const TIPOS_DO_PROGRAMA_ANTIGO = { youtube: ['publicar', 'medir'], tiktok: ['publicar'] };
+
+export function tiposDaConta(conta) {
+  const plataforma = conta?.platform;
+  const doMotor = conta?.conexao?.tipos;
+  const tipos = Array.isArray(doMotor) ? doMotor : (TIPOS_DO_PROGRAMA_ANTIGO[plataforma] || []);
+  // Um tipo que esta tela não sabe descrever (motor mais novo que o site)
+  // fica de fora, em vez de virar um botão sem nome.
+  return tipos.filter((t) => DESCRICAO_DOS_TIPOS[plataforma]?.[t]);
+}
+
+// O que esta conta conectaria se o programa fosse atualizado.
+export function tiposQueFaltamNoPrograma(conta) {
+  const plataforma = conta?.platform;
+  if (Array.isArray(conta?.conexao?.tipos)) return [];
+  const tem = tiposDaConta(conta);
+  return (TIPOS_DE[plataforma] || []).filter((t) => !tem.includes(t));
+}
+
+// O Instagram mede por token colado; o motor diz se sabe recebê-lo.
+export function aceitaToken(conta) {
+  return conta?.platform === 'instagram' && conta?.conexao?.token === true;
+}
 
 // O cadastro que serve a esta conta, no programa deste computador:
 // - 'pronto': colado (ou no .env), e o botão de conectar aparece;
@@ -103,6 +134,7 @@ export const MENSAGENS = {
   troca: 'O {empresa} não aceitou o código de volta. Clique em conectar de novo.',
   sem_refresh: 'O Google respondeu sem a autorização permanente. Tire o acesso do Virtu Clips em myaccount.google.com/permissions e conecte de novo.',
   escopo: 'A permissão de postar vídeos não veio. Conecte de novo e deixe marcada a opção de publicar.',
+  escopo_medir: 'A permissão de ver os vídeos não veio. Conecte de novo e deixe marcada a opção de ler os seus vídeos.',
   gravar: 'O programa não conseguiu guardar a conexão neste computador.',
   cliente: 'O Google não reconheceu esse ID do cliente ou essa chave secreta. Confira se copiou os dois do mesmo cliente.',
   formato: 'Isso não parece um ID do cliente do Google (termina em .apps.googleusercontent.com).',
@@ -138,4 +170,23 @@ const FORMATO = {
 export function mensagemDoCadastro(codigo, { plataforma = 'google', campo } = {}) {
   if (codigo === 'formato' && FORMATO[`${plataforma}.${campo}`]) return FORMATO[`${plataforma}.${campo}`];
   return MENSAGENS_DO_CADASTRO[codigo] || 'Não deu para salvar.';
+}
+
+// O token de MEDIR do Instagram (etapa 7.4): as recusas que o motor devolve
+// no `POST /api/contas/{id}/token`, em frases. `{conta}` é o @ que o Instagram
+// disse ser o dono do token; `{handle}`, o da conta no programa.
+export const MENSAGENS_DO_TOKEN = {
+  formato: 'Isso não parece um token do Instagram. Copie o token inteiro que o painel da Meta mostrou em "Gerar token".',
+  recusado: 'O Instagram não aceitou esse token. Gere outro no painel do app da Meta e cole de novo.',
+  outra_conta: 'Esse token é da conta @{conta}, e esta conta é {handle}. Gere o token entrando na conta certa.',
+  permissao: 'Esse token não tem a permissão de ler os números (instagram_business_manage_insights). Marque-a no app da Meta e gere outro.',
+  sem_resposta: 'Não consegui falar com o Instagram agora. Tente de novo em instantes.',
+  gravar: 'O programa não conseguiu guardar o token neste computador.',
+  plataforma: 'Só as contas do Instagram medem por token.',
+};
+
+export function mensagemDoToken(codigo, { conta = '', handle = '' } = {}) {
+  const texto = MENSAGENS_DO_TOKEN[codigo];
+  if (!texto) return 'Não deu para guardar o token. Tente de novo.';
+  return texto.replace('{conta}', String(conta).replace(/^@/, '')).replace('{handle}', handle);
 }

@@ -477,6 +477,53 @@ class Metric(Base, TenantScoped):
     )
 
 
+class MetricDetail(Base, TenantScoped):
+    """O resto de uma leitura: curtidas, comentarios, compartilhamentos,
+    salvamentos e o tempo medio assistido (Fase 7, etapa 7.4).
+
+    `metrics` nasceu com views e retencao, que e o que o YouTube da e o que a
+    calibracao cruza. O TikTok e o Instagram medem por engajamento -- e o
+    TikTok nem tem retencao --, e as analises por canal mostram esses numeros.
+
+    **Tabela nova, e nao colunas em `metrics`**, pela regra da Fase 7: o
+    `create_all` do boot nao acrescenta coluna a tabela que ja existe. O
+    `db_acerto` refaria a tabela, mas refazer no boot "a tabela mais valiosa do
+    projeto" para guardar numeros que so parte das leituras tem e trocar o
+    simples pelo arriscado -- o mesmo motivo do `publication_posts`.
+
+    Uma linha por leitura, gravada na mesma transacao dela (1:1 com `metrics`),
+    e so quando a plataforma deu algum destes numeros. **None nao e zero**,
+    como em `metrics`: "o Instagram nao disse" nao e "ninguem salvou".
+    """
+    __tablename__ = "metric_details"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    metric_id: Mapped[str] = mapped_column(ID, nullable=False)
+    likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shares: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    saves: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Segundos, sempre: o YouTube da em segundos e o Instagram em
+    # MILISSEGUNDOS, e quem converte e o coletor de cada um.
+    avg_watch_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_metric_details_tenant"),
+        ForeignKeyConstraint(["tenant_id", "metric_id"],
+                             ["metrics.tenant_id", "metrics.id"],
+                             ondelete="CASCADE", name="fk_metric_details_metric"),
+        UniqueConstraint("tenant_id", "metric_id", name="uq_metric_details_tenant_metric"),
+        CheckConstraint("likes is null or likes >= 0", name="ck_metric_details_likes"),
+        CheckConstraint("comments is null or comments >= 0", name="ck_metric_details_comments"),
+        CheckConstraint("shares is null or shares >= 0", name="ck_metric_details_shares"),
+        CheckConstraint("saves is null or saves >= 0", name="ck_metric_details_saves"),
+        CheckConstraint("avg_watch_s is null or avg_watch_s >= 0",
+                        name="ck_metric_details_avg_watch"),
+        Index("ix_metric_details_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 10-12. canais -- o centro da Fase 7 (docs/PLANO-DA-PLATAFORMA.md)
 # --------------------------------------------------------------------------- #
@@ -580,6 +627,6 @@ class ChannelJob(Base, TenantScoped):
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
     "users", "accounts", "templates", "sources", "jobs", "clips",
-    "publications", "publication_posts", "metrics", "channels",
-    "channel_accounts", "channel_jobs",
+    "publications", "publication_posts", "metrics", "metric_details",
+    "channels", "channel_accounts", "channel_jobs",
 )

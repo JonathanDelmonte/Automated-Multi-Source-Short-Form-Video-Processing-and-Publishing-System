@@ -348,6 +348,9 @@ roteiro está no `COMO-EXECUTAR.md`, Passo 8:
 Os três no mesmo corte de um canal ligado são o "primeiro corte com os galhos
 rastreados" do critério.
 
+O autor decidiu testar tudo no final (ver "Decisões do autor"): a 7.4 começa sem
+esperar esse teste.
+
 ### 7.4 — Análises por canal
 
 - **YouTube**: visualizações e retenção, pela API de Analytics que o coletor já
@@ -363,6 +366,49 @@ rastreados" do critério.
 
 **Pronto quando:** um canal ligado mostra as telas com números coletados das
 plataformas, e o relatório de calibração conta os cortes medidos.
+
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.4a | motor: medir o TikTok (a Display API, com o "conectar para medir" separado do de postar) e o Instagram (o token colado, conferido e renovado sozinho); curtidas, comentários, compartilhamentos e tempo médio também no YouTube (`metric_details`); a coleta passa a ser por conta, e uma conta sem conexão não para as outras | feita (26-set) |
+| 7.4b | motor: `analises.py` (a soma do canal e de cada plataforma, o ganho das últimas 24 h, a série por dia, os melhores cortes, o horário de postar) e as rotas `/api/analises`, `/api/analises/canais` e `/api/analises/hoje`; a calibração por plataforma e por canal | feita (26-set) |
+| 7.4c | painel: as três telas no canal ligado (Geral e uma por plataforma ligada), Análises no menu com os canais lado a lado, os números do dia no Início, o "conectar para medir" do TikTok e o token do Instagram | feita (26-set) |
+| 7.4d | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (26-set) |
+
+**Como o Instagram mede, e por que é diferente.** Publicar pela API do Instagram
+ficou fora (7.3d), mas medir não envia vídeo. O login da Meta só devolve a
+pessoa para endereço HTTPS cadastrado, e o programa atende em `localhost` —
+então, em vez do botão, a pessoa gera o token no painel do app dela na Meta e
+cola na conta. O programa pergunta ao Instagram de quem é o token antes de
+guardar (de outra conta, recusa e diz qual), renova uma vez por semana (o token
+dura 60 dias), e marca a conexão como vencida se o Instagram recusar — a tela
+pede outro.
+
+**As três regras das telas**, que moram no motor (`analises.py`) para valerem
+em todas:
+
+- vale o último número **conhecido** de cada campo — uma leitura em que o
+  YouTube não deu a retenção não apaga a de ontem;
+- o ganho de um dia só conta com base: um corte antigo medido pela primeira vez
+  não "ganha" num dia as visualizações da vida inteira;
+- o horário de postar só aponta uma faixa com 5 posts medidos em duas faixas **e**
+  a melhor passando a segunda por 25%. Na conferência, sem a margem, 2.036
+  contra 2.020 virava "a tarde rende mais".
+
+**Onde a 7.4 está (26-set-2026).** Conferido com o motor de verdade, um banco de
+demonstração com quatro semanas de leituras e um navegador (Playwright), no
+computador e no celular: as análises de um canal ligado (Geral, YouTube e
+TikTok), as da página Análises (os canais lado a lado e a soma por plataforma), os
+números do dia no Início, o "conectar para medir" do TikTok abrindo a tela dele
+com `user.info.basic,video.list`, a volta para este computador e o PKCE em
+hexadecimal, e o token do Instagram (tirar, colar um torto — recusado pelo
+formato —, colar um no formato certo — o Instagram de verdade não é alcançável
+daqui, e a tela diz que não conseguiu falar com ele). As cores dos gráficos
+passaram no validador de paleta contra o fundo dos cartões. O relatório de
+calibração conta os cortes medidos, por plataforma. **O que falta ver no PC do
+autor** são os números de verdade, com as contas dele: o roteiro está no
+`COMO-EXECUTAR.md`, Passo 12.
 
 ### 7.5 — Automação por canal
 
@@ -385,6 +431,11 @@ plataformas, e o relatório de calibração conta os cortes medidos.
 - **O motor ligado.** Para rodar sozinho, o motor tem de subir com o Windows: o
   ajudante já faz isso; no Docker, o Docker Desktop precisa iniciar com o
   Windows. O post cuja hora passou com o PC desligado segue a trava da 7.3.
+- **O fuso da agenda (achado na 7.4).** O agendador calcula as janelas no fuso
+  do processo, e no Docker o container roda em UTC: 11h/15h/19h viram 8h/12h/16h
+  em Brasília. O contorno está no `COMO-EXECUTAR.md` (`SCHEDULE_WINDOWS=14,18,22`);
+  o conserto entra aqui, com as janelas passando a ser do canal: o fuso de quem
+  usa guardado no motor. No ajudante, vale a hora do Windows.
 
 **Pronto quando:** o canal infantil, com o PC ligado e ninguém mexendo, acha um
 vídeo com licença, corta, espera a aprovação (ou não, se o canal estiver assim) e
@@ -523,6 +574,7 @@ tem pressa: "a gente vai fazendo aos poucos".
 | Qualidade dos cortes (7.2)? | **Fica para o fim**, depois da estrutura; a lista vem do autor |
 | Estilo do vídeo de IA? | **Configurado por quem usa e salvo no canal**; nada automático pelo nicho |
 | Prazo das auditorias? | Sem pressa; "quando eu quiser dividir o trabalho, a gente divide" |
+| Quando testar no PC dele? | **No final**, tudo junto: as etapas seguem sem esperar o teste de cada uma (26-set-2026, ao fechar a 7.3) |
 
 Quando a estrutura estiver de pé, o "canal como centro" vira o ADR-013.
 
@@ -623,6 +675,11 @@ vieram.
 - "Espero que você tenha anotado tudo isso num documento, para que, mesmo que a
   gente perca esse chat, esteja salvo tudo o que a gente conversou." É este
   documento.
+
+**26-set-2026, ao fechar a 7.3:** "vou testar só no final pode seguir para a
+7.4". O roteiro de teste de cada etapa continua sendo escrito no
+`COMO-EXECUTAR.md` à medida que ela fica pronta, para que o teste do final seja
+seguir a lista, e não lembrar o que mudou.
 
 ## Fontes
 

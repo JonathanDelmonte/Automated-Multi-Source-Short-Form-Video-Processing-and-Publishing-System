@@ -1,89 +1,61 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import CanaisLadoALado from '../components/analises/CanaisLadoALado';
+import PainelDeAnalises from '../components/analises/PainelDeAnalises';
 import IconePlataforma from '../components/ui/IconePlataforma';
-import Pagina, { CabecalhoDaPagina, EmBreve } from '../components/ui/Pagina';
-import { apiFetch } from '../lib/api';
+import Pagina, { CabecalhoDaPagina } from '../components/ui/Pagina';
 import { hrefDe } from '../lib/rota';
 
-// Análises (etapa 7.1): as três telas que o autor pediu -- a geral, a do
-// YouTube e a do TikTok. Os números de verdade chegam na etapa 7.4; o que já dá
-// para mostrar hoje é quanto saiu por cada galho, e é isso que aparece.
+// Análises, no menu (etapa 7.4): todos os canais lado a lado, e a soma de
+// todos -- na aba Geral e na de cada plataforma. As telas de UM canal moram na
+// aba Análises dele. Os números vêm das APIs de cada plataforma, lidos pelo
+// motor a cada 6 horas (ou quando alguém aperta "medir agora").
 
 const ABAS = [
   { id: 'geral', rotulo: 'Geral' },
   { id: 'youtube', rotulo: 'YouTube', plataforma: 'youtube' },
   { id: 'tiktok', rotulo: 'TikTok', plataforma: 'tiktok' },
+  { id: 'instagram', rotulo: 'Instagram', plataforma: 'instagram' },
 ];
-
-const O_QUE_VEM = {
-  geral: [
-    'Todos os canais lado a lado: visualizações, retenção e crescimento.',
-    'Os cortes que mais renderam, de qualquer canal.',
-    'O que a IA achou que ia render contra o que rendeu de verdade.',
-  ],
-  youtube: [
-    'Visualizações, retenção e inscritos de cada Short, pela API oficial do YouTube.',
-    'Os horários em que os Shorts do canal rendem mais.',
-  ],
-  tiktok: [
-    'Visualizações, curtidas, comentários e compartilhamentos de cada vídeo.',
-    'Os horários em que os vídeos do canal rendem mais.',
-  ],
-};
 
 export default function Analises({ aba = 'geral' }) {
   const atual = ABAS.find((a) => a.id === aba) || ABAS[0];
-  const [publicacoes, setPublicacoes] = useState(null);
-
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      try {
-        const res = await apiFetch('/api/publicacoes');
-        const data = res.ok ? await res.json() : null;
-        if (vivo) setPublicacoes(data ? data.publicacoes || [] : []);
-      } catch {
-        if (vivo) setPublicacoes([]);
-      }
-    })();
-    return () => { vivo = false; };
-  }, []);
-
-  const publicadas = (publicacoes || []).filter((p) => p.status === 'published'
-    && (!atual.plataforma || p.account?.platform === atual.plataforma));
 
   return (
-    <Pagina largura="media">
+    <Pagina largura="cheia">
       <CabecalhoDaPagina
         rotulo="análises"
         titulo="Análises"
-        descricao="Como os canais estão indo: a visão geral e a de cada plataforma."
+        descricao="Como os canais estão indo: todos lado a lado, a soma geral e a de cada plataforma."
       />
 
-      <nav aria-label="análises" className="flex gap-1 border-b border-rule">
-        {ABAS.map((a) => (
-          <a
-            key={a.id}
-            href={hrefDe(a.id === 'geral' ? '/analises' : `/analises/${a.id}`)}
-            aria-current={atual.id === a.id ? 'page' : undefined}
-            className={`inline-flex items-center gap-1.5 px-3 py-2.5 -mb-px border-b-2 text-sm whitespace-nowrap transition-colors ${
-              atual.id === a.id ? 'border-[color:var(--color-accent)] text-ink' : 'border-transparent text-muted hover:text-ink2'}`}
-          >
-            {a.plataforma && <IconePlataforma platform={a.plataforma} size={15} mono={atual.id !== a.id} />}
-            {a.rotulo}
-          </a>
-        ))}
+      <nav aria-label="análises" className="-mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto custom-scrollbar">
+        <div className="flex gap-1 border-b border-rule min-w-max">
+          {ABAS.map((a) => (
+            <a
+              key={a.id}
+              href={hrefDe(a.id === 'geral' ? '/analises' : `/analises/${a.id}`)}
+              aria-current={atual.id === a.id ? 'page' : undefined}
+              className={`inline-flex items-center gap-1.5 px-3 py-2.5 -mb-px border-b-2 text-sm whitespace-nowrap transition-colors ${
+                atual.id === a.id ? 'border-[color:var(--color-accent)] text-ink' : 'border-transparent text-muted hover:text-ink2'}`}
+            >
+              {a.plataforma && <IconePlataforma platform={a.plataforma} size={15} mono={atual.id !== a.id} />}
+              {a.rotulo}
+            </a>
+          ))}
+        </div>
       </nav>
 
-      <section className="card p-4 sm:p-5">
-        <p className="font-display text-3xl text-ink leading-none">{publicacoes === null ? '…' : publicadas.length}</p>
-        <p className="text-muted text-sm mt-1.5">
-          {publicadas.length === 1 ? 'corte publicado' : 'cortes publicados'}
-          {atual.plataforma ? ` no ${atual.rotulo}` : ' em todas as plataformas'}
-          {' '}pela fila do Virtu Clips.
-        </p>
-      </section>
+      {atual.id === 'geral' && (
+        <section className="space-y-3">
+          <p className="eyebrow">os canais lado a lado</p>
+          <CanaisLadoALado />
+        </section>
+      )}
 
-      <EmBreve etapa="7.4" titulo="Os números de cada corte" itens={O_QUE_VEM[atual.id]} />
+      <section className="space-y-3">
+        <p className="eyebrow">{atual.plataforma ? `todos os canais no ${atual.rotulo}` : 'todos os canais somados'}</p>
+        <PainelDeAnalises key={atual.id} plataforma={atual.plataforma || null} />
+      </section>
     </Pagina>
   );
 }

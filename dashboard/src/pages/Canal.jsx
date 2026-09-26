@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, Languages, Loader2, Plus, ShieldCheck, Trash2, Zap } from 'lucide-react';
 import ConexaoDaConta from '../components/ConexaoDaConta';
+import PainelDeAnalises from '../components/analises/PainelDeAnalises';
 import FormularioDoCanal from '../components/FormularioDoCanal';
 import ProjectsGrid from '../components/ProjectsGrid';
 import PublicacoesTab from '../components/PublicacoesTab';
@@ -182,7 +183,37 @@ function Ajustes({ canal }) {
   );
 }
 
-function ConteudoDaAba({ aba, canal }) {
+// As telas de análises do canal (etapa 7.4): a Geral (a soma) e uma por
+// plataforma ligada -- as "três telas no canal ligado" do plano.
+function AnalisesDoCanal({ canal, subaba }) {
+  const plataformas = ORDEM_DAS_PLATAFORMAS.filter((p) => canal.contas.some((c) => c.platform === p));
+  const atual = plataformas.includes(subaba) ? subaba : null;
+  const abas = [{ id: null, rotulo: 'Geral' }, ...plataformas.map((p) => ({ id: p, rotulo: PLATAFORMAS[p].nome }))];
+  return (
+    <div className="space-y-4">
+      {abas.length > 2 && (
+        <nav aria-label="análises do canal" className="flex flex-wrap gap-1.5">
+          {abas.map((a) => (
+            <a
+              key={a.id || 'geral'}
+              href={hrefDe(`/canais/${canal.id}/analises${a.id ? `/${a.id}` : ''}`)}
+              aria-current={atual === a.id ? 'page' : undefined}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${
+                atual === a.id ? 'border-brass bg-paper3 text-ink' : 'border-rule text-muted hover:text-ink2 hover:border-rule2'}`}
+            >
+              {a.id && <IconePlataforma platform={a.id} size={13} mono={atual !== a.id} />}
+              {a.rotulo}
+            </a>
+          ))}
+        </nav>
+      )}
+      <PainelDeAnalises key={atual || 'geral'} canal={canal.id} plataforma={abas.length > 2 ? atual : plataformas[0] || null}
+                        ondeConectar={`/canais/${canal.id}`} />
+    </div>
+  );
+}
+
+function ConteudoDaAba({ aba, canal, subaba }) {
   const ids = canal.contas.map((c) => c.id);
   const semContas = (
     <p className="text-muted text-sm">
@@ -246,17 +277,7 @@ function ConteudoDaAba({ aba, canal }) {
         />
       );
     case 'analises':
-      return (
-        <EmBreve
-          etapa="7.4"
-          titulo="Como o canal está indo"
-          itens={[
-            'Visualizações e retenção de cada corte, por conta e somadas no canal.',
-            'O que a IA achou que ia render contra o que rendeu de verdade.',
-            'Os horários e os tipos de corte que funcionam melhor neste canal.',
-          ]}
-        />
-      );
+      return ids.length === 0 ? semContas : <AnalisesDoCanal canal={canal} subaba={subaba} />;
     case 'ajustes':
       return <Ajustes canal={canal} />;
     default:
@@ -264,7 +285,7 @@ function ConteudoDaAba({ aba, canal }) {
   }
 }
 
-export default function Canal({ canalId, aba = 'visao' }) {
+export default function Canal({ canalId, aba = 'visao', subaba = null }) {
   const { canais } = usePainel();
   const canal = canais.porId[canalId];
 
@@ -350,7 +371,7 @@ export default function Canal({ canalId, aba = 'visao' }) {
         </div>
       </nav>
 
-      <ConteudoDaAba aba={abaAtiva} canal={canal} />
+      <ConteudoDaAba aba={abaAtiva} canal={canal} subaba={subaba} />
     </Pagina>
   );
 }

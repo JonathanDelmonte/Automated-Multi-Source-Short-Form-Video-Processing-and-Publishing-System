@@ -454,7 +454,7 @@ def test_a_conta_do_instagram_diz_o_caminho_dela():
     nao sobe sozinho?" ficaria sem resposta na tela."""
     conexao = _fonte("components", "ConexaoDaConta.jsx")
     bloco = conexao[conexao.index("if (plataforma === 'instagram') {"):]
-    bloco = bloco[:bloco.index("if (!TIPOS_DE[plataforma]) return null;")]
+    bloco = bloco[:bloco.index("const tipos = tiposDaConta(conta)")]
     assert "hrefDe('/agenda')" in bloco
     assert "pacote do dia" in bloco and "5 hashtags" in bloco and "já publiquei" in bloco
 
@@ -468,3 +468,197 @@ def test_a_grade_de_cortes_se_divide_pelo_espaco_que_sobra():
     grade = next(linha for linha in projeto.splitlines() if "grid gap-4 pb-10" in linha)
     assert "grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))]" in grade
     assert "xl:grid-cols-2" not in grade
+
+
+# --------------------------------------------------------------------------- #
+# Analises por canal (etapa 7.4)
+# --------------------------------------------------------------------------- #
+
+def _analises(expressao):
+    modulo = (SRC / "lib" / "analises.js").as_uri()
+    codigo = (
+        f"import * as a from {json.dumps(modulo)};\n"
+        f"console.log(JSON.stringify({expressao}));\n"
+    )
+    saida = subprocess.run([NODE, "--input-type=module", "-e", codigo],
+                           capture_output=True, encoding="utf-8", check=True, timeout=60).stdout
+    return json.loads(saida)
+
+
+@precisa_node
+@pytest.mark.parametrize("valor, texto", [
+    (None, "—"), (0, "0"), (1284, "1.284"), (9999, "9.999"), (10000, "10 mil"),
+    (12900, "12,9 mil"), (4200000, "4,2 mi"), (2500000000, "2,5 bi"),
+])
+def test_o_numero_curto(valor, texto):
+    """None e "nao medido": traco, nunca zero. E sem depender dos dados de
+    idioma do node ou do navegador."""
+    assert _analises(f"a.numeroCurto({json.dumps(valor)})") == texto
+
+
+@precisa_node
+@pytest.mark.parametrize("maximo, teto, marcas", [
+    (0, 1, [0, 1]),
+    (1234, 1500, [0, 500, 1000, 1500]),
+    (37, 40, [0, 10, 20, 30, 40]),
+])
+def test_a_escala_do_eixo(maximo, teto, marcas):
+    assert _analises(f"a.escala({maximo})") == {"teto": teto, "marcas": marcas}
+
+
+@precisa_node
+def test_as_colunas_empilham_com_o_vao_e_deixam_o_buraco():
+    """Dia sem base nao tem coluna (um buraco honesto, e nao um zero); os
+    pedacos se separam por 2 px de fundo, e nao por borda."""
+    serie = [
+        {"dia": "2026-09-24", "views": None, "por_plataforma": {}},
+        {"dia": "2026-09-25", "views": 100, "por_plataforma": {"tiktok": 50, "youtube": 50}},
+    ]
+    col = _analises(f"a.colunas({json.dumps(serie)}, {{ altura: 100, teto: 100 }})")
+    assert col[0]["pedacos"] == [] and col[0]["total"] is None
+    pedacos = col[1]["pedacos"]
+    assert [p["plataforma"] for p in pedacos] == ["youtube", "tiktok"], "a ordem e a das telas"
+    assert pedacos[0]["altura"] == 50 and pedacos[1]["altura"] == 48
+    assert pedacos[1]["topo"] and not pedacos[0]["topo"]
+
+
+@precisa_node
+def test_a_cor_segue_a_plataforma():
+    """As tres primeiras vagas da paleta validada para fundo escuro (conferida
+    contra o fundo dos cartoes, #0e0e0e). Nao sao as cores das marcas: YouTube,
+    TikTok e Instagram sao tres vermelhos, que se confundem entre si e com o
+    vermelho de erro."""
+    assert _analises("a.COR_DA_PLATAFORMA") == {
+        "youtube": "#3987e5", "tiktok": "#d95926", "instagram": "#199e70"}
+    assert _analises("a.plataformasDaSerie([{por_plataforma: {instagram: 1, youtube: 2}}])") == \
+        ["youtube", "instagram"]
+
+
+@precisa_node
+def test_o_horario_so_conclui_com_amostra():
+    sem = {"faixas": [{"faixa": "manha", "com_views_do_primeiro_dia": 2},
+                      {"faixa": "tarde", "com_views_do_primeiro_dia": 1}], "minimo": 5, "melhor": None}
+    frase = _analises(f"a.fraseDoHorario({json.dumps(sem)})")
+    assert "Ainda não dá para dizer" in frase and "rende mais no" not in frase
+    com = {"faixas": [{"faixa": "tarde", "views_do_primeiro_dia_mediana": 1500}],
+           "minimo": 5, "melhor": "tarde"}
+    assert "tarde (12h–18h) rende mais" in _analises(f"a.fraseDoHorario({json.dumps(com)})")
+
+
+@precisa_node
+@pytest.mark.parametrize("valor, teto, texto", [
+    (0, 15000, "0"), (5000, 15000, "5 mil"), (10000, 15000, "10 mil"),
+    (2000, 6000, "2.000"), (500000, 1500000, "0,5 mi"),
+])
+def test_o_eixo_fala_uma_unidade_so(valor, teto, texto):
+    """"5.000" ao lado de "10 mil" parecia duas unidades no mesmo eixo."""
+    assert _analises(f"a.rotuloDoEixo({valor}, {teto})") == texto
+
+
+@precisa_node
+def test_faixas_parecidas_nao_tem_vencedor_na_frase():
+    """O motor diz `parecidas` quando a melhor nao passa a segunda pela
+    margem; a tela diz que rendem parecido, e nao "a tarde rende mais"."""
+    r = {"faixas": [{"faixa": "tarde", "amostra_suficiente": True, "views_do_primeiro_dia_mediana": 2036},
+                    {"faixa": "noite", "amostra_suficiente": True, "views_do_primeiro_dia_mediana": 2020}],
+         "minimo": 5, "melhor": None, "parecidas": True}
+    frase = _analises(f"a.fraseDoHorario({json.dumps(r)})")
+    assert "rendem parecido" in frase and "tarde 2.036" in frase and "rende mais" not in frase
+
+
+@precisa_node
+def test_a_calibracao_nao_diz_coeficiente_que_o_motor_nao_deu():
+    """Abaixo do minimo, o motor manda None -- e a tela nao escreve numero
+    nenhum no lugar."""
+    sem = {"clipes_medidos": 4, "minimo_para_correlacao": 10, "por_plataforma": [
+        {"plataforma": "youtube", "rho_score_views": None, "rho_score_retencao": None,
+         "com_views": 4, "com_retencao": 4}]}
+    frases = " ".join(_analises(f"a.frasesDaCalibracao({json.dumps(sem)})"))
+    assert "ρ" not in frases and "Ainda não dá para dizer" in frases
+    com = {"clipes_medidos": 12, "minimo_para_correlacao": 10, "por_plataforma": [
+        {"plataforma": "youtube", "rho_score_views": 0.62, "rho_score_retencao": None,
+         "com_views": 12, "com_retencao": 3}]}
+    frases = " ".join(_analises(f"a.frasesDaCalibracao({json.dumps(com)})"))
+    assert "ρ = +0,62" in frases and "acompanha" in frases
+
+
+@precisa_node
+@pytest.mark.parametrize("conta, tipos, faltam", [
+    # O programa de antes da 7.4 nao manda `tipos`: o TikTok so publicava.
+    ({"platform": "tiktok", "conexao": {"publicar": False, "medir": False}}, ["publicar"], ["medir"]),
+    ({"platform": "tiktok", "conexao": {"tipos": ["publicar", "medir"]}}, ["publicar", "medir"], []),
+    ({"platform": "youtube", "conexao": {}}, ["publicar", "medir"], []),
+    # Um tipo que a tela nao sabe descrever nao vira botao sem nome.
+    ({"platform": "youtube", "conexao": {"tipos": ["publicar", "algo-novo"]}}, ["publicar"], []),
+])
+def test_o_que_cada_conta_conecta(conta, tipos, faltam):
+    assert _conexoes(f"c.tiposDaConta({json.dumps(conta)})") == tipos
+    assert _conexoes(f"c.tiposQueFaltamNoPrograma({json.dumps(conta)})") == faltam
+
+
+@precisa_node
+def test_o_instagram_so_cola_token_com_o_programa_novo():
+    assert _conexoes("c.aceitaToken({platform: 'instagram', conexao: {token: true}})") is True
+    assert _conexoes("c.aceitaToken({platform: 'instagram', conexao: {medir: false}})") is False
+
+
+@precisa_node
+def test_toda_recusa_do_token_tem_frase():
+    """O motor devolve o codigo; a tela escreve a frase -- a do "outra conta"
+    diz de quem e o token."""
+    fonte = (RAIZ / "metricas_instagram.py").read_text(encoding="utf-8")
+    codigos = set(re.findall(r'TokenRecusado\("(\w+)"', fonte))
+    assert {"formato", "recusado", "outra_conta", "sem_resposta", "permissao"} <= codigos
+    frases = set(_conexoes("Object.keys(c.MENSAGENS_DO_TOKEN)"))
+    assert codigos | {"plataforma", "gravar"} <= frases
+    assert _conexoes("c.mensagemDoToken('outra_conta', {conta: 'outra', handle: '@canal'})").startswith(
+        "Esse token é da conta @outra, e esta conta é @canal.")
+
+
+def test_o_token_e_campo_de_senha_e_vai_como_json():
+    token = _fonte("components", "TokenDoInstagram.jsx")
+    assert 'type="password"' in token and 'autoComplete="off"' in token
+    assert "body: JSON.stringify({ token })" in token
+    assert "headers: { 'Content-Type': 'application/json' }" in token
+    assert "console." not in token
+
+
+def test_as_analises_pedem_no_fuso_de_quem_olha():
+    """O motor roda em UTC no Docker; o dia e a faixa de horario sao os do
+    navegador."""
+    for arquivo in ("PainelDeAnalises.jsx", "CanaisLadoALado.jsx", "NumerosDoDia.jsx"):
+        assert "fusoDoNavegador()" in _fonte("components", "analises", arquivo), arquivo
+
+
+def test_os_graficos_sao_feitos_a_mao():
+    """Sem biblioteca de graficos: dependencia nova muda o package.json, e o
+    botao de atualizar do Docker recusa essa mudanca."""
+    pacote = json.loads((RAIZ / "dashboard" / "package.json").read_text(encoding="utf-8"))
+    deps = set(pacote.get("dependencies", {})) | set(pacote.get("devDependencies", {}))
+    assert not deps & {"recharts", "chart.js", "d3", "victory", "nivo", "@nivo/core", "echarts"}
+    for arquivo in (SRC / "components" / "analises").glob("*.jsx"):
+        importacoes = re.findall(r"from '([^']+)'", arquivo.read_text(encoding="utf-8"))
+        assert all(i.startswith(".") or i in ("react", "lucide-react") for i in importacoes), arquivo.name
+
+
+def test_as_telas_de_analises_estao_ligadas():
+    analises = _fonte("pages", "Analises.jsx")
+    assert re.findall(r"\{ id: '(\w+)'", analises) == ["geral", "youtube", "tiktok", "instagram"]
+    assert "<CanaisLadoALado />" in analises and "<PainelDeAnalises" in analises
+    canal = _fonte("pages", "Canal.jsx")
+    assert "<AnalisesDoCanal canal={canal} subaba={subaba} />" in canal
+    assert "subaba={quarta || null}" in APP
+    assert "<NumerosDoDia />" in _fonte("pages", "Inicio.jsx")
+    assert 'etapa="7.4"' not in canal, "a aba de analises do canal ainda diz 'em breve'"
+
+
+def test_o_programa_antigo_nao_quebra_as_analises():
+    """O site e publicado antes do programa de quem usa ser atualizado: sem as
+    rotas da 7.4 (404), a tela de analises manda atualizar, e o Inicio e os
+    canais lado a lado simplesmente nao desenham o bloco."""
+    painel = _fonte("components", "analises", "PainelDeAnalises.jsx")
+    assert "ra.status === 404" in painel and "setSituacao('motor-antigo')" in painel
+    lado = _fonte("components", "analises", "CanaisLadoALado.jsx")
+    assert "r.status === 404" in lado and "if (situacao === 'motor-antigo') return null;" in lado
+    dia = _fonte("components", "analises", "NumerosDoDia.jsx")
+    assert "if (vivo && r.ok) setDia(await r.json());" in dia

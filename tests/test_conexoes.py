@@ -342,10 +342,12 @@ class TestConectar:
         r = self._conectar(conta["id"])
         assert r.status_code == 409 and r.json()["detail"]["erro"] == "sem_aplicativo"
 
-    def test_o_tiktok_nao_mede_ainda(self, ambiente):
-        _com_aplicativo_do_tiktok()
-        conta = _conta("tiktok", "@c")
-        assert self._conectar(conta["id"], "medir").json()["detail"]["erro"] == "tipo"
+    def test_o_instagram_nao_conecta_por_botao(self, ambiente):
+        """O Instagram mede por token COLADO (7.4): a Meta so devolve o login
+        para endereco HTTPS, e o programa atende em localhost."""
+        conta = _conta("instagram", "@c")
+        for tipo in ("publicar", "medir"):
+            assert self._conectar(conta["id"], tipo).json()["detail"]["erro"] == "plataforma"
 
     def test_o_painel_de_outro_aparelho_nao_conecta(self, ambiente):
         _com_aplicativo()
@@ -361,7 +363,8 @@ class TestConectar:
         _com_aplicativo()
         conta = _conta()
         antes = _estado_da_conta(conta["id"])
-        assert antes["conexao"] == {"publicar": False, "medir": False}
+        assert antes["conexao"] == {"publicar": False, "medir": False,
+                                    "tipos": ["publicar", "medir"]}
         assert antes["driver_agora"] == "manual"
 
         r = self._conectar(conta["id"])
@@ -384,7 +387,8 @@ class TestConectar:
                            "refresh_token": "REFRESH-DO-CANAL"}
         depois = _estado_da_conta(conta["id"])
         assert depois["credentials_ref"] == "vault://local/youtube/@canalinfantil"
-        assert depois["conexao"] == {"publicar": True, "medir": False}
+        assert depois["conexao"] == {"publicar": True, "medir": False,
+                                     "tipos": ["publicar", "medir"]}
         # Com a credencial e a cota, a cascata passa a escolher a API.
         assert depois["driver_agora"] == "youtube-api"
         # O segredo nao aparece em lugar nenhum da resposta.
@@ -424,7 +428,8 @@ class TestConectar:
         assert _chama("GET", f"/?state={state}&code=C").status_code == 200
         assert metrics_collector.credencial_de_leitura("@canalinfantil")["refresh_token"] == "R-LEITURA"
         depois = _estado_da_conta(conta["id"])
-        assert depois["conexao"] == {"publicar": False, "medir": True}
+        assert depois["conexao"] == {"publicar": False, "medir": True,
+                                     "tipos": ["publicar", "medir"]}
         # A de medir nao vira a credencial de publicar da conta.
         assert depois["credentials_ref"].startswith("vault://env/")
 
@@ -534,11 +539,54 @@ class TestTikTok:
             "refresh_token": "R-TT", "open_id": "OPEN-1"}
         depois = _estado_da_conta(conta["id"])
         assert depois["credentials_ref"] == "vault://local/tiktok/@canalinfantil"
-        assert depois["conexao"] == {"publicar": True, "medir": False}
+        assert depois["conexao"] == {"publicar": True, "medir": False,
+                                     "tipos": ["publicar", "medir"]}
         assert depois["driver_agora"] == "tiktok-api"
         # Desconectar devolve a conta a fila manual.
         assert _chama("DELETE", f"/api/contas/{conta['id']}/conexao?tipo=publicar").status_code == 200
         assert _estado_da_conta(conta["id"])["driver_agora"] == "manual"
+
+    def test_a_url_de_medir_do_tiktok(self, ambiente):
+        """Medir e outro consentimento (7.4): o perfil basico e a lista de
+        videos, e nada que poste."""
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@canalinfantil")
+        r = _chama("POST", f"/api/contas/{conta['id']}/conectar",
+                   {"tipo": "medir", "volta": "http://localhost:8000"})
+        assert r.status_code == 200, r.text
+        q = {k: v[0] for k, v in parse_qs(urlsplit(r.json()["url"]).query).items()}
+        assert q["scope"] == "user.info.basic,video.list"
+        assert "video.publish" not in q["scope"]
+        pedido = app_module.PEDIDOS_DE_CONEXAO._pedidos[q["state"]]
+        assert q["code_challenge"] == hashlib.sha256(pedido.verifier.encode()).hexdigest()
+
+    def test_medir_o_tiktok_de_ponta_a_ponta(self, ambiente, monkeypatch):
+        """A credencial de medir mora noutro endereco, e conectar para medir
+        nao mexe na de postar -- nem no driver da conta."""
+        import metricas_tiktok
+        _com_aplicativo_do_tiktok()
+        conta = _conta("tiktok", "@canalinfantil")
+        r = _chama("POST", f"/api/contas/{conta['id']}/conectar",
+                   {"tipo": "medir", "volta": "http://localhost:8000"})
+        state = _state_de(r.json()["url"])
+        monkeypatch.setattr(conexoes, "trocar_codigo_tiktok", lambda app, codigo, pedido, **kw:
+                            {"refresh_token": "R-MEDIR", "open_id": "OPEN-1"})
+        volta = _chama("GET", f"/?state={state}&code=C")
+        assert volta.status_code == 200 and "medir as visualizações do TikTok" in volta.text
+        assert metricas_tiktok.credencial("@canalinfantil")["refresh_token"] == "R-MEDIR"
+        assert not vault.existe("vault://local/tiktok/@canalinfantil", vault.CAMPOS[1:])
+        depois = _estado_da_conta(conta["id"])
+        assert depois["conexao"] == {"publicar": False, "medir": True,
+                                     "tipos": ["publicar", "medir"]}
+        assert depois["driver_agora"] == "manual"
+        assert depois["credentials_ref"] != metricas_tiktok.ref_de("@canalinfantil")
+        assert _chama("DELETE", f"/api/contas/{conta['id']}/conexao?tipo=medir").status_code == 200
+        assert metricas_tiktok.credencial("@canalinfantil") is None
+
+    def test_o_cofre_de_medir_e_o_que_o_coletor_le(self):
+        import metricas_tiktok
+        assert conexoes.ref_do_cofre("tiktok", "medir", "@c") == metricas_tiktok.ref_de("@c")
+        assert conexoes.ref_do_cofre("tiktok", "publicar", "@c") != metricas_tiktok.ref_de("@c")
 
     def _cliente(self, status, corpo):
         class Resposta:
@@ -582,6 +630,22 @@ class TestTikTok:
             conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
                                           "C", pedido, cliente=cliente)
         assert e.value.codigo == "escopo"
+
+    def test_sem_a_permissao_de_ver_os_videos_nao_mede(self):
+        """Para medir, o que nao pode faltar e `video.list`; `video.publish`
+        nem foi pedido."""
+        cliente = self._cliente(200, {"access_token": "a", "refresh_token": "R",
+                                      "scope": "user.info.basic"})
+        pedido = conexoes.Pedido("t", "a", "h", "tiktok", "medir", "v", "V")
+        with pytest.raises(conexoes.ConexaoError) as e:
+            conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
+                                          "C", pedido, cliente=cliente)
+        assert e.value.codigo == "escopo_medir"
+        assert "ver os vídeos" in conexoes.mensagem("escopo_medir", "tiktok")
+        ok = self._cliente(200, {"access_token": "a", "refresh_token": "R",
+                                 "scope": "user.info.basic,video.list"})
+        assert conexoes.trocar_codigo_tiktok({"client_key": CLIENT_KEY, "client_secret": "s"},
+                                             "C", pedido, cliente=ok)["refresh_token"] == "R"
 
     def test_o_tiktok_recusando_a_troca(self):
         cliente = self._cliente(400, {"error": "invalid_grant", "error_description": "x"})

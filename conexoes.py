@@ -60,12 +60,22 @@ ESCOPOS = {
     ("youtube", "publicar"): ("https://www.googleapis.com/auth/youtube.upload",),
     ("youtube", "medir"): ("https://www.googleapis.com/auth/youtube.readonly",
                            "https://www.googleapis.com/auth/yt-analytics.readonly"),
-    # O TikTok (7.3c): o perfil basico e o Direct Post. Medir vem na 7.4.
+    # O TikTok (7.3c): o perfil basico e o Direct Post.
     ("tiktok", "publicar"): ("user.info.basic", "video.publish"),
+    # E medir (7.4): o perfil basico e a lista de videos (API de exibicao).
+    # Outra credencial, como no YouTube: a que posta nao le, a que le nao posta.
+    ("tiktok", "medir"): ("user.info.basic", "video.list"),
 }
 TIPOS = ("publicar", "medir")
-#: O que cada plataforma conecta, e qual cadastro de aplicativo ela usa.
-TIPOS_DE = {"youtube": ("publicar", "medir"), "tiktok": ("publicar",)}
+#: O que cada plataforma conecta pelo botao, e qual cadastro de aplicativo ela
+#: usa. O Instagram mede por token COLADO (`metricas_instagram`), nao por botao:
+#: a Meta so devolve o login para endereco HTTPS.
+TIPOS_DE = {"youtube": ("publicar", "medir"), "tiktok": ("publicar", "medir")}
+
+#: A permissao sem a qual cada consentimento do TikTok nao serve para nada. A
+#: resposta dele lista o que a pessoa AUTORIZOU, que pode ser menos que o pedido.
+ESCOPO_ESSENCIAL = {("tiktok", "publicar"): "video.publish",
+                    ("tiktok", "medir"): "video.list"}
 APLICATIVO_DE = {"youtube": "google", "tiktok": "tiktok"}
 
 #: Quanto tempo um pedido espera a volta do Google.
@@ -77,7 +87,7 @@ _HOSTS_DO_TIKTOK = ("localhost", "127.0.0.1")
 
 class ConexaoError(ValueError):
     """`codigo`: plataforma | tipo | volta | sem_aplicativo | expirou |
-    recusada | troca | sem_refresh | escopo."""
+    recusada | troca | sem_refresh | escopo | escopo_medir."""
 
     def __init__(self, codigo: str, detalhe: str = ""):
         super().__init__(detalhe or codigo)
@@ -216,9 +226,7 @@ def ref_do_cofre(plataforma: str, tipo: str, handle: str) -> str:
     medir, no que o coletor de metricas procura."""
     if tipo not in TIPOS_DE.get(plataforma, ()):
         raise ConexaoError("tipo")
-    if plataforma == "tiktok":
-        return f"vault://local/tiktok/{handle}"
-    pasta = "youtube" if tipo == "publicar" else "youtube-metrics"
+    pasta = plataforma if tipo == "publicar" else f"{plataforma}-metrics"
     return f"vault://local/{pasta}/{handle}"
 
 
@@ -260,9 +268,10 @@ def trocar_codigo_tiktok(app: dict, codigo: str, pedido: Pedido,
                          cliente=None, timeout: float = 30.0) -> dict:
     """`{refresh_token, open_id}`, trocando o codigo que o TikTok devolveu. Rede.
 
-    Confere que a permissao de postar veio: a resposta lista os escopos que a
-    pessoa AUTORIZOU, que podem ser menos que os pedidos, e sem
-    `video.publish` a conexao "funciona" e nenhum post sai."""
+    Confere que a permissao essencial veio: a resposta lista os escopos que a
+    pessoa AUTORIZOU, que podem ser menos que os pedidos -- e sem
+    `video.publish` a conexao "funciona" e nenhum post sai; sem `video.list`,
+    nenhum numero volta."""
     if cliente is None:
         import httpx
 
@@ -289,8 +298,11 @@ def trocar_codigo_tiktok(app: dict, codigo: str, pedido: Pedido,
     if not dados.get("refresh_token"):
         raise ConexaoError("sem_refresh")
     escopos = {e.strip() for e in (dados.get("scope") or "").split(",") if e.strip()}
-    if escopos and "video.publish" not in escopos:
-        raise ConexaoError("escopo")
+    essencial = ESCOPO_ESSENCIAL.get(("tiktok", pedido.tipo), "video.publish")
+    if escopos and essencial not in escopos:
+        if pedido.tipo == "publicar":
+            raise ConexaoError("escopo")
+        raise ConexaoError("escopo_medir")
     return {"refresh_token": dados["refresh_token"], "open_id": dados.get("open_id") or ""}
 
 
@@ -320,6 +332,7 @@ MENSAGENS = {
     "sem_refresh": "O Google respondeu sem a autorização permanente. Tire o acesso do Virtu Clips em myaccount.google.com/permissions e conecte de novo.",
     "sem_aplicativo": "O cadastro do aplicativo sumiu das Configurações. Cole de novo e conecte outra vez.",
     "escopo": "A permissão de postar não veio. Conecte de novo e deixe marcada a opção de publicar vídeos.",
+    "escopo_medir": "A permissão de ver os vídeos não veio. Conecte de novo e deixe marcada a opção de ler os seus vídeos.",
 }
 #: O que muda no TikTok: a pagina de permissoes do Google nao serve para ele.
 MENSAGENS_DO_TIKTOK = {
@@ -337,7 +350,8 @@ def mensagem(codigo: str, plataforma: str = "youtube") -> Optional[str]:
 
 _NOMES = {("youtube", "publicar"): "publicar no YouTube",
           ("youtube", "medir"): "medir as visualizações do YouTube",
-          ("tiktok", "publicar"): "publicar no TikTok"}
+          ("tiktok", "publicar"): "publicar no TikTok",
+          ("tiktok", "medir"): "medir as visualizações do TikTok"}
 
 
 def pagina_de_volta(ok: bool, *, plataforma: str = "youtube", tipo: str = "publicar",

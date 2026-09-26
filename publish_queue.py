@@ -58,18 +58,36 @@ def conta_para_driver(linha) -> publishers.Account:
 def _conexao(linha) -> dict:
     """O que a conta tem conectado (etapa 7.3): a credencial de publicar (o
     endereco que o driver le) e a de medir (a que o coletor procura). Sem rede:
-    e so ver se o cofre responde."""
+    e so ver se o cofre responde.
+
+    No Instagram (7.4) medir e um token colado, que vence: `medir_vencido` diz
+    que ha um, mas o Instagram o recusou -- a tela pede outro.
+
+    `tipos` (e `token`, no Instagram) diz o que ESTE motor sabe conectar: o
+    site e publicado antes de o programa de quem usa ser atualizado, e um
+    botao que o motor nao conhece so daria erro no clique. Sem o campo (motor
+    anterior a 7.4), o site cai no que a 7.3 conectava e manda atualizar."""
+    import conexoes
     import vault
+    tipos = list(conexoes.TIPOS_DE.get(linha.platform, ()))
     if linha.platform == "tiktok":
+        import metricas_tiktok
         from publishers import tiktok_api
         conta = conta_para_driver(linha)
         return {"publicar": vault.existe(tiktok_api.ref_de(conta), tiktok_api.CAMPOS),
-                "medir": False}
+                "medir": metricas_tiktok.credencial(linha.handle) is not None,
+                "tipos": tipos}
+    if linha.platform == "instagram":
+        import metricas_instagram
+        situacao = metricas_instagram.situacao(linha.handle)
+        return {"publicar": False, "medir": situacao == "conectado",
+                "medir_vencido": situacao == "vencido", "tipos": tipos, "token": True}
     if linha.platform != "youtube":
-        return {"publicar": False, "medir": False}
+        return {"publicar": False, "medir": False, "tipos": tipos}
     import metrics_collector
     return {"publicar": vault.existe(linha.credentials_ref, vault.CAMPOS),
-            "medir": metrics_collector.credencial_de_leitura(linha.handle) is not None}
+            "medir": metrics_collector.credencial_de_leitura(linha.handle) is not None,
+            "tipos": tipos}
 
 
 def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
@@ -502,6 +520,16 @@ async def cancelar(pub_id: str) -> bool:
 # Metricas (Fase 5)
 # --------------------------------------------------------------------------- #
 
+def duracao_do_corte(rubrica: Optional[dict]) -> Optional[float]:
+    """A duracao do corte em segundos, pelos segundos exatos da rubrica."""
+    try:
+        inicio = float((rubrica or {}).get("start_s"))
+        fim = float((rubrica or {}).get("end_s"))
+    except (TypeError, ValueError):
+        return None
+    return round(fim - inicio, 3) if fim > inicio else None
+
+
 async def publicadas_com_remote_id() -> list:
     """As publicacoes que existem na plataforma e podem ser medidas.
 
@@ -515,24 +543,44 @@ async def publicadas_com_remote_id() -> list:
 
     A plataforma vem junto porque e ELA que diz de onde medir, e nao o driver:
     um video do YouTube postado a mao, com o link registrado no "ja
-    publiquei", mede igual a um que subiu pela API.
+    publiquei", mede igual a um que subiu pela API. O `@` da conta diz qual
+    credencial usar, e a duracao do corte e o que faz do tempo medio assistido
+    do Instagram uma retencao (7.4).
     """
     from sqlalchemy import and_, select as _select
-    P, A = db_models.Publication, db_models.Account
+    P, A, C = db_models.Publication, db_models.Account, db_models.Clip
     async with db.session() as s:
         achadas = await s.execute(
-            _select(P, A.platform)
+            _select(P, A.platform, A.handle, C.rubric_json)
             .join(A, and_(A.id == P.account_id, A.tenant_id == P.tenant_id))
+            .join(C, and_(C.id == P.clip_id, C.tenant_id == P.tenant_id))
             .where(P.status == "published")
             .where(P.remote_id.is_not(None)))
         return [{"id": p.id, "tenant_id": p.tenant_id, "driver": p.driver,
                  "remote_id": p.remote_id, "account_id": p.account_id,
-                 "platform": plataforma}
-                for p, plataforma in achadas.all()]
+                 "platform": plataforma, "handle": handle,
+                 "duracao_s": duracao_do_corte(rubrica)}
+                for p, plataforma, handle, rubrica in achadas.all()]
+
+
+#: Os numeros de uma leitura alem de views e retencao (`metric_details`, 7.4).
+DETALHES = ("likes", "comments", "shares", "saves", "avg_watch_s")
+
+
+def _nao_negativo(valor, tipo=int):
+    """O numero, ou None. Negativo tambem vira None: o CHECK da coluna o
+    recusaria, e uma resposta estranha da plataforma derrubaria a gravacao."""
+    if valor is None or isinstance(valor, bool):
+        return None
+    try:
+        numero = tipo(valor)
+    except (TypeError, ValueError):
+        return None
+    return numero if numero >= 0 else None
 
 
 async def gravar_metrica(publication_id: str, views=None,
-                         retention_pct=None) -> Optional[str]:
+                         retention_pct=None, **detalhes) -> Optional[str]:
     """Acrescenta uma leitura. **Nunca atualiza a anterior.**
 
     `metrics` e serie temporal, nao cache: retencao matura em dias, e o valor de
@@ -542,46 +590,136 @@ async def gravar_metrica(publication_id: str, views=None,
 
     Uma leitura sem nenhum numero nao vira linha: ela nao diz nada e sujaria a
     media com uma amostra vazia.
+
+    `detalhes` sao os de `DETALHES` (curtidas, comentarios, compartilhamentos,
+    salvamentos, tempo medio assistido), gravados em `metric_details` na mesma
+    transacao. Nome fora da lista levanta: um numero que o coletor mede e
+    ninguem guarda e um bug, nao um detalhe.
     """
-    if views is None and retention_pct is None:
+    desconhecidos = set(detalhes) - set(DETALHES)
+    if desconhecidos:
+        raise TypeError(f"detalhe desconhecido: {', '.join(sorted(desconhecidos))}")
+    views = _nao_negativo(views)
+    retention_pct = _nao_negativo(retention_pct, float)
+    if retention_pct is not None:
+        retention_pct = min(100.0, retention_pct)
+    extra = {k: _nao_negativo(v, float if k == "avg_watch_s" else int)
+             for k, v in detalhes.items()}
+    extra = {k: v for k, v in extra.items() if v is not None}
+    if views is None and retention_pct is None and not extra:
         return None
     async with db.tenant() as t:
         linha = t.add(db_models.Metric(publication_id=publication_id,
                                        views=views, retention_pct=retention_pct))
+        if extra:
+            await t.flush()
+            t.add(db_models.MetricDetail(metric_id=linha.id, **extra))
         await t.commit()
         return linha.id
 
 
-async def cruzamento() -> list:
-    """Um item por corte PUBLICADO e medido: o que o modelo previu e o que deu.
+async def galhos_publicados() -> list:
+    """Os galhos que foram ao ar, cada um com as leituras dele (7.4).
 
-    Junta `clips` (score e rubrica), `publications` (o elo) e `metrics` (o
-    resultado). Tres tabelas, uma volta ao banco cada -- e nao uma consulta por
-    corte, que com algumas centenas de cortes seria o relatorio inteiro travando
-    o loop.
-
-    **Vale a leitura MAIS RECENTE de cada publicacao**, porque `metrics` e serie
-    temporal: somar todas as leituras contaria o mesmo video uma vez por coleta
-    e daria peso maior ao que foi publicado ha mais tempo.
+    Um item por publicacao `published` deste tenant: o corte (titulo, score,
+    job), a conta (plataforma, @), o canal da conta, quando foi ao ar e o link,
+    e todas as leituras de `metrics` com os detalhes de `metric_details`, da
+    mais antiga para a mais nova. E a materia-prima do `analises.py`, que e
+    puro. Seis consultas, uma por tabela -- e nao uma por publicacao.
     """
     async with db.tenant() as t:
-        publicacoes = await t.all(db_models.Publication)
+        publicacoes = await t.all(db_models.Publication,
+                                  db_models.Publication.status == "published")
         cortes = {c.id: c for c in await t.all(db_models.Clip)}
+        contas = {a.id: a for a in await t.all(db_models.Account)}
+        canal_de = {l.account_id: l.channel_id
+                    for l in await t.all(db_models.ChannelAccount)}
+        posts = {p.publication_id: p for p in await t.all(db_models.PublicationPost)}
+        leituras = await t.all(db_models.Metric)
+        detalhes = {d.metric_id: d for d in await t.all(db_models.MetricDetail)}
+
+    por_publicacao: dict = {}
+    for m in leituras:
+        d = detalhes.get(m.id)
+        por_publicacao.setdefault(m.publication_id, []).append({
+            "views": m.views, "retention_pct": m.retention_pct,
+            **{campo: getattr(d, campo) if d else None for campo in DETALHES},
+            "collected_at": _utc(m.collected_at).isoformat() if m.collected_at else None,
+        })
+
+    saida = []
+    for pub in publicacoes:
+        corte = cortes.get(pub.clip_id)
+        conta = contas.get(pub.account_id)
+        rubrica = (corte.rubric_json or {}) if corte else {}
+        post = posts.get(pub.id)
+        # Sem linha em `publication_posts` (publicado antes da 7.3), a hora do
+        # post e a da publicacao: e o que se sabe.
+        postado = post.posted_at if post and post.posted_at else pub.created_at
+        linhas = sorted(por_publicacao.get(pub.id, []), key=lambda l: l["collected_at"] or "")
+        saida.append({
+            "publication_id": pub.id,
+            "clip_id": pub.clip_id,
+            "job_id": corte.job_id if corte else None,
+            "clip_index": rubrica.get("clip_index"),
+            "titulo": rubrica.get("video_title_for_youtube_short"),
+            "score": corte.score if corte else None,
+            "account_id": pub.account_id,
+            "platform": conta.platform if conta else None,
+            "handle": conta.handle if conta else None,
+            "channel_id": canal_de.get(pub.account_id),
+            "posted_at": _utc(postado).isoformat() if postado else None,
+            "url": post.url if post else None,
+            "remote_id": pub.remote_id,
+            "leituras": linhas,
+        })
+    return saida
+
+
+async def cruzamento() -> list:
+    """Um item por corte PUBLICADO: o que o modelo previu e o que deu.
+
+    Junta `clips` (score e rubrica), `publications` (o elo), `accounts` (a
+    plataforma, desde a 7.4) e `metrics` (o resultado). Uma volta ao banco por
+    tabela -- e nao uma consulta por corte, que com algumas centenas de cortes
+    seria o relatorio inteiro travando o loop.
+
+    **Vale o ULTIMO numero conhecido de cada publicacao**, campo a campo,
+    porque `metrics` e serie temporal: somar todas as leituras contaria o mesmo
+    video uma vez por coleta e daria peso maior ao que foi publicado ha mais
+    tempo. Campo a campo porque uma leitura pode vir sem a retencao (o
+    Analytics recusou naquela volta), e o buraco dela nao apaga a de ontem.
+
+    So `published` (7.4): ate ali entravam a fila e as que falharam, e o
+    relatorio as contava como "publicadas".
+    """
+    async with db.tenant() as t:
+        publicacoes = await t.all(db_models.Publication,
+                                  db_models.Publication.status == "published")
+        cortes = {c.id: c for c in await t.all(db_models.Clip)}
+        contas = {a.id: a for a in await t.all(db_models.Account)}
+        canal_de = {l.account_id: l.channel_id
+                    for l in await t.all(db_models.ChannelAccount)}
         leituras = await t.all(db_models.Metric)
 
-    recente: dict = {}
-    for m in leituras:
-        atual = recente.get(m.publication_id)
-        if atual is None or (m.collected_at and atual.collected_at
-                             and m.collected_at > atual.collected_at):
-            recente[m.publication_id] = m
+    conhecido: dict = {}
+    for m in sorted(leituras, key=lambda m: _utc(m.collected_at)
+                    or datetime.min.replace(tzinfo=timezone.utc)):
+        atual = conhecido.setdefault(m.publication_id,
+                                     {"views": None, "retention_pct": None, "medido_em": None})
+        if m.views is not None:
+            atual["views"] = m.views
+        if m.retention_pct is not None:
+            atual["retention_pct"] = m.retention_pct
+        atual["medido_em"] = m.collected_at
 
     saida = []
     for pub in publicacoes:
         corte = cortes.get(pub.clip_id)
         if corte is None:
             continue
-        medida = recente.get(pub.id)
+        medida = conhecido.get(pub.id) or {}
+        conta = contas.get(pub.account_id)
         rubrica = corte.rubric_json or {}
         saida.append({
             "publication_id": pub.id,
@@ -591,10 +729,12 @@ async def cruzamento() -> list:
             "score": corte.score,
             "visual": rubrica.get("visual"),
             "status": pub.status,
-            "views": medida.views if medida else None,
-            "retention_pct": medida.retention_pct if medida else None,
-            "medido_em": (medida.collected_at.isoformat()
-                          if medida and medida.collected_at else None),
+            "platform": conta.platform if conta else None,
+            "channel_id": canal_de.get(pub.account_id),
+            "views": medida.get("views"),
+            "retention_pct": medida.get("retention_pct"),
+            "medido_em": (_utc(medida["medido_em"]).isoformat()
+                          if medida.get("medido_em") else None),
         })
     return saida
 
@@ -608,10 +748,16 @@ async def historico(publication_id: Optional[str] = None) -> list:
                 db_models.Metric.publication_id == publication_id)
         else:
             linhas = await t.all(db_models.Metric)
-    saida = [{"id": m.id, "publication_id": m.publication_id, "views": m.views,
-              "retention_pct": m.retention_pct,
-              "collected_at": m.collected_at.isoformat() if m.collected_at else None}
-             for m in linhas]
+        detalhes = {d.metric_id: d for d in await t.all(db_models.MetricDetail)}
+    saida = []
+    for m in linhas:
+        d = detalhes.get(m.id)
+        saida.append({
+            "id": m.id, "publication_id": m.publication_id, "views": m.views,
+            "retention_pct": m.retention_pct,
+            **{campo: getattr(d, campo) if d else None for campo in DETALHES},
+            "collected_at": _utc(m.collected_at).isoformat() if m.collected_at else None,
+        })
     saida.sort(key=lambda m: m.get("collected_at") or "", reverse=True)
     return saida
 

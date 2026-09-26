@@ -4,14 +4,17 @@ import { apiFetch } from '../lib/api';
 import { API_BASE_URL } from '../config';
 import { hrefDe } from '../lib/rota';
 import { PLATAFORMAS } from '../lib/plataformas';
+import TokenDoInstagram from './TokenDoInstagram';
 import {
-  DESCRICAO_DOS_TIPOS, TIPOS_DE, empresaDe, mensagemDe, origemDoMotor, voltaPossivel,
+  DESCRICAO_DOS_TIPOS, aceitaToken, empresaDe, mensagemDe, origemDoMotor, tiposDaConta,
+  tiposQueFaltamNoPrograma, voltaPossivel,
 } from '../lib/conexoes';
 
-// O "conectar" de uma conta (etapa 7.3). No YouTube, dois consentimentos, como
-// o `youtube_oauth.py` sempre fez: um para PUBLICAR (sobe o vídeo, não lê) e
-// outro para MEDIR (lê views e retenção, não publica). Duas credenciais
-// pequenas em vez de uma grande. No TikTok (7.3c), só publicar por enquanto.
+// O "conectar" de uma conta (etapa 7.3). No YouTube e no TikTok, dois
+// consentimentos, como o `youtube_oauth.py` sempre fez: um para PUBLICAR (sobe
+// o vídeo, não lê) e outro para MEDIR (lê os números, não publica). Duas
+// credenciais pequenas em vez de uma grande. O TikTok ganhou o de medir na 7.4;
+// o Instagram mede por token colado (`TokenDoInstagram`).
 //
 // O clique abre a aba da autorização ANTES de perguntar ao motor: aberta
 // depois de um `await`, o bloqueador de pop-up a trataria como propaganda. Sem
@@ -61,17 +64,26 @@ export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
   // tem post privado para testar (ver o plano). O cartão diz o caminho.
   if (plataforma === 'instagram') {
     return (
-      <p className="text-muted text-[12px] leading-snug">
-        No Instagram, esta versão publica pelo{' '}
-        <a href={hrefDe('/agenda')} className="text-ink2 underline underline-offset-2">pacote do dia</a>:
-        o corte e a legenda prontos para colar, com no máximo 5 hashtags. Depois de postar, cole o link
-        em &ldquo;já publiquei&rdquo; — é com ele que o programa acompanha o post.
-      </p>
+      <div className="space-y-1.5">
+        <p className="text-muted text-[12px] leading-snug">
+          No Instagram, esta versão publica pelo{' '}
+          <a href={hrefDe('/agenda')} className="text-ink2 underline underline-offset-2">pacote do dia</a>:
+          o corte e a legenda prontos para colar, com no máximo 5 hashtags. Depois de postar, cole o link
+          em &ldquo;já publiquei&rdquo; — é com ele que o programa acompanha o post.
+        </p>
+        {aceitaToken(conta) ? (
+          <TokenDoInstagram conta={conta} aoMudar={aoMudar} />
+        ) : (
+          <p className="text-muted text-[12px] leading-snug">
+            Para medir o Instagram, atualize o programa deste computador. O aviso no topo do site tem o botão.
+          </p>
+        )}
+      </div>
     );
   }
-  if (!TIPOS_DE[plataforma]) return null;
-
-  const tipos = TIPOS_DE[plataforma].map((id) => ({ id, ...DESCRICAO_DOS_TIPOS[plataforma][id] }));
+  const tipos = tiposDaConta(conta).map((id) => ({ id, ...DESCRICAO_DOS_TIPOS[plataforma][id] }));
+  if (tipos.length === 0) return null;
+  const faltamNoPrograma = tiposQueFaltamNoPrograma(conta);
   const empresa = empresaDe(plataforma);
   const origem = origemDoMotor(API_BASE_URL, window.location.origin);
   const podeVoltar = voltaPossivel(origem, plataforma);
@@ -178,6 +190,12 @@ export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
           <a href={hrefDe('/configuracoes/aplicativos')} className="text-ink2 underline underline-offset-2">
             cadastre {CADASTRO[plataforma]}
           </a>.
+        </p>
+      )}
+      {faltamNoPrograma.includes('medir') && aplicativo !== 'motor-antigo' && (
+        <p className="text-muted">
+          Para medir o {PLATAFORMAS[plataforma]?.nome}, atualize o programa deste computador. O aviso no topo
+          do site tem o botão.
         </p>
       )}
       {aplicativo === 'motor-antigo' && !tudoLigado && (

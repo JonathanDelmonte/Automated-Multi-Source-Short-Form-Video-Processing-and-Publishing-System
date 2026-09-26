@@ -80,7 +80,9 @@ class TestTenantEmTodaTabela:
                      # acrescenta coluna a tabela existente.
                      "channels", "channel_accounts", "channel_jobs",
                      # 7.3: quando e onde a publicacao foi ao ar.
-                     "publication_posts"}
+                     "publication_posts",
+                     # 7.4: curtidas, comentarios e o resto de uma leitura.
+                     "metric_details"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

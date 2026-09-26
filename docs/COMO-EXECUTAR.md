@@ -1108,7 +1108,8 @@ contas), a conta do YouTube ganha dois botões:
 
 - **conectar para publicar** — o programa sobe os cortes sozinho. Não lê nem
   apaga nada;
-- **conectar para medir** — o programa lê visualizações e retenção. Não publica.
+- **conectar para medir** — o programa lê visualizações, retenção, curtidas,
+  comentários e compartilhamentos. Não publica.
 
 O botão abre a tela do Google numa aba nova. Na hora, o Google avisa que o app
 "não foi verificado": para uso próprio, clique em **Avançado → Acessar**. Depois
@@ -1140,20 +1141,24 @@ postar público, o caminho continua sendo o pacote do dia.
 no <https://developers.tiktok.com/apps/>:
 
 1. criar um app;
-2. em *Products*, adicionar o **Login Kit** e o **Content Posting API**, e no
-   Content Posting API ligar o **Direct Post**;
+2. em *Products*, adicionar o **Login Kit**, o **Content Posting API** (para
+   publicar; nele, ligar o **Direct Post**) e a **Display API** (para medir);
 3. no Login Kit, plataforma **Desktop**, cadastrar os dois endereços de volta:
    `http://localhost:*/` e `http://127.0.0.1:*/` (o `*` vale qualquer porta —
    cobre o site, o painel do Docker e o ajudante);
-4. conferir em *Scopes* que estão o `user.info.basic` e o `video.publish`;
+4. conferir em *Scopes* que estão o `user.info.basic`, o `video.publish`
+   (publicar) e o `video.list` (medir);
 5. para não esperar a revisão do app: criar um **Sandbox** e pôr a sua conta do
    TikTok em *Target users*;
 6. colar o **client key** e o **client secret** (os do Sandbox, se for o caso)
    no site.
 
 **2. Conectar a conta.** Na visão geral do canal, a conta do TikTok ganha
-**conectar para publicar**. O botão abre a tela do TikTok; depois de autorizar,
-ela devolve você **para este computador**, e a tela do site percebe sozinha.
+**conectar para publicar** e **conectar para medir** — duas autorizações, como
+no YouTube: a que posta não lê, a que lê não posta. O botão abre a tela do
+TikTok; depois de autorizar, ela devolve você **para este computador**, e a tela
+do site percebe sozinha. Medir só alcança vídeo **público**: o post privado de
+antes da auditoria não tem número do lado do TikTok.
 
 **O primeiro post de verdade** (é o que o CI não consegue provar): deixe a conta
 privada no app do TikTok, publique um corte nela pela fila e confira no app que
@@ -1168,7 +1173,8 @@ programa passa a pedir "público" quando você pedir e o TikTok oferecer.
 
 Nesta versão, o Instagram é **pelo pacote do dia**: escolha "Instagram" acima do
 botão do pacote, poste no app e cole o link em **"já publiquei"** — é com o link
-que o programa acompanha o post. Publicar sozinho no Instagram ficou para depois
+que o programa acompanha o post. **Medir** o Instagram é por um token colado na
+conta (o Passo 12 tem o passo a passo). Publicar sozinho no Instagram ficou para depois
 de propósito: a API oficial busca o vídeo num endereço público da internet, que
 um programa no seu computador não tem, e conta profissional do Instagram não
 pode ser privada, então não haveria post de teste. O porquê inteiro está no
@@ -1247,6 +1253,12 @@ horário certo exige retenção medida, e isso é a Fase 5.
 O teto duro é outro e não é escolha nossa: a cota de envios do YouTube (**100 por
 dia**). O agendador nunca o ultrapassa.
 
+**No Docker, as horas da agenda são as do container, que roda em UTC**
+(achado na 7.4): as janelas 11h, 15h e 19h viram 8h, 12h e 16h em Brasília. Até
+isso ser corrigido, ponha no `.env` as horas em UTC que você quer — para 11h, 15h
+e 19h de Brasília: `SCHEDULE_WINDOWS=14,18,22`. No ajudante, as horas são as do
+Windows, e não há nada a mudar.
+
 **A agenda é por conta, e o atrasado tem trava.** Um horário novo respeita os
 posts que a conta já tem. E se o computador estiver desligado na hora marcada,
 quando ele voltar sai **um** post por conta (se já faz 3 h desde o último) e os
@@ -1279,32 +1291,80 @@ subida do subprocesso, ou um pedaço que ninguém instrumentou, e não o pipelin
 
 ---
 
-## Passo 12 — Métricas (só depois de publicar)
+## Passo 12 — Análises: medir o que foi postado
 
-A tabela `metrics` é o que permite, daqui a alguns meses, trocar "o LLM achou este
-corte bom" por "este corte reteve 62%". Ela só enche se você emitir a credencial de
-**leitura**, uma vez:
+A aba **Análises** de cada canal (Geral e uma por plataforma), a página
+**Análises** do menu (todos os canais lado a lado) e os **números do dia** no
+Início se enchem sozinhos: o programa lê as plataformas a cada 6 horas. Para
+isso, cada conta precisa estar **conectada para medir** — é outra autorização,
+separada da de publicar:
 
-```bat
-cd /d C:\cortes
-python youtube_oauth.py --leitura
-```
+- **YouTube**: o botão **conectar para medir** da conta (visualizações,
+  retenção, curtidas, comentários e compartilhamentos). O terminal continua
+  valendo (`python youtube_oauth.py --leitura`).
+- **TikTok**: o botão **conectar para medir** (visualizações, curtidas,
+  comentários e compartilhamentos; o TikTok não dá retenção). O app precisa ter
+  a **Display API** e o escopo `video.list` (Passo 8).
+- **Instagram**: **colar o token**. A Meta só devolve o login para endereço
+  HTTPS, e o programa atende em `localhost` — então, no Instagram, conectar para
+  medir é colar o token que o painel do app da Meta gera. O cartão da conta tem
+  o passo a passo; em resumo:
+  1. a conta do Instagram precisa ser **profissional** (criador de conteúdo ou
+     empresa), no próprio app;
+  2. em <https://developers.facebook.com/apps/>, criar um app com o caso de uso
+     de gerenciar mensagens e conteúdo no Instagram;
+  3. em **Instagram → configuração da API com login do Instagram**, deixar
+     marcadas `instagram_business_basic` e `instagram_business_manage_insights`;
+  4. enquanto o app estiver em desenvolvimento, a conta entra como
+     **testadora** (Funções do app → convidar; aceitar no Instagram, em
+     Configurações → Apps e sites);
+  5. em **gerar tokens de acesso**, adicionar a conta, **gerar token**, copiar e
+     colar na conta, no site.
 
-**O token de publicação não serve, e não serve de propósito.** Ele tem escopo só de
-upload — se vazar, a diferença para o escopo completo é a diferença entre um vídeo
-indesejado e um canal vazio. A credencial de leitura é outra, só com escopos
-`readonly`, guardada em outro arquivo: a que publica não lê, a que lê não publica, e
-nenhuma das duas apaga.
+  O programa confere com o Instagram **de quem é o token** antes de guardar: de
+  outra conta, ele recusa e diz qual é. O token dura 60 dias e o programa o
+  renova sozinho uma vez por semana, enquanto o computador ligar; se o
+  computador ficar dois meses desligado, a conta diz "token vencido" e pede um
+  novo.
 
-Depois disso o servidor mede sozinho a cada 6 horas. Para conferir na hora:
+**Para não esperar 6 horas**, o botão **medir agora** das Análises pede uma
+coleta na hora e diz quantos cortes foram medidos.
 
-```bat
-curl -X POST http://localhost:8000/api/metricas/coletar -H "Authorization: Bearer SEU_TOKEN"
-```
+### O que as telas dizem, e o que elas não dizem
 
-E `GET /api/calibracao` mostra o cruzamento entre o que o modelo previu e o que deu.
-**Ele vai dizer que a amostra é pequena, e isso é a resposta certa** — com menos de
-dez cortes medidos, qualquer correlação é ruído com um número em cima.
+- **Um traço (—) é "não medido", nunca zero.** Retenção no TikTok é sempre um
+  traço: o TikTok não dá.
+- **"Visualizações ganhas por dia"** soma o que cada corte ganhou naquele dia.
+  Um corte antigo medido pela primeira vez **não** despeja as visualizações da
+  vida inteira num dia só: ele entra a partir do dia seguinte. Os primeiros dias
+  depois de conectar podem ficar vazios por isso.
+- **"O horário de postar"** compara as visualizações do **primeiro dia** de cada
+  post, por faixa (madrugada, manhã, tarde, noite, na hora do seu navegador). Ele
+  só aponta uma faixa quando há pelo menos **5 posts medidos em duas faixas** e a
+  melhor passa a segunda por **25%**; antes disso, mostra os números e diz o que
+  falta. É um indício, não uma regra: os horários da Agenda continuam seus.
+- **"A IA acertou?"** compara a nota que a IA deu a cada corte com o que ele
+  rendeu, **cada plataforma sozinha**. Com menos de **10 cortes medidos numa
+  plataforma**, não sai coeficiente nenhum: com poucos cortes, um número alto
+  acontece por acaso. Isso é a resposta certa, não uma falha.
+
+### Roteiro de teste (7.4)
+
+1. **YouTube**: conectar para medir uma conta que já tem um corte publicado
+   (pela API ou à mão, com o link no "já publiquei"). Apertar **medir agora**.
+   Conferir na aba Análises do canal que as visualizações batem com as do
+   YouTube Studio (o Studio pode estar um pouco à frente: a leitura é de quando
+   você apertou).
+2. **TikTok**: pôr a **Display API** e o `video.list` no app, **conectar para
+   medir**, e medir um vídeo **público** (postado à mão, com o link colado).
+3. **Instagram**: gerar o token no painel da Meta, colar na conta e medir um
+   reel postado com o link colado.
+4. Abrir **Análises** no menu (os canais lado a lado) e o **Início** (os números
+   do dia), no computador e no celular.
+
+**O que me mandar de volta**: os números da tela ao lado dos do app de cada
+plataforma, e a mensagem de erro de qualquer conta que não mediu (ela aparece em
+"medir agora" e no log do programa).
 
 ---
 

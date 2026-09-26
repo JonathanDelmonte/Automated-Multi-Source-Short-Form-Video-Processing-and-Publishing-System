@@ -1233,12 +1233,14 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/publicacoes/{id}/publicado` | "Já publiquei", com o link do post |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
 | GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto numa conta ou no canal |
-| GET/POST | `/api/metricas`, `/api/metricas/coletar` | Views e retenção coletadas |
+| GET/POST | `/api/metricas`, `/api/metricas/coletar` | As leituras coletadas (as três plataformas), e "medir agora" |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
-| GET | `/api/calibracao` | O que a rubrica do modelo acertou |
+| GET | `/api/calibracao` | O que a rubrica do modelo acertou (por canal e plataforma, `?canal=&plataforma=`) |
+| GET | `/api/analises`, `/api/analises/canais`, `/api/analises/hoje` | As análises de um canal (ou de todos, por plataforma), os canais lado a lado e os números do dia |
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
 | GET/POST | `/api/aplicativos` | O cadastro do aplicativo de quem usa, do Google e do TikTok (nunca devolve o segredo) |
-| POST/DELETE | `/api/contas/{id}/conectar`, `/api/contas/{id}/conexao` | "Conectar" uma conta do YouTube (publicar ou medir) ou do TikTok (publicar), e desconectar |
+| POST/DELETE | `/api/contas/{id}/conectar`, `/api/contas/{id}/conexao` | "Conectar" uma conta do YouTube ou do TikTok (publicar ou medir), e desconectar |
+| POST | `/api/contas/{id}/token` | O token de medir do Instagram, colado (conferido com o Instagram antes de guardar) |
 | GET `/`, POST `/api/oauth/volta` | a volta da autorizacao | Pela raiz do motor (site) ou pelo painel do Docker |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
@@ -2547,7 +2549,7 @@ do codigo que ela mudou.
   painel de antes chama sem ele.
 - **O coletor de metricas mede pela PLATAFORMA, nao pelo driver**: o video do
   YouTube postado a mao, com o link registrado, e um video do canal como
-  qualquer outro. TikTok e Instagram esperam a 7.4.
+  qualquer outro. TikTok e Instagram medem desde a 7.4.
 - **Os galhos do canal**: `/api/publicar` e `/api/agendar` aceitam
   `channel_id` no lugar de `account_id` (um dos dois, nunca os dois). Cada
   conta do canal ganha a sua publicacao, com o texto da plataforma dela e, ao
@@ -2642,8 +2644,8 @@ do codigo que ela mudou.
   proibiu.
 - **O link so existe para post publico** (`publicaly_available_post_id`, com o
   erro de grafia do proprio TikTok): o privado termina `published` sem URL.
-- **Medir o TikTok fica para a 7.4**: a conexao e so de publicar
-  (`conexoes.TIPOS_DE`), e a tela so desenha o que o motor conecta -- ha teste
+- **Medir o TikTok chegou na 7.4**, como outra conexao (`video.list`, ver "As
+  analises da 7.4"). A tela so desenha o que o motor conecta -- ha teste
   comparando as duas listas.
 - **As frases dizem quem mostrou a tela**: "cancelada na tela do TikTok", e
   nunca a pagina de permissoes do Google para quem estava no TikTok
@@ -2678,6 +2680,76 @@ do codigo que ela mudou.
   Facebook, e ha relato de falha na pratica; e conta profissional nao pode ser
   privada, entao nao ha post de teste. O autor ja tinha posto o Instagram na
   frota de aparelhos (7.9). Nao reabrir sem um desses fatos mudar.
+
+**As analises da 7.4** (`metricas_tiktok.py`, `metricas_instagram.py`,
+`analises.py`, `/api/analises*`, `dashboard/src/components/analises/`):
+
+- **Medir e outra autorizacao, nas tres plataformas.** YouTube e TikTok: o
+  botao "conectar para medir" (no TikTok, `user.info.basic` + `video.list`, a
+  Display API; `conexoes.ESCOPO_ESSENCIAL` recusa a volta sem `video.list`).
+  Credencial em `vault://local/<plataforma>-metrics/<conta>`, nunca a de
+  publicar. O refresh token do TikTok muda a cada renovacao, e o novo e gravado
+  antes de seguir, como no driver.
+- **O Instagram mede por token COLADO** (`POST /api/contas/{id}/token`): a Meta
+  so devolve login para endereco HTTPS, e o programa atende em localhost. O
+  token e conferido com o Instagram antes de guardar (`GET /me`): de OUTRA
+  conta e recusado, dizendo de qual -- medir a conta errada poria numeros
+  alheios na calibracao. Renovado quando a ultima renovacao passou de uma
+  semana (`RENOVAR_APOS`; ele dura 60 dias). Codigo 190 marca a credencial
+  `vencido` e a tela pede outro (`conexao.medir_vencido`). A pagina seguinte da
+  lista de posts carrega o token no endereco: so se segue a da propria API
+  (`_mesmo_host`).
+- **O Instagram casa pelo CODIGO do link** (`/reel/<codigo>/`, o que o "ja
+  publiquei" guarda), lendo a lista de posts da conta -- o codigo nao e o id da
+  API. Os insights sao pedidos por uma cadeia de conjuntos
+  (`CONJUNTOS_DE_METRICAS`): a Meta renomeou metricas em 2025, e um nome recusado
+  nunca custa curtidas e comentarios, que vem da lista. O tempo medio chega em
+  MILISSEGUNDOS; a retencao do Instagram e DERIVADA (tempo medio / duracao do
+  corte, teto de 100%, porque reel repete).
+- **`metric_details`** (tabela nova, 1:1 com `metrics`): curtidas, comentarios,
+  compartilhamentos, salvamentos e tempo medio. Pela regra da Fase 7, e nao
+  colunas em `metrics` -- refazer no boot "a tabela mais valiosa" pelo
+  `db_acerto` seria trocar o simples pelo arriscado. `gravar_metrica(**detalhes)`
+  recusa nome fora de `DETALHES`, e numero negativo vira None.
+- **A coleta e por CONTA, e uma conta sem conexao nao para as outras**
+  (`app._medir_uma_conta`). Ate a 7.4 a primeira conta sem credencial
+  encerrava a rodada. YouTube mede video a video (o erro e do video); TikTok e
+  Instagram medem a conta de uma vez (o erro e da conta).
+- **`conexao.tipos` diz o que o motor sabe conectar**, e o site cai no que a 7.3
+  conectava quando o campo falta (`lib/conexoes.js:tiposDaConta`): o site e
+  publicado antes de o programa de quem usa ser atualizado, e um botao "medir"
+  do TikTok falando com o motor da 7.3 so daria erro no clique.
+- **`analises.py` e puro, e tres regras moram nele**: vale o ultimo numero
+  CONHECIDO de cada campo (uma leitura sem retencao nao apaga a de ontem -- o
+  `cruzamento()` da calibracao passou a fazer o mesmo, e a so contar
+  `published`); ganho so conta com base (um corte antigo medido pela primeira
+  vez nao "ganha" a vida inteira num dia -- sem leitura antes do periodo, a
+  base so e zero se o post nasceu nele); e o horario so aponta faixa com
+  `MINIMO_POR_HORARIO` posts medidos em duas faixas E a melhor passando a
+  segunda por `MARGEM_DO_MELHOR` (25%). O demo mostrou por que a margem: 2.036
+  contra 2.020 virava "a tarde rende mais".
+- **O dia e o horario sao os de quem olha**: o painel manda `fuso_min` (o fuso
+  do navegador); o motor roda em UTC no Docker.
+- **A calibracao e por plataforma** (`calibracao.por_plataforma`): views do
+  TikTok, do Instagram e do YouTube nao se comparam, e um rho com as tres
+  misturadas mediria "qual plataforma", nao "qual corte". Filtra por
+  `?canal=&plataforma=`.
+- **O painel escreve as frases** (`lib/analises.js`: `fraseDoHorario`,
+  `frasesDaCalibracao`), e nunca um coeficiente que o motor mandou nulo.
+- **Graficos feitos a mao, em SVG** (sem biblioteca: o `package.json` nao pode
+  mudar). A cor e da PLATAFORMA, nunca da posicao: `COR_DA_PLATAFORMA` sao as
+  tres primeiras vagas de uma paleta categorica validada para fundo escuro,
+  conferida contra o fundo dos cartoes (#0e0e0e) -- contraste, faixa de
+  luminosidade e separacao para daltonismo, em todos os pares. As cores das
+  marcas (tres vermelhos) se confundem entre si e com o vermelho de erro. Todo
+  grafico tem dica com teclado e "ver como tabela"; dia sem base fica sem
+  coluna (um buraco honesto, e nao um zero).
+- **Achado da 7.4, NAO consertado**: o agendador calcula as janelas no fuso do
+  PROCESSO (`datetime.now().astimezone()`), e no Docker o container roda em
+  UTC -- 11h/15h/19h viram 8h/12h/16h em Brasilia. O contorno documentado e
+  `SCHEDULE_WINDOWS=14,18,22`; o conserto (o fuso de quem usa guardado no
+  motor) fica para a 7.5, onde as janelas passam a ser do canal. No ajudante
+  vale a hora do Windows.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

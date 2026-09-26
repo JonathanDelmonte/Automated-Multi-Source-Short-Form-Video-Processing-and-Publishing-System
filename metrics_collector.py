@@ -18,10 +18,11 @@ retencao precisa da API de Analytics, com `yt-analytics.readonly`.
 de leitura, guardado em outro endereco de cofre
 (`vault://<backend>/youtube-metrics/<handle>`). Duas credenciais pequenas em vez
 de uma grande: a que publica nao le, a que le nao publica, e nenhuma das duas
-apaga. `python youtube_oauth.py --leitura` emite a segunda.
+apaga. O botao "conectar para medir" da conta emite a segunda (7.3b), pelo
+mesmo consentimento que o `python youtube_oauth.py --leitura` sempre fez.
 
 Enquanto ela nao existir, o coletor **nao falha**: ele registra o que consegue
-(nada) e diz uma vez o que rodar. Um projeto sem metricas funciona; um projeto
+(nada) e diz uma vez o que falta. Um projeto sem metricas funciona; um projeto
 que nao sobe porque faltou metrica, nao.
 
 ### `metrics` e serie temporal, nao cache do estado atual
@@ -83,7 +84,7 @@ def ref_de_leitura(handle: str, backend: str = "local") -> str:
 def credencial_de_leitura(handle: str) -> Optional[dict]:
     """O segredo de leitura, ou None se ainda nao houver.
 
-    Tenta `local` (o que o `youtube_oauth.py --leitura` grava) e depois `env`,
+    Tenta `local` (o que o "conectar para medir" grava) e depois `env`,
     na mesma ordem de preferencia do driver de publicacao.
     """
     import vault
@@ -140,6 +141,59 @@ def parse_retencao(payload: dict) -> Optional[float]:
     return max(0.0, min(100.0, round(pct, 2)))
 
 
+def _inteiro(bruto) -> Optional[int]:
+    try:
+        return None if bruto is None else max(0, int(bruto))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_estatisticas(payload: dict) -> dict:
+    """Views, curtidas e comentarios da resposta de `videos.list` (7.4).
+
+    O mesmo `statistics` de onde sempre saiu o `viewCount`: pedir as curtidas
+    nao custa uma unidade a mais. Campo que nao veio e None -- o dono pode ter
+    escondido as curtidas, e "escondido" nao e "zero".
+    """
+    try:
+        itens = payload.get("items") or []
+        estat = (itens[0].get("statistics") or {}) if itens else {}
+    except (AttributeError, TypeError, IndexError):
+        estat = {}
+    if not isinstance(estat, dict):
+        estat = {}
+    return {"views": _inteiro(estat.get("viewCount")),
+            "likes": _inteiro(estat.get("likeCount")),
+            "comments": _inteiro(estat.get("commentCount"))}
+
+
+#: As metricas pedidas ao relatorio do Analytics. Lidas pelo NOME da coluna,
+#: como a retencao sempre foi.
+METRICAS_DO_RELATORIO = ("averageViewPercentage", "averageViewDuration", "shares")
+
+
+def parse_relatorio(payload: dict) -> dict:
+    """Retencao, tempo medio assistido (segundos) e compartilhamentos do
+    relatorio do Analytics -- cada um pelo nome da coluna, None se nao veio."""
+    saida = {"retention_pct": parse_retencao(payload),
+             "avg_watch_s": None, "shares": None}
+    try:
+        cabecalhos = [c.get("name") for c in (payload.get("columnHeaders") or [])]
+        linha = (payload.get("rows") or [[]])[0]
+    except (AttributeError, TypeError, IndexError):
+        return saida
+    for nome, campo in (("averageViewDuration", "avg_watch_s"), ("shares", "shares")):
+        if nome not in cabecalhos:
+            continue
+        try:
+            valor = float(linha[cabecalhos.index(nome)])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if valor >= 0:
+            saida[campo] = round(valor, 2) if campo == "avg_watch_s" else int(valor)
+    return saida
+
+
 def janela(hoje: Optional[date] = None) -> tuple:
     hoje = hoje or date.today()
     return (hoje - timedelta(days=DIAS_DE_JANELA)).isoformat(), hoje.isoformat()
@@ -149,9 +203,23 @@ def janela(hoje: Optional[date] = None) -> tuple:
 # Rede -- o que o CI nao alcanca
 # --------------------------------------------------------------------------- #
 
+#: O token de acesso de cada credencial de leitura, reaproveitado enquanto
+#: vale. Uma rodada mede um video por vez; sem isto, cada video pediria um
+#: token novo ao Google.
+_TOKENS: dict = {}
+#: Folga antes do vencimento do token (o Google da 1 h).
+_MARGEM_DO_TOKEN_S = 300
+
+
 def _token_de_leitura(segredo: dict) -> str:
+    import time
+
     import httpx
 
+    chave = (segredo.get("client_id"), segredo.get("refresh_token"))
+    guardado = _TOKENS.get(chave)
+    if guardado and guardado[1] > time.monotonic():
+        return guardado[0]
     resposta = httpx.post(URL_TOKEN, timeout=30.0, data={
         "client_id": segredo["client_id"],
         "client_secret": segredo["client_secret"],
@@ -159,16 +227,20 @@ def _token_de_leitura(segredo: dict) -> str:
         "grant_type": "refresh_token",
     })
     if resposta.status_code != 200:
+        _TOKENS.pop(chave, None)
         raise PublisherError(
             f"o Google recusou o token de leitura ({resposta.status_code}). "
-            "Rode `python youtube_oauth.py --leitura` de novo.")
-    token = (resposta.json() or {}).get("access_token")
+            "Conecte a conta para medir de novo.")
+    dados = resposta.json() or {}
+    token = dados.get("access_token")
     if not token:
         raise PublisherError("o Google nao devolveu access_token de leitura")
+    validade = int(dados.get("expires_in") or 3600)
+    _TOKENS[chave] = (token, time.monotonic() + max(0, validade - _MARGEM_DO_TOKEN_S))
     return token
 
 
-def _buscar_views(token: str, video_id: str) -> Optional[int]:
+def _buscar_estatisticas(token: str, video_id: str) -> dict:
     import httpx
 
     quota.registrar_unidades(CUSTO_LIST)
@@ -178,42 +250,61 @@ def _buscar_views(token: str, video_id: str) -> Optional[int]:
     if resposta.status_code != 200:
         raise PublisherError(f"videos.list respondeu {resposta.status_code}: "
                              f"{resposta.text[:200]}")
-    return parse_views(resposta.json() or {})
+    return parse_estatisticas(resposta.json() or {})
 
 
-def _buscar_retencao(token: str, video_id: str) -> Optional[float]:
+def _buscar_views(token: str, video_id: str) -> Optional[int]:
+    return _buscar_estatisticas(token, video_id)["views"]
+
+
+def _pedir_relatorio(token: str, video_id: str, metricas: str):
     import httpx
 
     inicio, fim = janela()
-    resposta = httpx.get(URL_ANALYTICS, timeout=30.0,
-                         headers={"Authorization": f"Bearer {token}"},
-                         params={"ids": "channel==MINE",
-                                 "startDate": inicio, "endDate": fim,
-                                 "metrics": "averageViewPercentage",
-                                 "filters": f"video=={video_id}"})
+    return httpx.get(URL_ANALYTICS, timeout=30.0,
+                     headers={"Authorization": f"Bearer {token}"},
+                     params={"ids": "channel==MINE",
+                             "startDate": inicio, "endDate": fim,
+                             "metrics": metricas,
+                             "filters": f"video=={video_id}"})
+
+
+def _buscar_relatorio(token: str, video_id: str) -> dict:
+    """Retencao, tempo medio e compartilhamentos. Se o relatorio com as tres
+    for recusado (400), pede so a retencao, que e o que ja funcionava: um
+    numero a mais nunca pode custar o que ja era medido."""
+    vazio = {"retention_pct": None, "avg_watch_s": None, "shares": None}
+    resposta = _pedir_relatorio(token, video_id, ",".join(METRICAS_DO_RELATORIO))
+    if resposta.status_code == 400:
+        resposta = _pedir_relatorio(token, video_id, "averageViewPercentage")
     if resposta.status_code == 403:
         # Falta o escopo de Analytics, ou o canal nao tem dado suficiente.
         # Nao e erro do coletor: as views continuam valendo.
-        return None
+        return vazio
     if resposta.status_code != 200:
         raise PublisherError(f"analytics respondeu {resposta.status_code}: "
                              f"{resposta.text[:200]}")
-    return parse_retencao(resposta.json() or {})
+    return parse_relatorio(resposta.json() or {})
+
+
+def _buscar_retencao(token: str, video_id: str) -> Optional[float]:
+    return _buscar_relatorio(token, video_id)["retention_pct"]
 
 
 def medir(video_id: str, handle: str) -> dict:
-    """Views e retencao de um video. Levanta `PublisherError` se a rede falhar.
+    """Os numeros de um video. Levanta `PublisherError` se a rede falhar.
 
-    Devolve `{"views": .., "retention_pct": ..}` com None no que nao deu para
-    medir -- e nao zero. A diferenca entre "ninguem assistiu" e "nao consegui
-    perguntar" e a diferenca entre um dado e um dado falso.
+    Devolve `{"views", "retention_pct", "likes", "comments", "shares",
+    "avg_watch_s"}` com None no que nao deu para medir -- e nao zero. A
+    diferenca entre "ninguem assistiu" e "nao consegui perguntar" e a diferenca
+    entre um dado e um dado falso.
     """
     segredo = credencial_de_leitura(handle)
     if segredo is None:
         raise PublisherError(
-            "esta instalacao ainda nao tem credencial de LEITURA do YouTube. "
-            "Rode `python youtube_oauth.py --leitura` uma vez -- o token de "
+            f"a conta {handle} do YouTube ainda nao esta conectada para MEDIR. "
+            "Conecte pelo botao \"conectar para medir\" da conta -- o token de "
             "publicacao nao serve, e nao serve de proposito (escopo minimo).")
     token = _token_de_leitura(segredo)
-    return {"views": _buscar_views(token, video_id),
-            "retention_pct": _buscar_retencao(token, video_id)}
+    return {**_buscar_estatisticas(token, video_id),
+            **_buscar_relatorio(token, video_id)}

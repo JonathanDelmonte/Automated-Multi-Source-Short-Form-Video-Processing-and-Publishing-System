@@ -62,11 +62,11 @@ const APPS = [
         texto: 'Entre no TikTok for Developers com a sua conta do TikTok e crie um app.',
         links: [['https://developers.tiktok.com/apps/', 'meus apps']],
       },
-      { texto: 'Em "Products", adicione o Login Kit e o Content Posting API; no Content Posting API, ligue o "Direct Post".' },
+      { texto: 'Em "Products", adicione o Login Kit, o Content Posting API (para publicar; nele, ligue o "Direct Post") e a Display API (para medir as visualizações).' },
       {
         texto: `No Login Kit, escolha a plataforma "Desktop" e cadastre os dois endereços de volta: http://localhost:*/ e http://127.0.0.1:*/ — o * vale qualquer porta, e cobre o site, o painel do Docker e o ajudante. (Este computador volta por ${volta()}.)`,
       },
-      { texto: 'Confira em "Scopes" que o app tem o user.info.basic e o video.publish.' },
+      { texto: 'Confira em "Scopes" que o app tem o user.info.basic, o video.publish (publicar) e o video.list (medir).' },
       { texto: 'Para usar sem esperar a revisão do app, crie um Sandbox e adicione a sua conta do TikTok como usuário de teste ("Target users").' },
       { texto: 'Copie o client key e o client secret (os do Sandbox, se for o caso), cole aqui e salve. Depois, conecte a conta do TikTok na visão geral do canal.' },
     ],

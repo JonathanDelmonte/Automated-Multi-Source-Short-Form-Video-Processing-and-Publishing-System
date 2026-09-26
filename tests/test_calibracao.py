@@ -78,8 +78,9 @@ class TestAmostra:
         assert not any("apertada para decidir" in o for o in r["observacoes"])
 
     def test_sem_nada_medido_diz_o_que_falta(self):
+        """Desde a 7.3b, conectar para medir e um botao da conta."""
         r = calibracao.relatorio([])
-        assert any("--leitura" in o for o in r["observacoes"])
+        assert any("conectar para medir" in o for o in r["observacoes"])
 
 
 # --------------------------------------------------------------------------- #
@@ -263,4 +264,4 @@ class TestCruzamentoNoBanco:
     def test_sem_publicacao_nenhuma_o_endpoint_responde(self, ambiente):
         corpo = _chama("/api/calibracao").json()
         assert corpo["clipes_publicados"] == 0
-        assert any("--leitura" in o for o in corpo["observacoes"])
+        assert any("conectar para medir" in o for o in corpo["observacoes"])

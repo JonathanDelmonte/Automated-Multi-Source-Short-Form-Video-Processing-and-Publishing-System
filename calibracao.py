@@ -151,9 +151,43 @@ def relatorio(itens: list) -> dict:
         "rho_score_retencao": rho_retencao,
         "rho_score_views": rho_views,
         "por_faixa": por_faixa(medidos),
+        "por_plataforma": por_plataforma(medidos),
     }
     out["observacoes"] = observacoes(out)
     return out
+
+
+#: A ordem em que as plataformas aparecem no relatorio.
+PLATAFORMAS = ("youtube", "tiktok", "instagram")
+
+
+def por_plataforma(medidos: list) -> list:
+    """O mesmo cruzamento, separado por plataforma (7.4).
+
+    **Views de plataformas diferentes nao se comparam**: o TikTok conta um view
+    quando o video comeca, o Instagram quando ele aparece na tela, o YouTube
+    com as regras dele. Um rho de views com as tres misturadas mediria em
+    parte "qual plataforma", e nao "qual corte". Cada uma tem o seu, com o
+    mesmo minimo -- abaixo dele, None.
+    """
+    presentes = [p for p in PLATAFORMAS if any(i.get("platform") == p for i in medidos)]
+    presentes += sorted({i.get("platform") for i in medidos
+                         if i.get("platform") and i.get("platform") not in PLATAFORMAS})
+    saida = []
+    for plataforma in presentes:
+        deste = [i for i in medidos if i.get("platform") == plataforma
+                 and i.get("score") is not None]
+        com_retencao = [i for i in deste if i.get("retention_pct") is not None]
+        com_views = [i for i in deste if i.get("views") is not None]
+        saida.append({
+            "plataforma": plataforma,
+            "clipes_medidos": sum(1 for i in medidos if i.get("platform") == plataforma),
+            "com_retencao": len(com_retencao),
+            "com_views": len(com_views),
+            "rho_score_retencao": spearman((i["score"], i["retention_pct"]) for i in com_retencao),
+            "rho_score_views": spearman((i["score"], i["views"]) for i in com_views),
+        })
+    return saida
 
 
 def observacoes(r: dict) -> list:
@@ -163,8 +197,9 @@ def observacoes(r: dict) -> list:
     if medidos == 0:
         saida.append(
             "Nenhum corte publicado foi medido ainda. O cruzamento comeca a "
-            "existir depois da primeira coleta -- e ela precisa da credencial "
-            "de leitura (`python youtube_oauth.py --leitura`).")
+            "existir depois da primeira coleta -- e ela precisa da conta "
+            "conectada para medir (o botao \"conectar para medir\" da conta; "
+            "no Instagram, o token colado).")
         return saida
 
     if r.get("com_retencao", 0) < MINIMO_PARA_CORRELACAO:
@@ -191,6 +226,17 @@ def observacoes(r: dict) -> list:
                     f"Amostra de {r['com_retencao']} -- suficiente para olhar, "
                     f"apertada para decidir. Com menos de {AMOSTRA_CONFORTAVEL} "
                     "o intervalo em torno desse rho ainda e largo.")
+
+    plataformas = [p for p in r.get("por_plataforma") or [] if p.get("clipes_medidos")]
+    if len(plataformas) > 1:
+        saida.append(
+            "Os cortes medidos estao em mais de uma plataforma, e views de uma "
+            "nao se comparam com as de outra: o coeficiente de cada uma esta em "
+            "'por plataforma'.")
+    if any(p["plataforma"] == "tiktok" and p["com_retencao"] == 0 for p in plataformas):
+        saida.append(
+            "O TikTok nao da retencao pela API: os cortes dele entram so no "
+            "cruzamento de views.")
 
     faixas = [f for f in r.get("por_faixa") or [] if f["clipes"]]
     if len(faixas) >= 2 and all(f["retencao_media"] is not None for f in faixas):

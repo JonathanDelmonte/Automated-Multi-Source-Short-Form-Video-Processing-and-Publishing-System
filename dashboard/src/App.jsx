@@ -147,10 +147,11 @@ const SECOES = new Set(NAV.map((n) => n.id));
 
 function App() {
   const { isSignedIn, localLlm, geminiNoMotor, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
-  // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   // Só depois da config, e só com sessão quando a instalação tem senha: antes
-  // disso o servidor responderia 401 a cada dois minutos.
-  useAquecerTranscricao(configCarregada && (!authAtiva || isSignedIn));
+  // disso o servidor responderia 401 a tudo.
+  const sessaoPronta = configCarregada && (!authAtiva || isSignedIn);
+  // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
+  useAquecerTranscricao(sessaoPronta);
   const rota = useRota();
   const [apiKey, setApiKey] = useState(() => {
     try { return localStorage.getItem('gemini_key') || ''; } catch { return ''; }
@@ -195,7 +196,7 @@ function App() {
   // logo depois do atualizar.bat e sumia no F5.
   const keysMissing = configCarregada && !geminiOk;
 
-  const canais = useListaDeCanais();
+  const canais = useListaDeCanais(sessaoPronta);
   const painel = useMemo(() => ({
     apiKey,
     setApiKey,

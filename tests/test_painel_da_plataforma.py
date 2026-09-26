@@ -80,6 +80,15 @@ def test_o_canal_viaja_com_o_video():
         in _fonte("pages", "Criar.jsx")
 
 
+def test_os_canais_esperam_a_sessao():
+    """O hook roda antes da tela de entrada; sem esperar a sessao, numa
+    instalacao com senha a lista nasceria de um 401 e ficaria em erro depois do
+    login."""
+    assert "const canais = useListaDeCanais(sessaoPronta);" in APP
+    assert "const sessaoPronta = configCarregada && (!authAtiva || isSignedIn);" in APP
+    assert "useEffect(() => { if (ativo) carregar(); }, [ativo, carregar]);" in _fonte("lib", "canais.js")
+
+
 def test_o_canal_manda_json_ao_motor():
     """O motor recusa com 415 o que nao vier como JSON (`_exigir_json`)."""
     canais = _fonte("lib", "canais.js")

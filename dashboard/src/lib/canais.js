@@ -18,10 +18,15 @@ export async function listarCanais() {
   return { canais: data.canais || [], situacao: 'ok', detalhe: null };
 }
 
-// A lista de canais do painel inteiro: carregada uma vez pelo App e recarregada
-// por quem muda alguma coisa (criar, editar, apagar, mandar um vídeo para um
-// canal -- a contagem de projetos vem junto).
-export function useListaDeCanais() {
+// A lista de canais do painel inteiro: carregada pelo App e recarregada por
+// quem muda alguma coisa (criar, editar, apagar, mandar um vídeo para um canal
+// -- a contagem de projetos vem junto).
+//
+// **Só com `ativo`**, que o App liga quando a sessão está pronta. O hook roda
+// antes da tela de entrada (hooks não podem ficar depois de um `return`), e
+// numa instalação com senha a primeira pergunta voltaria 401: a lista ficaria
+// em erro depois do login, até alguém recarregar a página.
+export function useListaDeCanais(ativo = true) {
   const [estado, setEstado] = useState({ canais: [], situacao: 'carregando', detalhe: null });
   const carregar = useCallback(async () => {
     try {
@@ -30,7 +35,7 @@ export function useListaDeCanais() {
       setEstado((atual) => ({ ...atual, situacao: 'erro', detalhe: null }));
     }
   }, []);
-  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { if (ativo) carregar(); }, [ativo, carregar]);
   const porId = useMemo(
     () => Object.fromEntries(estado.canais.map((c) => [c.id, c])), [estado.canais]);
   return useMemo(() => ({ ...estado, porId, carregar }), [estado, porId, carregar]);

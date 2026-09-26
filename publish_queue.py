@@ -55,6 +55,18 @@ def conta_para_driver(linha) -> publishers.Account:
         credentials_ref=linha.credentials_ref, driver_pref=linha.driver_pref)
 
 
+def _conexao(linha) -> dict:
+    """O que a conta tem conectado (etapa 7.3): a credencial de publicar (o
+    endereco que o driver le) e a de medir (a que o coletor procura). Sem rede:
+    e so ver se o cofre responde."""
+    if linha.platform != "youtube":
+        return {"publicar": False, "medir": False}
+    import metrics_collector
+    import vault
+    return {"publicar": vault.existe(linha.credentials_ref, vault.CAMPOS),
+            "medir": metrics_collector.credencial_de_leitura(linha.handle) is not None}
+
+
 def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
     conta = conta_para_driver(linha)
     return {
@@ -68,6 +80,7 @@ def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
         "capabilities": publishers.capabilities_de(conta),
         # O canal a que a conta pertence (Fase 7), ou None se esta solta.
         "channel_id": canal_id,
+        "conexao": _conexao(linha),
     }
 
 

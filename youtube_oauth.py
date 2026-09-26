@@ -2,6 +2,11 @@
 
     python youtube_oauth.py
 
+**Desde a etapa 7.3 o site faz o mesmo sem terminal**: o cadastro do aplicativo
+em Configuracoes -> aplicativos, e o botao "conectar" de cada conta do YouTube
+(`conexoes.py`). Este script continua valendo para quem prefere o terminal, e
+os dois pedem os MESMOS escopos -- ha teste comparando.
+
 Sem isto o driver `youtube-api` nao tem como funcionar: a API exige um token de
 renovacao que so nasce de um consentimento no navegador, e nao ha jeito de
 obte-lo por variavel de ambiente. Escrever o driver e deixar a pessoa

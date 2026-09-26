@@ -170,3 +170,19 @@ def gravar(ref: str, segredo: dict) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(limpo, fh)
     return caminho
+
+
+def apagar(ref: str) -> bool:
+    """Apaga o segredo do backend `local`. Devolve se havia o que apagar.
+
+    E o "desconectar" da conta (etapa 7.3). O `env` nao se apaga daqui, pelo
+    mesmo motivo de nao se gravar: quem o mantem e o `.env`.
+    """
+    backend, plataforma, handle = partes(ref)
+    if backend != "local":
+        raise VaultError(f"o backend {backend!r} e somente leitura")
+    try:
+        os.remove(caminho_local(plataforma, handle))
+        return True
+    except FileNotFoundError:
+        return False

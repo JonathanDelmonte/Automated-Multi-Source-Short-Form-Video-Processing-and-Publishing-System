@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, Languages, Loader2, Plus, ShieldCheck, Trash2, Zap } from 'lucide-react';
+import ConexaoDaConta from '../components/ConexaoDaConta';
 import FormularioDoCanal from '../components/FormularioDoCanal';
 import ProjectsGrid from '../components/ProjectsGrid';
 import PublicacoesTab from '../components/PublicacoesTab';
@@ -9,6 +10,7 @@ import IconePlataforma from '../components/ui/IconePlataforma';
 import Pagina, { EmBreve, Secao } from '../components/ui/Pagina';
 import { SituacaoDosCanais } from './Canais';
 import { apiFetch } from '../lib/api';
+import { useAplicativoDoGoogle } from '../lib/aplicativo';
 import { apagarCanal, IDIOMAS } from '../lib/canais';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
@@ -41,23 +43,21 @@ function VisaoGeral({ canal }) {
   const { canais } = usePainel();
   const [contas, setContas] = useState(null);
   const [publicacoes, setPublicacoes] = useState(null);
+  const aplicativo = useAplicativoDoGoogle();
 
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      try {
-        const [rContas, rPub] = await Promise.all([apiFetch('/api/contas'), apiFetch('/api/publicacoes')]);
-        const dadosContas = rContas.ok ? await rContas.json() : {};
-        const dadosPub = rPub.ok ? await rPub.json() : null;
-        if (!vivo) return;
-        setContas(dadosContas.contas || []);
-        setPublicacoes(dadosPub ? dadosPub.publicacoes || [] : null);
-      } catch {
-        if (vivo) { setContas([]); setPublicacoes(null); }
-      }
-    })();
-    return () => { vivo = false; };
-  }, [canal.id]);
+  const carregar = useCallback(async () => {
+    try {
+      const [rContas, rPub] = await Promise.all([apiFetch('/api/contas'), apiFetch('/api/publicacoes')]);
+      const dadosContas = rContas.ok ? await rContas.json() : {};
+      const dadosPub = rPub.ok ? await rPub.json() : null;
+      setContas(dadosContas.contas || []);
+      setPublicacoes(dadosPub ? dadosPub.publicacoes || [] : null);
+    } catch {
+      setContas([]);
+      setPublicacoes(null);
+    }
+  }, []);
+  useEffect(() => { carregar(); }, [canal.id, carregar]);
 
   const ids = canal.contas.map((c) => c.id);
   const doCanal = publicacoes?.filter((p) => ids.includes(p.account?.id));
@@ -90,14 +90,19 @@ function VisaoGeral({ canal }) {
               );
             }
             return daPlataforma.map((c) => (
-              <div key={c.id} className="flex items-center gap-2.5 p-3 rounded-input border border-rule2 min-w-0">
-                <IconePlataforma platform={p} size={20} />
-                <span className="min-w-0">
-                  <span className="block text-sm text-ink truncate">{c.handle}</span>
-                  <span className="block text-[11px] text-muted truncate">
-                    {porId[c.id] ? (DRIVERS[porId[c.id].driver_agora] || porId[c.id].driver_agora) : PLATAFORMAS[p].nome}
+              <div key={c.id} className="p-3 rounded-input border border-rule2 min-w-0 space-y-2" data-conta={c.handle}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <IconePlataforma platform={p} size={20} />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-ink truncate">{c.handle}</span>
+                    <span className="block text-[11px] text-muted truncate">
+                      {porId[c.id] ? (DRIVERS[porId[c.id].driver_agora] || porId[c.id].driver_agora) : PLATAFORMAS[p].nome}
+                    </span>
                   </span>
-                </span>
+                </div>
+                {porId[c.id] && (
+                  <ConexaoDaConta conta={porId[c.id]} aplicativoPronto={!!aplicativo.pronto} aoMudar={carregar} />
+                )}
               </div>
             ));
           })}

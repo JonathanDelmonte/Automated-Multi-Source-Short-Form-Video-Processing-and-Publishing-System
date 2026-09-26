@@ -260,7 +260,7 @@ conta não saem juntos.
 | Parte | O quê | Situação |
 |---|---|---|
 | 7.3a | motor: cota nova do YouTube (100 envios/dia), agenda por conta, a trava do post atrasado, "já publiquei" com link, os galhos do canal no publicar e no agendar; e o acerto do banco que já existe (`db_acerto`) | feita (26-set) |
-| 7.3b | cadastro de aplicativo por pessoa e "Conectar YouTube" pelo site | a fazer |
+| 7.3b | cadastro de aplicativo por pessoa (Configurações → aplicativos, com o passo a passo) e "Conectar YouTube" pelo site, para publicar e para medir | feita (26-set) |
 | 7.3c | TikTok pela Content Posting API, privado até a auditoria | a fazer |
 | 7.3d | Instagram na versão simples | a fazer |
 | 7.3e | conferir as telas no computador e no celular, docs, CI | a fazer |
@@ -273,6 +273,14 @@ publica nada. Conferido também no navegador: publicar um projeto no Canal
 infantil abre um galho por conta (YouTube e TikTok), o "já publiquei" recusa o
 link do TikTok no galho do YouTube e guarda o link certo, e agendar no canal dá
 horário próprio a cada conta.
+
+O "Conectar YouTube" foi conferido no navegador até onde dá sem uma conta de
+verdade: o botão abre a tela do Google com a volta para este computador, só o
+escopo de envio e PKCE; uma volta com código falso é recusada com a frase certa,
+e o mesmo pedido não vale duas vezes; conectada, a conta mostra "publica
+sozinho" e a fila passa a usar a API. **O que falta ver no PC do autor** é o
+consentimento de verdade, com o projeto dele no Google Cloud (o roteiro está no
+`COMO-EXECUTAR.md`, Passo 8).
 
 Dois defeitos antigos apareceram no caminho e foram consertados junto: a linha
 agendada que caía na fila manual era entregue de novo a cada minuto, para

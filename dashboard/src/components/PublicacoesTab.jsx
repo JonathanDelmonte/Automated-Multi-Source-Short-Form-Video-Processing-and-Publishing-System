@@ -6,9 +6,11 @@ import { getApiUrl } from '../config';
 import IconePlataforma from './ui/IconePlataforma';
 import AvatarDoCanal from './ui/AvatarDoCanal';
 import FilaDePublicacoes from './FilaDePublicacoes';
+import ConexaoDaConta from './ConexaoDaConta';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 import { corpoDoDestino } from '../lib/publicacoes';
+import { useAplicativoDoGoogle } from '../lib/aplicativo';
 import { hrefDe } from '../lib/rota';
 
 // A publicação (Fase 3, bloco 3.5), em partes desde a 7.1: o pacote do dia, o
@@ -50,6 +52,7 @@ export default function PublicacoesTab({
   const [confirmando, setConfirmando] = useState(null);
   const [agenda, setAgenda] = useState(null);
   const destinoAtual = useRef('');
+  const aplicativo = useAplicativoDoGoogle();
 
   const carregar = useCallback(async () => {
     try {
@@ -230,7 +233,8 @@ export default function PublicacoesTab({
                 const doCanal = c.channel_id ? canais.porId[c.channel_id] : null;
                 return (
                   <li key={c.id}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm border-t border-rule pt-2 first:border-0 first:pt-0">
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm border-t border-rule pt-2 first:border-0 first:pt-0"
+                      data-conta={c.handle}>
                     <IconePlataforma platform={c.platform} size={17} title={nome} />
                     <span className="text-ink">{c.handle}</span>
                     {doCanal ? (
@@ -274,6 +278,11 @@ export default function PublicacoesTab({
                         <Trash2 size={14} />
                       </button>
                     )}
+                    {c.conexao && c.platform === 'youtube' && (
+                      <div className="basis-full pl-7">
+                        <ConexaoDaConta conta={c} aplicativoPronto={!!aplicativo.pronto} aoMudar={carregar} />
+                      </div>
+                    )}
                   </li>
                 );
               })}
@@ -303,10 +312,10 @@ export default function PublicacoesTab({
             </button>
           </div>
           <p className="text-muted text-[12px] leading-snug">
-            Para o YouTube subir sozinho, rode <code>python youtube_oauth.py</code>{' '}
-            uma vez — sem isso a conta usa a fila manual, que continua entregando
-            o corte e a legenda prontos. Para ligar a conta a um canal, use os
-            ajustes do canal.
+            Para o YouTube subir sozinho, conecte a conta (o botão aparece depois
+            do cadastro do aplicativo, logo acima) — sem isso a conta usa a fila
+            manual, que continua entregando o corte e a legenda prontos. Para
+            ligar a conta a um canal, use os ajustes do canal.
           </p>
         </section>
         )}

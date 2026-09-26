@@ -1237,6 +1237,9 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
 | POST | `/api/asr/aquecer` | Sobe o modelo de transcricao na placa (o painel chama enquanto aberto) |
+| GET/POST | `/api/aplicativos` | O cadastro do aplicativo do Google de quem usa (nunca devolve o segredo) |
+| POST/DELETE | `/api/contas/{id}/conectar`, `/api/contas/{id}/conexao` | "Conectar YouTube" (publicar ou medir), e desconectar |
+| GET `/`, POST `/api/oauth/volta` | a volta do Google | Pela raiz do motor (site) ou pelo painel do Docker |
 | POST | `/api/motor/atualizar` | O botao "atualizar agora": Docker avanca a `main` e reinicia; ajudante troca de versao |
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
 | GET/POST/PATCH/DELETE | `/api/canais`, `/api/canais/{id}` | Os canais (Fase 7): nome, nicho, avatar, contas ligadas, aprovacao |
@@ -2556,6 +2559,46 @@ do codigo que ela mudou.
   puras em `lib/publicacoes.js`, testadas no `node`), o "ja publiquei" abre o
   campo do link, o destino do "publicar" pode ser o canal inteiro, e a tela do
   projeto tem o botao "publicar" com o canal dele ja escolhido.
+
+**O cadastro do aplicativo e o "Conectar YouTube"** (`aplicativos.py`,
+`conexoes.py`, 7.3b):
+
+- **Cada pessoa usa o proprio cadastro** (decisao do autor, 26-set-2026): o
+  Client ID e a chave secreta do projeto DELA no Google Cloud, colados em
+  Configuracoes -> aplicativos e guardados em `DATA_DIR/aplicativos.json`
+  (0600, como o `chaves.json`). O `.env` (`YOUTUBE_CLIENT_ID/SECRET`) continua
+  valendo; o colado vence. **O segredo nunca volta ao site**; o Client ID sim
+  (ele viaja na URL de consentimento, e e o que a pessoa reconhece).
+- **O Google e perguntado antes de guardar**, sem clique: um pedido de token com
+  codigo de mentira. `invalid_client` e cadastro errado, `invalid_grant` e
+  cadastro certo (o codigo e que e falso). O JSON baixado do Google serve colado
+  inteiro, e um cliente "Aplicativo da Web" e recusado ali mesmo -- ele nao
+  aceita a volta por localhost, e o erro so apareceria no meio do consentimento.
+- **O consentimento e o do `youtube_oauth.py`, pedido pelo botao**: dois tipos,
+  `publicar` (so `youtube.upload`) e `medir` (os dois de leitura), e um teste
+  compara os escopos com os do script. A credencial vai para o cofre local --
+  a de publicar no endereco que o driver le (e a conta passa a apontar para
+  ele), a de medir no que o coletor procura.
+- **A volta e a RAIZ do motor, com barra** (`http://localhost:8000/`): a forma
+  que as bibliotecas do proprio Google usam para programa instalado, e o
+  cliente "App para computador" aceita qualquer porta de localhost sem
+  cadastro. No site, a volta chega ao motor (`GET /`, que sem `state` segue
+  404); no painel do Docker a API e relativa e a volta chega ao Vite, entao o
+  painel a repassa (`VoltaDoGoogle.jsx` -> `POST /api/oauth/volta`, rota
+  publica em `ROTAS_PUBLICAS`). A origem de volta e a que o NAVEGADOR usa para
+  falar com o motor, e so vale localhost: o painel aberto de outro aparelho da
+  rede nao conecta, e a tela diz isso antes do clique.
+- **O `state` e a senha do pedido**: aleatorio, uso unico, 10 minutos, em
+  memoria (um reinicio no meio manda clicar de novo). E ele que diz a conta e o
+  TENANT na volta, que chega sem sessao. Mais PKCE (S256).
+- **A aba do Google abre ANTES do `await`** (`ConexaoDaConta.jsx`): aberta
+  depois, o bloqueador de pop-up a trataria como propaganda. A tela pergunta ao
+  motor de 3 em 3 s ate a conta aparecer conectada.
+- **Desconectar** apaga a credencial local, avisa o Google (revogar, melhor
+  esforco) e devolve a conta ao endereco `env` padrao -- a fila manual.
+- `/api/contas` diz `conexao: {publicar, medir}` por conta, sem rede.
+- `tests/test_conexoes.py` roda o fluxo inteiro com o Google imitado, inclusive
+  com senha ligada (conectar exige sessao; a volta, nao).
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, Gauge, Info, KeyRound, Shield, Timer, Users } from 'lucide-react';
+import { AppWindow, Bot, Gauge, Info, KeyRound, Shield, Timer, Users } from 'lucide-react';
+import CadastroDoAplicativo from '../components/CadastroDoAplicativo';
 import ChavesDeIA from '../components/ChavesDeIA';
 import McpConnectCard from '../components/McpConnectCard';
 import OndeVaiOTempo from '../components/OndeVaiOTempo';
@@ -20,6 +21,7 @@ import { hrefDe } from '../lib/rota';
 
 const PARTES = [
   { id: 'chaves', rotulo: 'chaves de IA', icone: KeyRound },
+  { id: 'aplicativos', rotulo: 'aplicativos', icone: AppWindow },
   { id: 'contas', rotulo: 'contas', icone: Users },
   { id: 'uso', rotulo: 'uso e limites', icone: Gauge },
   { id: 'desempenho', rotulo: 'desempenho', icone: Timer },
@@ -55,7 +57,7 @@ function UsoELimites() {
         etapa="7.3"
         itens={[
           'Quanto do limite diário de cada IA gratuita já foi usado hoje.',
-          'A cota de envios de cada conta do YouTube.',
+          'A cota de envios de cada cadastro de aplicativo do YouTube.',
           'Quanto os projetos ocupam no disco deste computador.',
         ]}
       />
@@ -98,6 +100,12 @@ export default function Configuracoes({ parte = null }) {
       <div id="chaves" className="scroll-mt-4">
         <ChavesDeIA chaveDoNavegador={apiKey} esquecerChaveDoNavegador={() => setApiKey('')} />
       </div>
+
+      {/* O cadastro do aplicativo (7.3): cada pessoa usa o dela, e é ele que
+          deixa o "conectar" de cada conta funcionar sem terminal. */}
+      <Secao id="aplicativos" titulo="aplicativos: para as contas publicarem sozinhas" icone={AppWindow}>
+        <CadastroDoAplicativo />
+      </Secao>
 
       <div id="contas" className="scroll-mt-4 space-y-2">
         <p className="text-muted text-[13px] leading-snug">

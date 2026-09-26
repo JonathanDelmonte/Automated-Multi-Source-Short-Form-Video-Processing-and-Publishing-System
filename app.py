@@ -51,6 +51,9 @@ from pydantic import BaseModel
 import recut
 import layout_ranges
 import chaves_ia
+import aplicativos
+import conexoes
+import vault
 
 load_dotenv()
 
@@ -59,6 +62,12 @@ load_dotenv()
 # ambiente: a cascata, o `resolve_gemini` e o `main.py` de cada job as veem
 # pelo `os.environ`, sem saber de onde vieram.
 CHAVES = chaves_ia.Chaves((os.environ.get("DATA_DIR") or "").strip() or "data")
+
+# O cadastro de aplicativo de cada pessoa (o Client ID do Google dela), colado
+# nas Configuracoes -- ver aplicativos.py. E os consentimentos em andamento do
+# "Conectar YouTube" (conexoes.py), em memoria de proposito.
+APLICATIVOS = aplicativos.Aplicativos((os.environ.get("DATA_DIR") or "").strip() or "data")
+PEDIDOS_DE_CONEXAO = conexoes.Pedidos()
 
 # Constants
 # Relativas por padrao, como sempre foram (no Docker, dentro de /app). O
@@ -6278,8 +6287,10 @@ async def exigir_dono(request: Request) -> dict:
 #: explicita de proposito: `/api/config` e como o painel descobre que precisa
 #: pedir login, `/api/auth/*` e como se faz login, e os dois `/health` sao o que
 #: o Traefik e o vigia externo consultam -- exigir sessao neles tiraria o
-#: container de rotacao a cada deploy.
-ROTAS_PUBLICAS = ("/api/config", "/api/auth/", "/health")
+#: container de rotacao a cada deploy. `/api/oauth/volta` e a volta do Google
+#: pelo painel do Docker (7.3): quem chega e o navegador vindo do consentimento,
+#: e a prova e o `state` de uso unico, nao a sessao (ver `conexoes.py`).
+ROTAS_PUBLICAS = ("/api/config", "/api/auth/", "/health", "/api/oauth/volta")
 
 
 def _rota_publica(caminho: str) -> bool:
@@ -6799,6 +6810,213 @@ async def apagar_conta(account_id: str):
         raise
     except Exception as e:
         raise _erro_da_fila(e)
+
+
+# --- O cadastro do aplicativo e o "Conectar YouTube" (Fase 7, etapa 7.3) ------
+# Cada pessoa usa o proprio cadastro de aplicativo (decisao do autor,
+# 26-set-2026): o Client ID do Google dela, colado nas Configuracoes. Com ele, o
+# botao de cada conta faz o consentimento que era o `youtube_oauth.py`.
+
+@app.get("/api/aplicativos")
+async def ver_aplicativos():
+    """Que cadastros o motor tem e de onde vieram. Nunca o segredo."""
+    return {"aplicativos": APLICATIVOS.estado()}
+
+
+@app.post("/api/aplicativos")
+async def trocar_aplicativo(request: Request):
+    """Guarda o cadastro colado no site, ou tira (`remover: true`).
+
+    O Google e perguntado antes de guardar: Client ID ou segredo errado, e o
+    cliente do tipo errado ("Aplicativo da Web"), nao entram -- sao os erros que
+    a pessoa so veria depois, no meio do consentimento. Sem resposta do Google,
+    guarda e diz que nao deu para conferir. So JSON; com a auth ativa, so o dono.
+    """
+    _exigir_json(request)
+    if await _auth_ativa():
+        await exigir_dono(request)
+    try:
+        corpo = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Corpo invalido.")
+    try:
+        plataforma, campos = aplicativos.limpar_pedido(corpo)
+    except aplicativos.AplicativoInvalido as e:
+        return JSONResponse(status_code=422, content={"detail": {
+            "erro": e.codigo, "campo": e.campo}})
+    teste = None
+    if campos and plataforma == "google":
+        teste = await asyncio.to_thread(aplicativos.testar_google, campos)
+        if teste in ("cliente", "tipo"):
+            return JSONResponse(status_code=422, content={"detail": {"erro": teste}})
+    try:
+        APLICATIVOS.trocar(plataforma, campos)
+    except OSError as e:
+        print(f"⚠️ [aplicativos] nao consegui gravar: {type(e).__name__}", flush=True)
+        return JSONResponse(status_code=500, content={"detail": {"erro": "gravar"}})
+    print(f"🔑 Cadastro do aplicativo {plataforma} "
+          f"{'guardado' if campos else 'removido'} pelo site", flush=True)
+    return {"aplicativos": APLICATIVOS.estado(), "teste": teste}
+
+
+class ConectarIn(BaseModel):
+    #: `publicar` ou `medir`: dois consentimentos, duas credenciais pequenas.
+    tipo: str
+    #: A origem pela qual o NAVEGADOR fala com o motor (o site manda
+    #: `http://localhost:8000`; o painel do Docker, a propria origem). E para
+    #: la que o Google devolve a pessoa.
+    volta: str
+
+
+def _erro_de_conexao(codigo: str, status: int = 400) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"detail": {"erro": codigo}})
+
+
+@app.post("/api/contas/{account_id}/conectar")
+async def conectar_conta(account_id: str, req: ConectarIn, request: Request):
+    """Comeca o "Conectar YouTube": devolve a URL de consentimento do Google.
+
+    O pedido fica guardado por 10 minutos com um `state` de uso unico, que e o
+    que liga a volta a esta conta e a este tenant. So JSON.
+    """
+    _exigir_json(request)
+    if req.tipo not in conexoes.TIPOS:
+        return _erro_de_conexao("tipo")
+    try:
+        async with db.tenant() as t:
+            conta = await t.get(db_models.Account, account_id)
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if conta is None:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+    if conta.platform != "youtube":
+        return _erro_de_conexao("plataforma")
+    app_google = APLICATIVOS.credenciais("google")
+    if not app_google:
+        return _erro_de_conexao("sem_aplicativo", 409)
+    try:
+        volta = conexoes.volta_de(req.volta)
+    except conexoes.ConexaoError as e:
+        return _erro_de_conexao(e.codigo)
+    verifier, desafio = conexoes.par_pkce()
+    state = PEDIDOS_DE_CONEXAO.novo(conexoes.Pedido(
+        tenant_id=db.tenant_atual(), account_id=conta.id, handle=conta.handle,
+        plataforma=conta.platform, tipo=req.tipo, volta=volta, verifier=verifier))
+    return {"url": conexoes.url_de_consentimento(
+                app_google["client_id"], volta, conta.platform, req.tipo, state, desafio),
+            "expira_em_s": conexoes.VALIDADE_S}
+
+
+async def _concluir_conexao(state: Optional[str], code: Optional[str],
+                            error: Optional[str]) -> dict:
+    """A volta do Google, venha ela pela raiz do motor ou pelo painel.
+
+    Nunca levanta: o que der errado vira `{"ok": False, "codigo": ...}`, e quem
+    chamou escreve a pagina ou a resposta.
+    """
+    pedido = PEDIDOS_DE_CONEXAO.consumir(state or "")
+    if pedido is None:
+        return {"ok": False, "codigo": "expirou"}
+    base = {"plataforma": pedido.plataforma, "tipo": pedido.tipo, "handle": pedido.handle}
+    if error or not code:
+        return {"ok": False, "codigo": "recusada", **base}
+    app_google = APLICATIVOS.credenciais("google")
+    if not app_google:
+        return {"ok": False, "codigo": "sem_aplicativo", **base}
+    try:
+        refresh = await asyncio.to_thread(conexoes.trocar_codigo, app_google, code, pedido)
+    except conexoes.ConexaoError as e:
+        return {"ok": False, "codigo": e.codigo, "detalhe": e.detalhe, **base}
+    ref = conexoes.ref_do_cofre(pedido.plataforma, pedido.tipo, pedido.handle)
+    try:
+        vault.gravar(ref, {"client_id": app_google["client_id"],
+                           "client_secret": app_google["client_secret"],
+                           "refresh_token": refresh})
+    except (OSError, vault.VaultError) as e:
+        print(f"⚠️ [conectar] nao consegui gravar no cofre: {type(e).__name__}", flush=True)
+        return {"ok": False, "codigo": "gravar", **base}
+    if pedido.tipo == "publicar":
+        # A conta passa a apontar para a credencial nova. No tenant de quem
+        # clicou: a volta chega sem sessao, e quem sabe o tenant e o pedido.
+        ficha = db.usar_tenant(pedido.tenant_id)
+        try:
+            async with db.tenant() as t:
+                conta = await t.get(db_models.Account, pedido.account_id)
+                if conta is not None and conta.credentials_ref != ref:
+                    conta.credentials_ref = ref
+                    await t.commit()
+        except Exception as e:
+            print(f"⚠️ [conectar] a conta nao foi apontada para o cofre ({e})", flush=True)
+        finally:
+            db.restaurar_tenant(ficha)
+    print(f"🔗 {pedido.plataforma}/{pedido.handle} conectado para {pedido.tipo}", flush=True)
+    return {"ok": True, **base}
+
+
+@app.get("/")
+async def raiz_do_motor(request: Request):
+    """A volta do Google quando o site fala com o motor direto (8000 ou 8001).
+
+    A raiz, e nao um caminho da API, porque e a forma que as bibliotecas do
+    proprio Google usam para programa instalado. Sem `state` nao e volta
+    nenhuma, e a raiz continua respondendo o 404 de sempre.
+    """
+    q = request.query_params
+    if "state" not in q:
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    r = await _concluir_conexao(q.get("state"), q.get("code"), q.get("error"))
+    return HTMLResponse(
+        conexoes.pagina_de_volta(r["ok"], plataforma=r.get("plataforma", "youtube"),
+                                 tipo=r.get("tipo", "publicar"), handle=r.get("handle", ""),
+                                 codigo=r.get("codigo", ""), detalhe=r.get("detalhe", "")),
+        status_code=200 if r["ok"] else 400)
+
+
+class VoltaIn(BaseModel):
+    state: str
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
+@app.post("/api/oauth/volta")
+async def volta_pelo_painel(req: VoltaIn, request: Request):
+    """A volta do Google quando quem a recebeu foi o painel do Docker (5175): o
+    Vite serve a raiz, e o painel manda o codigo para ca. Publica, como a raiz:
+    a prova e o `state`."""
+    _exigir_json(request)
+    r = await _concluir_conexao(req.state, req.code, req.error)
+    return JSONResponse(status_code=200 if r["ok"] else 400, content=r)
+
+
+@app.delete("/api/contas/{account_id}/conexao")
+async def desconectar_conta(account_id: str, tipo: str):
+    """Tira a credencial da conta (a de publicar ou a de medir) e avisa o
+    Google que ela nao vale mais. A conta volta para a fila manual."""
+    if tipo not in conexoes.TIPOS:
+        return _erro_de_conexao("tipo")
+    try:
+        async with db.tenant() as t:
+            conta = await t.get(db_models.Account, account_id)
+            if conta is None:
+                raise HTTPException(status_code=404, detail="Conta nao encontrada")
+            if conta.platform != "youtube":
+                return _erro_de_conexao("plataforma")
+            ref = conexoes.ref_do_cofre(conta.platform, tipo, conta.handle)
+            try:
+                refresh = vault.resolve(ref).get("refresh_token")
+            except vault.VaultError:
+                refresh = None
+            apagou = vault.apagar(ref)
+            if tipo == "publicar" and conta.credentials_ref == ref:
+                conta.credentials_ref = db_models.vault_ref("env", conta.platform, conta.handle)
+                await t.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if refresh:
+        await asyncio.to_thread(conexoes.revogar, refresh)
+    return {"success": True, "havia": apagou}
 
 
 @app.get("/api/publicacoes")

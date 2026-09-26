@@ -170,6 +170,21 @@ class TestEndpointsDeJob:
         assert (ambiente / meu / "v_metadata.json").exists()
 
 
+class TestContasDoVizinho:
+
+    def test_conectar_e_desconectar_a_conta_do_vizinho_e_404(self, dois_donos, ambiente):
+        """Etapa 7.3: o "Conectar YouTube" le a conta pelo escopo do tenant.
+        Um id de conta alheio responde igual a um que nao existe."""
+        a, b, _ = dois_donos
+        conta = _chama("POST", "/api/contas", {"platform": "youtube", "handle": "@meu"},
+                       token=a).json()
+        corpo = {"tipo": "publicar", "volta": "http://localhost:8000"}
+        assert _chama("POST", f"/api/contas/{conta['id']}/conectar", corpo,
+                      token=b).status_code == 404
+        assert _chama("DELETE", f"/api/contas/{conta['id']}/conexao?tipo=publicar",
+                      token=b).status_code == 404
+
+
 class TestPacoteDoDia:
 
     def test_o_pacote_so_leva_os_seus_cortes(self, dois_donos, ambiente):

@@ -4,6 +4,7 @@ import {
   Loader2, Menu, Plus, Settings, Smartphone, Sparkles, Tv, Wrench, X,
 } from 'lucide-react';
 import Tranca from './components/Tranca';
+import VoltaDoGoogle from './components/VoltaDoGoogle';
 import AvisoDoMotor from './components/AvisoDoMotor';
 import AvatarDoCanal from './components/ui/AvatarDoCanal';
 import Modal from './components/ui/Modal';
@@ -24,6 +25,7 @@ import { API_BASE_URL } from './config';
 import { URL_DO_INSTALADOR } from './lib/ajudante';
 import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 import { useListaDeCanais } from './lib/canais';
+import { ehVoltaDoGoogle } from './lib/conexoes';
 import { PainelContext } from './lib/painel';
 import { hrefDe, ir, useRota } from './lib/rota';
 
@@ -153,6 +155,9 @@ function App() {
   // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   useAquecerTranscricao(sessaoPronta);
   const rota = useRota();
+  // A volta do "Conectar YouTube" no painel do Docker (7.3): o Google devolve
+  // para a raiz do painel, com `?state=...&code=...` (ver VoltaDoGoogle).
+  const [voltaDoGoogle] = useState(() => ehVoltaDoGoogle(window.location.search));
   const [apiKey, setApiKey] = useState(() => {
     try { return localStorage.getItem('gemini_key') || ''; } catch { return ''; }
   });
@@ -213,6 +218,10 @@ function App() {
   // `authLoading` importa: sem ele, a primeira renderização (antes de
   // `/api/config` responder) mostraria a tela de login por um instante para
   // quem já está logado, e pior, para quem nem tem auth ligada.
+  // Antes da tranca: a volta vale pelo `state` do pedido, não pela sessão.
+  if (voltaDoGoogle) {
+    return <VoltaDoGoogle />;
+  }
   if (authLoading) {
     return <EsperandoServidor />;
   }

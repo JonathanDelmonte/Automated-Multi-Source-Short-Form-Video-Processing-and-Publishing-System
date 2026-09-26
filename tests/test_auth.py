@@ -450,8 +450,14 @@ class TestTranca:
 
     def test_a_lista_de_publicas_e_curta_e_deliberada(self):
         """Se ela crescer, foi decisao de alguem -- e este teste obriga a
-        escrever o porque no commit."""
-        assert app_module.ROTAS_PUBLICAS == ("/api/config", "/api/auth/", "/health")
+        escrever o porque no commit.
+
+        `/api/oauth/volta` (etapa 7.3): a volta do consentimento do Google pelo
+        painel do Docker. Quem chega e o navegador vindo do Google, sem sessao;
+        a prova e o `state` de uso unico (`conexoes.py`), e sem ele a rota nao
+        faz nada -- `test_conexoes.py` confere."""
+        assert app_module.ROTAS_PUBLICAS == ("/api/config", "/api/auth/", "/health",
+                                             "/api/oauth/volta")
 
     def test_token_de_outro_segredo_nao_entra(self, monkeypatch):
         _bootstrap()

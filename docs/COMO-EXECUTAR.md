@@ -1062,7 +1062,7 @@ Cria `data\cortes.db` com as nove tabelas, o tenant fixo e o template padrão.
 
 ## Passo 8 — Publicar
 
-Abra a aba **Publicação** no painel (porta 5175).
+Abra a **Agenda** no painel (ou a aba **Agenda** de um canal).
 
 ### O caminho que já funciona sem configurar nada
 
@@ -1074,35 +1074,54 @@ trabalho todo menos abrir o app e apertar publicar.
 Dentro do ZIP há um `LEIA-ME.txt` com a ordem sugerida, que é a ordem em que a
 detecção já entregou — do melhor para o pior.
 
-### Para o YouTube subir sozinho
+Depois de postar no app, marque **"já publiquei"** na fila e **cole o link do
+post** (o "copiar link" do app serve, inclusive o link curto do TikTok). É com o
+link que o programa mede as visualizações do que foi postado à mão.
 
-Uma vez só, e não dá para pular: a API do YouTube exige um token que só nasce de
-um consentimento no navegador.
+**Publicar no canal**: escolha o canal inteiro como destino e cada corte vira um
+galho por conta (YouTube, TikTok, Instagram), cada um com o texto da plataforma
+dele — e, ao agendar, com horário próprio.
 
-1. Em <https://console.cloud.google.com>: criar um projeto, habilitar a
-   **YouTube Data API v3**, e em *Credenciais* criar um **ID do cliente OAuth**
-   do tipo **Aplicativo de computador**. Anote o Client ID e o Client Secret.
-2. Na pasta do projeto, **fora** do Docker (o navegador precisa abrir na sua
-   máquina):
+### Para o YouTube subir sozinho (pelo site, sem terminal)
 
-```bat
-cd /d C:\cortes
-python youtube_oauth.py
-```
+Duas partes, as duas uma vez só.
 
-Ele abre a tela do Google, você autoriza, e o segredo é guardado em
-`data\vault\youtube\canal.json` com permissão restrita. O script imprime
-também as três linhas de `.env` equivalentes, se você preferir ambiente a
-arquivo — nesse caso, cole no `.env` e reinicie o backend.
+**1. O cadastro do aplicativo** (Configurações → **aplicativos**). O site tem o
+passo a passo com os links; em resumo, no <https://console.cloud.google.com>:
 
-3. No painel, em **contas**, adicione a conta com o mesmo nome que você passou
-   em `--handle` (o padrão é `canal`). A linha passa a dizer *"sobe sozinho pela
-   API oficial"* em vez de *"fila manual"*.
+1. criar um projeto;
+2. ativar a **YouTube Data API v3** (e a **YouTube Analytics API**, para medir);
+3. configurar a tela de consentimento como **Externo** e colocá-la **"Em
+   produção"** — em "Teste" a conexão expira a cada 7 dias;
+4. em *Clientes*, criar um cliente OAuth do tipo **App para computador** (não
+   "Aplicativo da Web");
+5. colar o **ID do cliente** e a **chave secreta** no site (ou o JSON baixado,
+   inteiro, no primeiro campo). O programa confere com o Google antes de guardar.
 
-**São 6 uploads por dia**, e o número não é escolha nossa: a API cobra 1.600
-unidades por vídeo contra 10.000/dia. O sétimo do dia **cai na fila manual
-sozinho** — não vira erro. O contador zera à meia-noite no horário do Pacífico,
-não no seu.
+**2. Conectar cada conta.** Na visão geral do canal (ou em Configurações →
+contas), a conta do YouTube ganha dois botões:
+
+- **conectar para publicar** — o programa sobe os cortes sozinho. Não lê nem
+  apaga nada;
+- **conectar para medir** — o programa lê visualizações e retenção. Não publica.
+
+O botão abre a tela do Google numa aba nova. Na hora, o Google avisa que o app
+"não foi verificado": para uso próprio, clique em **Avançado → Acessar**. Depois
+de autorizar, o Google devolve você **para este computador** (`localhost`), e a
+aba diz "Conectado"; a tela do site percebe sozinha. **Abra o painel neste
+computador** para conectar: o Google só devolve para `localhost`, e o painel
+aberto de outro aparelho da rede não conecta.
+
+O terminal continua valendo para quem prefere (`python youtube_oauth.py`, e
+`--leitura` para medir), e as variáveis do `.env` também.
+
+**São 100 envios por dia**, numa cota só de envio (desde jun-2026; eram 6 pela
+regra antiga). O que passar disso **cai na fila manual sozinho** — não vira
+erro. A cota é do projeto no Google Cloud (os canais conectados pelo mesmo
+cadastro dividem as 100) e zera à meia-noite no horário do Pacífico.
+
+**Até o Google aprovar a auditoria do seu projeto, o vídeo enviado pela API sobe
+privado.** Você o deixa público no YouTube Studio, ou posta pelo pacote do dia.
 
 ### Na primeira vez, publique privado
 
@@ -1162,7 +1181,7 @@ projetos, mande `"tenant": "mesmo"`.
 
 ## Passo 10 — Deixar publicar sozinho
 
-Na aba **Publicação**, o botão **agendar** espalha os cortes do projeto pelas próximas
+Na **Agenda** (ou no botão **publicar** da tela do projeto), o botão **agendar** espalha os cortes do projeto pelas próximas
 janelas em vez de publicar na hora. O padrão: **3 por dia**, às 11h, 15h e 19h, com
 pelo menos 3 h entre um e outro e **±25 minutos de variação**.
 
@@ -1174,8 +1193,13 @@ Os números estão no `.env` (`SCHEDULE_PER_DAY`, `SCHEDULE_WINDOWS`,
 `SCHEDULE_MIN_GAP_MINUTES`) porque **são chutes informados, não verdade**: descobrir o
 horário certo exige retenção medida, e isso é a Fase 5.
 
-O teto duro é outro e não é escolha nossa: **6 por dia**, da quota do YouTube. O
-agendador nunca o ultrapassa.
+O teto duro é outro e não é escolha nossa: a cota de envios do YouTube (**100 por
+dia**). O agendador nunca o ultrapassa.
+
+**A agenda é por conta, e o atrasado tem trava.** Um horário novo respeita os
+posts que a conta já tem. E se o computador estiver desligado na hora marcada,
+quando ele voltar sai **um** post por conta (se já faz 3 h desde o último) e os
+outros vão para as janelas seguintes — nunca vários juntos.
 
 ---
 

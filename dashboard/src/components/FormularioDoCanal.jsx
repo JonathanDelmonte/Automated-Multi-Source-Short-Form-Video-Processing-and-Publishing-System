@@ -341,8 +341,9 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
         </div>
         {aviso && <p className="text-muted text-[12px]">{aviso}</p>}
         <p className="text-muted text-[12px] leading-snug">
-          Ligar a conta aqui diz ao Virtu Clips que ela é deste canal. Conectar para postar sozinho vem
-          na etapa 7.3; até lá, os cortes saem prontos para você colar.
+          Ligar a conta aqui diz ao Virtu Clips que ela é deste canal. Para a conta do YouTube postar
+          sozinha, conecte-a na visão geral do canal (depois do cadastro do aplicativo, em
+          Configurações); sem conectar, os cortes saem prontos para você colar.
         </p>
       </Secao>
 

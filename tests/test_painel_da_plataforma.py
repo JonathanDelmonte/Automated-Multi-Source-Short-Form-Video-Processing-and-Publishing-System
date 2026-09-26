@@ -212,3 +212,88 @@ def test_o_projeto_publica_no_canal_dele():
     projeto = _fonte("pages", "Projeto.jsx")
     assert "canalDoProjeto={canalId}" in projeto
     assert "projeto={jobId}" in projeto
+
+
+# --------------------------------------------------------------------------- #
+# "Conectar YouTube" (etapa 7.3)
+# --------------------------------------------------------------------------- #
+
+def _conexoes(expressao):
+    modulo = (SRC / "lib" / "conexoes.js").as_uri()
+    codigo = (
+        f"import * as c from {json.dumps(modulo)};\n"
+        f"console.log(JSON.stringify({expressao}));\n"
+    )
+    saida = subprocess.run([NODE, "--input-type=module", "-e", codigo],
+                           capture_output=True, encoding="utf-8", check=True, timeout=60).stdout
+    return json.loads(saida)
+
+
+@precisa_node
+@pytest.mark.parametrize("base, pagina, origem", [
+    # O site do Cloudflare fala com o motor direto: a volta e o motor.
+    ("http://localhost:8000", "https://virtu-clips.zirtuno.workers.dev", "http://localhost:8000"),
+    ("http://localhost:8001", "https://virtu-clips.zirtuno.workers.dev", "http://localhost:8001"),
+    # O painel do Docker usa a API relativa: a volta e o proprio painel.
+    ("", "http://localhost:5175", "http://localhost:5175"),
+])
+def test_a_volta_vai_para_onde_o_navegador_fala_com_o_motor(base, pagina, origem):
+    assert _conexoes(f"c.origemDoMotor({json.dumps(base)}, {json.dumps(pagina)})") == origem
+
+
+@precisa_node
+@pytest.mark.parametrize("origem, pode", [
+    ("http://localhost:8000", True),
+    ("http://127.0.0.1:5175", True),
+    ("http://192.168.0.10:5175", False),
+    ("https://virtu-clips.zirtuno.workers.dev", False),
+])
+def test_so_localhost_conecta(origem, pode):
+    assert _conexoes(f"c.voltaPossivel({json.dumps(origem)})") is pode
+
+
+@precisa_node
+@pytest.mark.parametrize("busca, volta", [
+    ("?state=abc&code=xyz&scope=s", True),
+    ("?state=abc&error=access_denied", True),
+    ("?canal=x", False),
+    ("", False),
+])
+def test_reconhece_a_volta_do_google(busca, volta):
+    assert _conexoes(f"c.ehVoltaDoGoogle({json.dumps(busca)})") is volta
+
+
+@precisa_node
+def test_toda_recusa_do_motor_tem_frase_na_tela():
+    """O motor devolve codigos; a tela escreve a frase. Um codigo novo sem
+    frase viraria "Nao deu para conectar" sem dizer o que fazer."""
+    fontes = "".join((RAIZ / f).read_text(encoding="utf-8")
+                     for f in ("conexoes.py", "aplicativos.py", "app.py"))
+    codigos = set(re.findall(r'ConexaoError\("(\w+)"', fontes))
+    codigos |= set(re.findall(r'_erro_de_conexao\("(\w+)"', fontes))
+    codigos |= set(re.findall(r'"codigo": "(\w+)"', fontes))
+    codigos |= set(re.findall(r'AplicativoInvalido\("(\w+)"', fontes))
+    # O que a conferencia com o Google devolve e o motor repassa como `erro`.
+    codigos |= set(re.findall(r'return "(\w+)"', (RAIZ / "aplicativos.py").read_text(encoding="utf-8")))
+    codigos -= {"ok", "incerto"}
+    # `campo` e erro de programa (um campo que o painel nunca manda), nao de
+    # quem usa.
+    codigos.discard("campo")
+    assert {"expirou", "volta", "sem_aplicativo", "formato", "cliente"} <= codigos, \
+        "a varredura nao achou os codigos"
+    frases = set(_conexoes("Object.keys(c.MENSAGENS_DO_CADASTRO)"))
+    assert codigos - frases == set()
+
+
+def test_a_aba_do_google_abre_antes_de_esperar_o_motor():
+    """Aberta depois de um `await`, o bloqueador de pop-up a trataria como
+    propaganda."""
+    fonte = _fonte("components", "ConexaoDaConta.jsx")
+    corpo = fonte[fonte.index("const conectar = async"):fonte.index("const desconectar")]
+    assert corpo.index("window.open(") < corpo.index("await apiFetch(")
+    assert "body: JSON.stringify({ tipo, volta: origem })" in corpo
+
+
+def test_a_volta_no_painel_vem_antes_da_tranca():
+    """A volta vale pelo `state` do pedido, nao pela sessao."""
+    assert APP.index("return <VoltaDoGoogle />;") < APP.index("return <Tranca />;")

@@ -17,7 +17,7 @@ e *onde o plano original precisava de ajuste*.
 |---|---|
 | Repositório | fork do `openshorts` incorporado — 420 commits do upstream + planejamento |
 | Licença | MIT limpo. `cloud/` removido (ADR-001) |
-| Fase | **Fases 0 a 4 completas, e a 4 foi verificada em execução real** (16-set-2026, vídeo de 10 min, na máquina do autor). O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Fase 5 em andamento.** Item aberto com prioridade: a execução é lenta demais — ver abaixo. **Fase 6 (no ar) começou em 24-set-2026**: o painel está no Cloudflare, e o ajudante (instalador para Windows, sem Docker, que se atualiza sozinho) passou no Windows do GitHub; falta o teste no PC do autor. **Fase 7 (a plataforma organizada por canal) proposta em 25-set-2026**: `docs/PLANO-DA-PLATAFORMA.md` |
+| Fase | **Fases 0 a 4 completas, e a 4 foi verificada em execução real** (16-set-2026, vídeo de 10 min, na máquina do autor). O pipeline ingere de seis fontes, aplica template, publica (manual ou YouTube) e agenda; a instalação tem dono e isola tenants. **Fase 5 em andamento.** Item aberto com prioridade: a execução é lenta demais — ver abaixo. **Fase 6 (no ar) começou em 24-set-2026**: o painel está no Cloudflare, e o ajudante (instalador para Windows, sem Docker, que se atualiza sozinho) passou no Windows do GitHub; falta o teste no PC do autor. **Fase 7 (a plataforma organizada por canal) aprovada em 26-set-2026, 7.1 em curso**: `docs/PLANO-DA-PLATAFORMA.md` |
 
 Ambiente local verificado: Python 3.11.15, Node 22, Docker 29.3, PostgreSQL 16,
 Redis 7, `uv`, `poetry`. **`ffmpeg`, `ffprobe` e `yt-dlp` ausentes** — vêm na imagem
@@ -969,7 +969,7 @@ dois instalados, o ajudante cede: quando o Docker atende, ele para o motor dele.
 
 ---
 
-## Fase 7 — a plataforma organizada por canal · proposta em 25-set-2026
+## Fase 7 — a plataforma organizada por canal · aprovada em 26-set-2026
 
 Pedido do autor depois do primeiro vídeo inteiro pelo site: estruturar o
 aplicativo antes de melhorar os cortes. O centro deixa de ser o vídeo e passa a

@@ -95,7 +95,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | Arquivo | Papel |
 |---|---|
 | `docs/PLANO-DE-ACAO.md` | ponto de entrada: fases, ordem de execucao, critérios de pronto |
-| `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante (proposta de 25-set-2026): a plataforma organizada por canal -- mapa das telas, modelo de dados, etapas 7.1 a 7.10 |
+| `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante (aprovado em 26-set-2026): a plataforma organizada por canal -- mapa das telas, modelo de dados, etapas 7.1 a 7.10, as decisoes do autor e o registro das conversas com as palavras dele |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
 | `docs/DECISOES.md` | ADR-001 a 012 |
@@ -2405,6 +2405,30 @@ botao **copiar** junta tudo -- e o que o `COMO-EXECUTAR.md` pede de volta.
   quanto custaria num plano pago.
 - `tests/test_versao_do_site.py` roda os dois modulos no `node` de verdade
   (clone raso e inteiro, sem git, as marcas e os userAgents); sem node, pula.
+
+### Fase 7: a plataforma organizada por canal (26-set-2026)
+
+**Antes de mexer em qualquer coisa da Fase 7, ler `docs/PLANO-DA-PLATAFORMA.md`.**
+Ele e a memoria do que o autor pediu e decidiu -- com as palavras dele, no
+"Registro das conversas" --, e existe para que nada precise ser conversado de
+novo ("para que, mesmo que a gente perca esse chat, esteja salvo"). Decisao nova
+do autor entra la, na tabela "Decisoes do autor" e no registro, no mesmo commit
+do codigo que ela mudou.
+
+- **O boot cria o banco com `create_all`, e ele nunca faz ALTER.** Ninguem roda
+  `alembic upgrade` na maquina de quem usa (`db_seed.seed()` no lifespan, e so).
+  Tabela nova chega sozinha; coluna nova em tabela existente NAO chega, e a
+  primeira consulta que a ler quebra no banco do autor. Por isso o canal entrou
+  por tabelas de LIGACAO (`channel_accounts`, `channel_jobs`), e nao por
+  `accounts.channel_id` / `jobs.channel_id`. Campo novo em tabela existente:
+  tabela nova. A migracao do Alembic vai junto, para o caminho de producao.
+- **Defeito conhecido do agendador, a consertar na etapa 7.3**: o laco publica
+  TUDO o que venceu, um atras do outro (`publish_queue.devidas`). Com o PC
+  desligado por horas, cinco posts sairiam no mesmo minuto, e o autor pediu o
+  contrario: "tem que ter uma trava de seguranca". Hoje nada publica sozinho
+  (ninguem conectou o YouTube), entao ainda nao morde.
+- **O estilo do video de IA e configurado por quem usa**, nunca deduzido do
+  nicho ("nao coloca estilo 3D no infantil automaticamente").
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

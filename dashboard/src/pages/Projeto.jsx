@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, Loader2, Plus, Terminal } from 'lucide-react';
+import { Activity, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, Loader2, Plus, Send, Terminal } from 'lucide-react';
 import ResultCard from '../components/ResultCard';
 import ProcessingAnimation from '../components/ProcessingAnimation';
 import ClipEditor from '../components/ClipEditor';
 import ReframeEditor from '../components/ReframeEditor';
 import MoverParaCanal from '../components/MoverParaCanal';
+import PublicacoesTab from '../components/PublicacoesTab';
 import AvatarDoCanal from '../components/ui/AvatarDoCanal';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../lib/api';
@@ -72,6 +73,7 @@ export default function Projeto({ jobId }) {
   // onde esta, nao quanto falta dentro do estagio. Ver `_stage_view` no app.py.
   const [stage, setStage] = useState(null);
   const [canalId, setCanalId] = useState(null);
+  const [publicando, setPublicando] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [logs, setLogs] = useState([]);
   const [logsCopied, setLogsCopied] = useState(false);
@@ -514,6 +516,14 @@ export default function Projeto({ jobId }) {
             {results?.clips?.length > 0 && status === 'complete' && (
               <div className="flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-2">
                 <button
+                  onClick={() => setPublicando((v) => !v)}
+                  aria-expanded={publicando}
+                  className="btn-ghost px-3 py-2 text-xs"
+                  title="Publicar ou agendar os cortes num canal ou numa conta"
+                >
+                  <Send size={14} />publicar
+                </button>
+                <button
                   onClick={handleDownloadAll}
                   disabled={downloadingAll}
                   className="btn-ghost px-3 py-2 text-xs"
@@ -526,6 +536,19 @@ export default function Projeto({ jobId }) {
               </div>
             )}
           </div>
+
+          {publicando && status === 'complete' && results?.clips?.length > 0 && (
+            // O "publicar" da Agenda, com este projeto já escolhido e o canal
+            // dele como destino (etapa 7.3: o corte vira um galho por conta).
+            <div className="mb-3 shrink-0">
+              <PublicacoesTab
+                key={canalId || 'sem-canal'}
+                secoes={['publicar']}
+                projeto={jobId}
+                canalDoProjeto={canalId}
+              />
+            </div>
+          )}
 
           {status === 'complete' && results?.clips?.length > 0 && jobRetentionSeconds > 0 && (
             // Só aparece se alguém ligou a limpeza por idade

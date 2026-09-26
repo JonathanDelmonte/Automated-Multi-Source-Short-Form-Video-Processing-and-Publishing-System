@@ -306,11 +306,32 @@ class TestLaco:
         r = corre(app_module.coletar_metricas)
         assert r["medidas"] == 1 and r["erros"] == 1
 
-    def test_driver_sem_api_e_pulado(self, ambiente, monkeypatch):
-        """O `manual` nao devolve `remote_id` porque nao publica por API --
-        quando devolver (alguem colou o id a mao), ainda assim nao ha de onde
-        medir sem a API daquela plataforma."""
+    def test_o_post_feito_a_mao_no_youtube_e_medido(self, ambiente, monkeypatch):
+        """Etapa 7.3: o "ja publiquei" guarda o link, e dele sai o id do video.
+        Quem diz de onde medir e a PLATAFORMA da conta, nao o driver -- o
+        video postado a mao e um video do canal como qualquer outro."""
         _publicacao(ambiente, driver="manual", remote_id="COLADO")
+        vault.gravar(metrics_collector.ref_de_leitura("canal"),
+                     {"client_id": "i", "client_secret": "s",
+                      "refresh_token": "r"})
+        chamou = []
+        monkeypatch.setattr(metrics_collector, "medir",
+                            lambda *a: chamou.append(a) or {"views": 1})
+        assert corre(app_module.coletar_metricas)["medidas"] == 1
+        assert chamou == [("COLADO", "canal")]
+
+    def test_plataforma_sem_api_de_metricas_e_pulada(self, ambiente, monkeypatch):
+        """TikTok e Instagram ainda nao tem de onde medir (etapa 7.4)."""
+        pub_id = _publicacao(ambiente, driver="manual", remote_id="7412345678901234567")
+
+        async def _para_o_tiktok():
+            async with db.tenant() as t:
+                pub = await t.get(db_models.Publication, pub_id)
+                conta = t.add(db_models.Account(platform="tiktok", handle="canal"))
+                await t.flush()
+                pub.account_id = conta.id
+                await t.commit()
+        corre(_para_o_tiktok)
         chamou = []
         monkeypatch.setattr(metrics_collector, "medir",
                             lambda *a: chamou.append(a) or {"views": 1})
@@ -334,19 +355,23 @@ class TestLaco:
 
 class TestQuota:
 
-    def test_o_list_debita_do_mesmo_teto(self):
-        """Uma unidade e ruido perto das 1600 de um upload, mas sai do MESMO
-        teto de 10.000/dia. Um contador que ignora o barato deixa de ser o
-        contador."""
+    def test_o_list_debita_das_unidades(self):
+        """Uma unidade das 10.000 do dia, que desde jun-2026 sao so das
+        chamadas que nao sao envio. Barato, mas debitado: um contador que
+        ignora o barato deixa de ser o contador."""
         assert metrics_collector.CUSTO_LIST == 1
 
     def test_medir_nao_conta_como_upload(self, tmp_path, monkeypatch):
-        """Debitar a unidade e certo; contar como upload faria o painel dizer
-        que restam 5 uploads quando restam 6."""
+        """Debitar a unidade e certo; contar como envio faria o painel dizer
+        que restam 99 envios quando restam 100."""
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         from publishers import quota
         antes = quota.estado()["uploads_hoje"]
-        quota.registrar(custo=metrics_collector.CUSTO_LIST, upload=False)
+        quota.registrar_unidades(metrics_collector.CUSTO_LIST)
         estado = quota.estado()
         assert estado["uploads_hoje"] == antes
         assert estado["usadas"] == 1
+
+    def test_o_coletor_debita_pelas_unidades(self):
+        fonte = open(metrics_collector.__file__, encoding="utf-8").read()
+        assert "quota.registrar_unidades(CUSTO_LIST)" in fonte

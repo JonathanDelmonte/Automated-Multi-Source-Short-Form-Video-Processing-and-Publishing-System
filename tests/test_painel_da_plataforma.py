@@ -138,3 +138,77 @@ def test_o_endereco_das_telas(hash_, partes, busca):
 def test_o_href_de_uma_tela():
     assert _endereco("[e.hrefDe('/canais'), e.hrefDe('canais'), e.hrefDe('#/x')]") == \
         ["#/canais", "#/canais", "#/x"]
+
+
+# --------------------------------------------------------------------------- #
+# A fila com os galhos (etapa 7.3)
+# --------------------------------------------------------------------------- #
+
+def _publicacoes(expressao):
+    modulo = (SRC / "lib" / "publicacoes.js").as_uri()
+    codigo = (
+        f"import * as p from {json.dumps(modulo)};\n"
+        f"console.log(JSON.stringify({expressao}));\n"
+    )
+    saida = subprocess.run([NODE, "--input-type=module", "-e", codigo],
+                           capture_output=True, encoding="utf-8", check=True, timeout=60).stdout
+    return json.loads(saida)
+
+
+@precisa_node
+def test_os_galhos_ficam_juntos_pelo_corte():
+    fila = [
+        {"id": "a", "clip": {"id": "c1"}, "account": {"platform": "youtube"}},
+        {"id": "b", "clip": {"id": "c2"}, "account": {"platform": "youtube"}},
+        {"id": "c", "clip": {"id": "c1"}, "account": {"platform": "tiktok"}},
+    ]
+    grupos = _publicacoes(f"p.agruparPorCorte({json.dumps(fila)})")
+    assert [(g["chave"], [x["id"] for x in g["galhos"]]) for g in grupos] == \
+        [("c1", ["a", "c"]), ("c2", ["b"])]
+
+
+@precisa_node
+def test_dentro_do_corte_a_ordem_e_a_das_plataformas():
+    fila = [{"id": i, "clip": {"id": "c"}, "account": {"platform": pl}}
+            for i, pl in (("1", "instagram"), ("2", "tiktok"), ("3", "youtube"))]
+    (grupo,) = _publicacoes(f"p.agruparPorCorte({json.dumps(fila)})")
+    assert [g["account"]["platform"] for g in grupo["galhos"]] == \
+        ["youtube", "tiktok", "instagram"]
+
+
+@precisa_node
+@pytest.mark.parametrize("destino, corpo", [
+    ("canal:X", {"job_id": "J", "channel_id": "X"}),
+    ("conta:Y", {"job_id": "J", "account_id": "Y"}),
+    ("", None),
+    ("canal:", None),
+    ("driver:browser", None),
+])
+def test_o_destino_vira_canal_ou_conta_e_nunca_driver(destino, corpo):
+    """O ADR-010: o painel manda a conta (ou o canal), nunca o driver."""
+    assert _publicacoes(f"p.corpoDoDestino('J', {json.dumps(destino)})") == corpo
+
+
+@precisa_node
+@pytest.mark.parametrize("pub, comeco", [
+    ({"status": "scheduled", "scheduled_at": None}, "esperando você postar"),
+    ({"status": "scheduled", "scheduled_at": "2026-09-27T14:07:00+00:00"}, "agendado · "),
+    ({"status": "published", "posted_at": "2026-09-26T17:00:00+00:00"}, "publicado · "),
+    ({"status": "published"}, "publicado"),
+    ({"status": "failed"}, "falhou"),
+])
+def test_o_estado_de_cada_galho_em_palavras(pub, comeco):
+    assert _publicacoes(f"p.estadoDoGalho({json.dumps(pub)}).texto").startswith(comeco)
+
+
+def test_o_ja_publiquei_manda_o_link_como_json():
+    fila = _fonte("components", "FilaDePublicacoes.jsx")
+    assert "`/api/publicacoes/${publicacao.id}/publicado`" in fila
+    assert "JSON.stringify(comLink ? { url: link.trim() } : {})" in fila
+    assert "'Content-Type': 'application/json'" in fila
+
+
+def test_o_projeto_publica_no_canal_dele():
+    projeto = _fonte("pages", "Projeto.jsx")
+    assert "canalDoProjeto={canalId}" in projeto
+    assert "projeto={jobId}" in projeto

@@ -343,7 +343,7 @@ class TestSubmodulosNoNamespace:
         import sys
         r = subprocess.run(
             [sys.executable, "-c",
-             "import publishers; publishers.pacote.Item; publishers.quota.CUSTO_INSERT"],
+             "import publishers; publishers.pacote.Item; publishers.quota.UPLOADS_POR_DIA_PADRAO"],
             capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
 

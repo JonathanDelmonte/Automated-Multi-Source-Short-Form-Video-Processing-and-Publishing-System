@@ -530,20 +530,16 @@ driver atende) roda no CI sem banco e sem cliente de plataforma nenhuma.
 **O driver `youtube-api`** (`publishers/youtube_api.py`, `quota.py`, `vault.py`,
 `youtube_oauth.py`, bloco 3.4) publica no canal proprio pela API oficial.
 
-- **6 uploads por dia**: 1600 unidades por `videos.insert` contra 10.000/dia, o
-  numero exato que o plano manda respeitar. O contador existe para que o 7o
-  **caia na fila manual**, nao para virar `quotaExceeded` e um job vermelho.
-  **O numero esta desatualizado** (conferido na documentacao do Google em
-  25-set-2026): o envio ganhou cota propria, de 100 por dia, e o `search.list`
-  outra de 100. O codigo ainda segura em 6, e isso erra para o lado de segurar;
-  a correcao, com o teste que congela o numero, e a etapa 7.3 do
-  `docs/PLANO-DA-PLATAFORMA.md`. Nao "defender" o 6 como regra do YouTube.
+- **100 envios por dia, numa cota propria** (7.3a; ate ali era a regra antiga,
+  1600 unidades por `videos.insert` contra 10.000/dia = 6 por dia). O contador
+  existe para que o envio que nao cabe **caia na fila manual**, nao para virar
+  `quotaExceeded` e um job vermelho. Ver "A 7.3a no motor", na Fase 7.
 - **O dia do contador e o do Pacifico**, que e quando a quota do YouTube zera.
   Contar em UTC daria 7-8 horas por dia de discordancia com a API. Sem `tzdata`
   no sistema, cai para UTC-8 fixo -- o horario mais tarde, entao erra para o
   lado de segurar o upload.
 - **Debita ANTES da chamada.** O YouTube cobra quando aceita a requisicao: um
-  upload que morre no meio ja gastou as 1600, e contar so no sucesso deixaria o
+  upload que morre no meio ja gastou o envio, e contar so no sucesso deixaria o
   contador abaixo da verdade justamente no dia ruim.
 - **HTTP direto com `httpx`**, sem `google-api-python-client`: sao tres
   requisicoes, e o cliente oficial traria `google-auth` e amigos para uma imagem
@@ -774,9 +770,11 @@ projeto pelas proximas janelas; um laco no lifespan publica o que venceu.
 
 - **Os numeros:** 3/dia, janelas 11h/15h/19h, espacamento minimo de 3 h, jitter
   de ±25 min. O 3/dia e o unico que o plano corrobora duas vezes (a conta do §1
-  e a proposta do ADR-007). O teto duro e 6/dia, da quota, e o agendador nunca o
-  ultrapassa (o 6 vem da cota antiga: ver a nota no driver `youtube-api`). Os tres primeiros sao **defaults configuraveis** -- calibrar
-  horario exige retencao medida, que e a Fase 5.
+  e a proposta do ADR-007). O teto duro e a cota de envio do YouTube (100/dia
+  desde a 7.3a; eram 6 pela regra antiga), e o agendador nunca o ultrapassa.
+  Os tres primeiros sao **defaults configuraveis** -- calibrar horario exige
+  retencao medida, que e a Fase 5. **Desde a 7.3a a agenda e por conta e o
+  post atrasado tem trava**: ver "A 7.3a no motor", na Fase 7.
 - **`JITTER_MINIMO_MIN` (5) e piso NAO configuravel.** Pedir zero nao desliga o
   jitter, so o reduz ao piso, com uma linha no log. A alternativa e um
   agendador que um dia roda com zero -- e a assinatura que o §1 manda evitar
@@ -1230,10 +1228,11 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/me` | Quem sou eu |
 | GET/POST | `/api/usuarios` | Contas da instalacao (criar: so o dono) |
 | GET/POST/DELETE | `/api/contas` | Contas de plataforma (Fase 3) |
-| POST | `/api/publicar` | Publica cortes de um projeto numa conta |
+| POST | `/api/publicar` | Publica cortes de um projeto numa conta, ou no canal inteiro (um galho por conta) |
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
+| POST | `/api/publicacoes/{id}/publicado` | "Já publiquei", com o link do post |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
-| GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto |
+| GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor, e agendar um projeto numa conta ou no canal |
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | Views e retenção coletadas |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
 | GET | `/api/calibracao` | O que a rubrica do modelo acertou |
@@ -2437,11 +2436,11 @@ do codigo que ela mudou.
   por tabelas de LIGACAO (`channel_accounts`, `channel_jobs`), e nao por
   `accounts.channel_id` / `jobs.channel_id`. Campo novo em tabela existente:
   tabela nova. A migracao do Alembic vai junto, para o caminho de producao.
-- **Defeito conhecido do agendador, a consertar na etapa 7.3**: o laco publica
-  TUDO o que venceu, um atras do outro (`publish_queue.devidas`). Com o PC
-  desligado por horas, cinco posts sairiam no mesmo minuto, e o autor pediu o
-  contrario: "tem que ter uma trava de seguranca". Hoje nada publica sozinho
-  (ninguem conectou o YouTube), entao ainda nao morde.
+  Regra que MUDA numa tabela que existe (CHECK, nulo) chega pelo `db_acerto`,
+  que refaz a tabela no boot -- ver a secao dele, logo abaixo.
+- **A trava do post atrasado existe desde a 7.3a** (era o defeito conhecido do
+  agendador): o laco publicava TUDO o que venceu, um atras do outro. Ver
+  "A 7.3a no motor", abaixo.
 - **O estilo do video de IA e configurado por quem usa**, nunca deduzido do
   nicho ("nao coloca estilo 3D no infantil automaticamente").
 
@@ -2475,6 +2474,88 @@ do codigo que ela mudou.
   anterior a Fase 7 nasceu sem. Esta no `test_todo_endpoint_de_job_recusa_o_vizinho`.
 - `tests/test_canais.py` inclui o banco ANTIGO: derruba as tres tabelas, roda o
   boot e confere que elas voltam sem levar as contas que ja existiam.
+
+**O banco que ja existe recebe as regras novas** (`db_acerto.py`, 7.3a):
+
+- **O `create_all` nunca muda tabela que existe**, e quatro migracoes ja
+  tinham ficado so no modelo antes disto: `users` com senha (o seed consulta
+  `users.password_hash` no boot -- num banco anterior a Fase 4 o seed inteiro
+  morria, e com ele templates, auth e fila), `clips` sem faixa de palavras,
+  `jobs.status` `cancelled`, `accounts.driver_pref` `auto` e `sources.adapter`
+  `direct`. A proxima seria o driver do TikTok no CHECK de `publications`.
+- **O conserto e o procedimento do proprio SQLite** ("Making Other Kinds Of
+  Table Schema Changes", os doze passos): com as FKs desligadas, cria a tabela
+  com a regra nova, copia as linhas, apaga a velha, renomeia, recria os indices
+  e confere as chaves. **Uma transacao so**, e qualquer erro desfaz tudo.
+- **Detecta pelo que importa**: coluna que falta, coluna que passou a aceitar
+  nulo e CHECK com outro conteudo, comparado SEM espaco (a migracao e o
+  `create_all` escrevem a mesma regra com espacos diferentes). **Nunca aperta**:
+  coluna que deixou de aceitar nulo nao dispara nada. Indice que falta e criado
+  sem refazer a tabela.
+- **Copia de seguranca antes** (`cortes.db.antes-do-acerto-<quando>`, ao lado
+  do banco), so quando ha o que refazer. **Falha fechado na tabela, aberto no
+  boot**: o motor sobe mesmo se o acerto for desfeito, e o log diz a tabela.
+- **`sqlite3` da stdlib, nao o engine async**: o `PRAGMA foreign_keys` so muda
+  FORA de transacao, e o driver por baixo do SQLAlchemy abre uma sozinho. E o
+  `DROP TABLE` de uma tabela-mae com as FKs ligadas apagaria as filhas pelo
+  CASCADE.
+- **Roda ANTES de semear** (`db_seed.acertar_tabelas_antigas`), e so no
+  SQLite; Postgres e o caminho do `alembic upgrade`.
+- `tests/test_db_acerto.py` constroi o banco do autor pela migracao mais antiga
+  do Alembic, com uma linha em cada tabela, e confere que o schema acertado e
+  IDENTICO ao de um `create_all` novo, sem perder linha e com as FKs valendo.
+
+**A 7.3a no motor** (cota, trava, link e galhos):
+
+- **Cota do YouTube: 100 envios por dia, numa cota so do envio**
+  (`publishers/quota.py`); as 10.000 unidades ficaram para as outras chamadas
+  (o `videos.list` do coletor). Conferido na documentacao do Google em 25 e
+  26-set-2026: o envio caiu de 1.600 para ~100 unidades em dez-2025 e ganhou
+  cota propria em 1-jun-2026. `YOUTUBE_UPLOADS_DAILY` e `YOUTUBE_QUOTA_DAILY`
+  sobrescrevem; um teste congela o 100. A cota e do PROJETO no Google Cloud:
+  os canais ligados pelo mesmo cadastro dividem as 100.
+- **A agenda e por conta** (`scheduler.proximos_horarios(..., ocupados=)`): um
+  horario novo respeita os posts recentes e os agendados da conta, e o teto do
+  dia conta o que ela ja tem. Janela tomada fica para a proxima -- **nunca
+  empurrada para colar no ocupado**, que daria posts a exatamente 3 h um do
+  outro, dia apos dia: o relogio regular que o jitter existe para apagar.
+- **A trava do post atrasado** (`scheduler.triar_vencidas`, pedido do autor:
+  "posta quando o PC voltar, com trava: nunca varios de uma vez"): por conta,
+  sai no maximo a vencida mais antiga -- se o espacamento desde o ultimo post
+  de verdade e o teto do dia deixarem -- e as outras ganham horarios novos pelas
+  mesmas regras, com jitter. No dia normal nada muda: cada janela vence
+  sozinha. `app._uma_volta_do_agendador` e a volta do laco, separada para o
+  teste; `reservar(pub_id, agora)` so pega o que venceu, porque a triagem da
+  outra instancia pode ter acabado de adiar a linha.
+- **Havia um laco escondido**: a linha agendada que o driver `manual` entregava
+  voltava a `scheduled` COM a hora antiga, e o laco a entregava de novo a cada
+  minuto, para sempre. `_fechar` agora zera `scheduled_at` nessa entrega --
+  nulo e o que diz "esperando uma pessoa".
+- **`publication_posts`: quando e onde a publicacao foi ao ar.** Tabela nova
+  (a regra de sempre), gravada pelo driver de API no fim do envio ou pelo "ja
+  publiquei". E dela que a trava le o ultimo post; a hora marcada nao serve.
+- **O "ja publiquei" pede o link** (`links_de_post.py`): le o id do video dos
+  links como os apps os copiam (`?si=`, `?igsh=`, `m.`, sem `https://`),
+  recusa link de outra plataforma (medir o video errado seria pior que nao
+  medir) e segue o link curto do app do TikTok (`vm.tiktok.com`), que nao
+  carrega o id -- um redirecionamento so, e sem rede o link fica guardado.
+  Repetir corrige o link sem mudar a hora do post. O corpo e opcional: o
+  painel de antes chama sem ele.
+- **O coletor de metricas mede pela PLATAFORMA, nao pelo driver**: o video do
+  YouTube postado a mao, com o link registrado, e um video do canal como
+  qualquer outro. TikTok e Instagram esperam a 7.4.
+- **Os galhos do canal**: `/api/publicar` e `/api/agendar` aceitam
+  `channel_id` no lugar de `account_id` (um dos dois, nunca os dois). Cada
+  conta do canal ganha a sua publicacao, com o texto da plataforma dela e, ao
+  agendar, horario proprio (o jitter e sorteado de novo por conta). Um galho
+  que ja existe nao derruba os outros.
+- **As horas saem com fuso** (`publish_queue._utc`): o SQLite devolve datetime
+  sem fuso, e o navegador le "2026-09-26T14:00:00" como hora LOCAL. A agenda
+  aparecia com a diferenca do fuso (3 h no Brasil) ate aqui.
+- No painel: a fila agrupa os galhos por corte (`FilaDePublicacoes.jsx`, regras
+  puras em `lib/publicacoes.js`, testadas no `node`), o "ja publiquei" abre o
+  campo do link, o destino do "publicar" pode ser o canal inteiro, e a tela do
+  projeto tem o botao "publicar" com o canal dele ja escolhido.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

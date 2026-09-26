@@ -402,6 +402,47 @@ class Publication(Base, TenantScoped):
     )
 
 
+class PublicationPost(Base, TenantScoped):
+    """Quando e onde uma publicacao foi ao ar (Fase 7, etapa 7.3).
+
+    Uma linha por publicacao que virou post de verdade: gravada pelo driver de
+    API no fim do envio, ou pela pessoa no "ja publiquei" -- com o link que ela
+    colou, que e o que deixa o post feito a mao ser medido. Publicacao na fila
+    manual, esperando alguem, nao tem linha aqui.
+
+    `posted_at` e o que a trava do agendador le: o espacamento minimo conta a
+    partir do ultimo post de verdade da conta, e nao da hora que estava marcada.
+
+    **Tabela nova, e nao colunas em `publications`**, pela regra da Fase 7: o
+    `create_all` do boot nao acrescenta coluna a tabela que ja existe. O
+    `db_acerto` refaria a tabela, mas refazer a tabela de publicacoes do autor
+    no boot para guardar um fato que so existe para parte das linhas e trocar o
+    simples pelo arriscado.
+    """
+    __tablename__ = "publication_posts"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    publication_id: Mapped[str] = mapped_column(ID, nullable=False)
+    posted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    # O link do post na plataforma. Nulo quando a plataforma nao devolveu (um
+    # post privado do TikTok nao tem endereco publico).
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_publication_posts_tenant"),
+        ForeignKeyConstraint(["tenant_id", "publication_id"],
+                             ["publications.tenant_id", "publications.id"],
+                             ondelete="CASCADE", name="fk_publication_posts_publication"),
+        # Uma publicacao vai ao ar uma vez; o "ja publiquei" repetido corrige o
+        # link, nao cria um segundo post.
+        UniqueConstraint("tenant_id", "publication_id",
+                         name="uq_publication_posts_tenant_publication"),
+        Index("ix_publication_posts_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 9. metrics -- "parece superflua agora e e a tabela mais valiosa do projeto"
 # --------------------------------------------------------------------------- #
@@ -536,5 +577,6 @@ class ChannelJob(Base, TenantScoped):
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
     "users", "accounts", "templates", "sources", "jobs", "clips",
-    "publications", "metrics", "channels", "channel_accounts", "channel_jobs",
+    "publications", "publication_posts", "metrics", "channels",
+    "channel_accounts", "channel_jobs",
 )

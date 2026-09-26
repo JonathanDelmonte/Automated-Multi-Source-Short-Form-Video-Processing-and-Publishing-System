@@ -1,10 +1,11 @@
-"""Driver `youtube-api` -- o canal proprio, de graca, 6 por dia. Bloco 3.4.
+"""Driver `youtube-api` -- o canal proprio, de graca, 100 por dia. Bloco 3.4.
 
 O unico driver da secao 6 que publica sozinho sem custo e sem risco de conta: e
-a API oficial, com o token do dono do canal. O limite nao e dinheiro, e quota
--- 1600 unidades por `videos.insert` contra 10.000/dia. O contador esta em
-`publishers/quota.py` e o motivo de ele existir e que o 7o upload do dia deve
-**cair na fila manual**, nao virar um job vermelho.
+a API oficial, com o token do dono do canal. O limite nao e dinheiro, e quota:
+desde jun-2026 o `videos.insert` tem cota propria, de 100 chamadas por dia por
+projeto no Google Cloud (ate ali, 1.600 das 10.000 unidades: 6 por dia). O
+contador esta em `publishers/quota.py` e o motivo de ele existir e que o envio
+que nao cabe **caia na fila manual**, nao vire um job vermelho.
 
 **HTTP direto, sem `google-api-python-client`.** Sao tres requisicoes (renovar o
 token, abrir a sessao de upload, mandar o arquivo) e o cliente oficial traz
@@ -82,7 +83,7 @@ def corpo_do_video(meta: PostMeta, opts: PublishOptions) -> dict:
     """O JSON de `videos.insert`. Funcao pura -- e onde moram as regras.
 
     O titulo perde `<` e `>` porque a API recusa os dois, e a recusa vem depois
-    do upload do arquivo: 1600 unidades de quota gastas para descobrir que um
+    do upload do arquivo: um envio da cota do dia gasto para descobrir que um
     hook trazia uma seta.
     """
     titulo = (meta.title or "").replace("<", "").replace(">", "").strip()
@@ -241,8 +242,8 @@ class YouTubeApiPublisher(Publisher):
         return "public"
 
     def cost(self, n: int) -> Cost:
-        return Cost(risk_score=0.0, usd=0.0,
-                    quota_units=max(0, int(n)) * quota.CUSTO_INSERT)
+        # Na cota do envio a unidade e a chamada: `n` cortes gastam `n` das 100.
+        return Cost(risk_score=0.0, usd=0.0, quota_units=max(0, int(n)))
 
     def publish(self, clip: RenderedClip, meta: PostMeta,
                 opts: PublishOptions, account: Account) -> PublishResult:
@@ -251,10 +252,9 @@ class YouTubeApiPublisher(Publisher):
                                  detail=f"O arquivo do corte nao existe: {clip.path}")
         if not quota.cabe():
             raise QuotaEsgotada(
-                f"a quota do YouTube de hoje acabou ({quota.usadas()}/"
-                f"{quota.teto_diario()} unidades, {quota.uploads_por_dia()} "
-                "uploads/dia). O corte fica na fila manual ate a meia-noite no "
-                "Pacifico.")
+                f"a cota de envios do YouTube de hoje acabou ({quota.uploads_hoje()}"
+                f" de {quota.uploads_por_dia()}). O corte fica na fila manual ate "
+                "a meia-noite no Pacifico.")
 
         corpo = corpo_do_video(meta, opts)
         pedida = corpo["status"]["privacyStatus"]
@@ -264,10 +264,10 @@ class YouTubeApiPublisher(Publisher):
 
         segredo = self._segredo(account)
         # Debita ANTES de chamar: o YouTube cobra a quota quando aceita a
-        # requisicao, e um upload que morre no meio ja gastou as 1600. Contar
+        # requisicao, e um upload que morre no meio ja gastou o envio. Contar
         # so no sucesso deixaria o contador abaixo da verdade justamente no dia
         # ruim, que e quando ele precisa estar certo.
-        quota.registrar()
+        quota.registrar_upload()
 
         token = _token_de_acesso(segredo)
         destino = _abrir_sessao(token, corpo, os.path.getsize(clip.path))
@@ -287,4 +287,4 @@ class YouTubeApiPublisher(Publisher):
             ok=True, driver=self.id, status="published",
             remote_id=video_id or None,
             url=(URL_ASSISTIR + video_id) if video_id else None,
-            detail=f"{detalhe} · restam {quota.restante()} unidades de quota hoje")
+            detail=f"{detalhe} · restam {quota.uploads_restantes()} envio(s) hoje")

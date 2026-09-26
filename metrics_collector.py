@@ -59,9 +59,10 @@ ESCOPOS_DE_LEITURA = (
     "https://www.googleapis.com/auth/yt-analytics.readonly",
 )
 
-#: Custo publicado de um `videos.list`. Uma unidade -- ruido perto das 1600 de
-#: um upload, mas sai do MESMO teto de 10.000/dia, entao e debitado. Um contador
-#: que ignora o que e barato deixa de ser o contador.
+#: Custo publicado de um `videos.list`. Uma unidade das 10.000 do dia -- que,
+#: desde jun-2026, sao so das chamadas que NAO sao envio (o envio tem cota
+#: propria). Barato, mas debitado: um contador que ignora o que e barato deixa
+#: de ser o contador.
 CUSTO_LIST = 1
 
 #: O endereco da credencial de leitura. Namespace proprio de proposito: e outro
@@ -170,7 +171,7 @@ def _token_de_leitura(segredo: dict) -> str:
 def _buscar_views(token: str, video_id: str) -> Optional[int]:
     import httpx
 
-    quota.registrar(custo=CUSTO_LIST, upload=False)
+    quota.registrar_unidades(CUSTO_LIST)
     resposta = httpx.get(URL_VIDEOS, timeout=30.0,
                          headers={"Authorization": f"Bearer {token}"},
                          params={"part": "statistics", "id": video_id})

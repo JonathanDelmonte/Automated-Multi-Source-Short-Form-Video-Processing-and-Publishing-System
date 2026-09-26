@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Trash2, Loader2, Plus, CheckCircle2,
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Download, Trash2, Loader2, Plus,
          AlertTriangle, Send, Clock } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { getApiUrl } from '../config';
 import IconePlataforma from './ui/IconePlataforma';
 import AvatarDoCanal from './ui/AvatarDoCanal';
+import FilaDePublicacoes from './FilaDePublicacoes';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
+import { corpoDoDestino } from '../lib/publicacoes';
 import { hrefDe } from '../lib/rota';
 
 // A publicação (Fase 3, bloco 3.5), em partes desde a 7.1: o pacote do dia, o
@@ -18,17 +20,6 @@ import { hrefDe } from '../lib/rota';
 // **pacote do dia** primeiro, porque o driver `manual` é o default e o que
 // entrega valor hoje.
 
-const ESTADO = {
-  // `scheduled` cobre duas esperas: a fila manual (sem data, esperando uma
-  // pessoa) e a agendada (com data, esperando a hora). A data distingue as
-  // duas na linha, e é por isso que ela aparece ao lado do estado.
-  scheduled: { texto: 'na fila', cor: 'text-brass' },
-  publishing: { texto: 'subindo', cor: 'text-brass' },
-  published: { texto: 'publicado', cor: 'text-ok' },
-  failed: { texto: 'falhou', cor: 'text-danger' },
-  cancelled: { texto: 'cancelado', cor: 'text-muted' },
-};
-
 export default function PublicacoesTab({
   secoes = ['pacote', 'publicar', 'fila'],
   canal = null,
@@ -36,6 +27,10 @@ export default function PublicacoesTab({
   status = null,
   tituloDaFila = 'fila',
   vazioDaFila = 'Nada publicado ainda.',
+  // Na tela de um projeto: o projeto já está escolhido, e o destino começa no
+  // canal dele.
+  projeto = null,
+  canalDoProjeto = null,
 }) {
   const { canais } = usePainel();
   const mostra = (secao) => secoes.includes(secao);
@@ -47,10 +42,14 @@ export default function PublicacoesTab({
   const [ocupado, setOcupado] = useState(false);
   const [nova, setNova] = useState({ platform: 'youtube', handle: '' });
   const [projetos, setProjetos] = useState([]);
-  const [envio, setEnvio] = useState({ job_id: '', account_id: '' });
+  const [envio, setEnvio] = useState({
+    job_id: projeto || '',
+    destino: canal ? `canal:${canal}` : (canalDoProjeto ? `canal:${canalDoProjeto}` : ''),
+  });
   const [ultimoEnvio, setUltimoEnvio] = useState(null);
   const [confirmando, setConfirmando] = useState(null);
   const [agenda, setAgenda] = useState(null);
+  const destinoAtual = useRef('');
 
   const carregar = useCallback(async () => {
     try {
@@ -114,37 +113,25 @@ export default function PublicacoesTab({
     window.location.href = getApiUrl(`/api/publicacoes/pacote?dia=${encodeURIComponent(dia)}`);
   };
 
-  const publicar = () => acao(async () => {
-    const res = await apiFetch('/api/publicar', {
+  const enviar = (rota, falha) => acao(async () => {
+    const corpo = corpoDoDestino(envio.job_id, destinoAtual.current);
+    if (!corpo) return;
+    const res = await apiFetch(rota, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: envio.job_id, account_id: envio.account_id }),
+      body: JSON.stringify(corpo),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setErro(data.detail || 'Não deu para publicar.');
+      setErro(data.detail || falha);
       setUltimoEnvio(null);
       return;
     }
     setErro(null);
     setUltimoEnvio(data.resultados || []);
   });
-
-  const agendar = () => acao(async () => {
-    const res = await apiFetch('/api/agendar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: envio.job_id, account_id: envio.account_id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setErro(data.detail || 'Não deu para agendar.');
-      setUltimoEnvio(null);
-      return;
-    }
-    setErro(null);
-    setUltimoEnvio(data.resultados || []);
-  });
+  const publicar = () => enviar('/api/publicar', 'Não deu para publicar.');
+  const agendar = () => enviar('/api/agendar', 'Não deu para agendar.');
 
   const maisRecente = dias[0];
   // Na página de um canal, só o que é dele: as contas dele como destino, e a
@@ -155,11 +142,28 @@ export default function PublicacoesTab({
   const filaVisivel = fila.filter((p) =>
     (!contasDoCanal || contasDoCanal.includes(p.account?.id))
     && (!status || p.status === status));
-  // A publicação precisa dos dois: um projeto com cortes e uma conta de
-  // destino. O driver NÃO entra aqui de propósito — quem escolhe é o
-  // resolvedor do backend, e um seletor de driver na tela seria a porta que o
-  // ADR-010 fecha, reaberta por fora.
-  const podePublicar = envio.job_id && envio.account_id && !ocupado;
+  // Os canais que servem de destino: os que têm conta ligada. Na página de um
+  // canal, só ele.
+  const contasPorCanal = {};
+  for (const c of contas || []) {
+    if (c.channel_id) (contasPorCanal[c.channel_id] ||= []).push(c);
+  }
+  const canaisDestino = (canais.canais || []).filter((c) =>
+    contasPorCanal[c.id]?.length && (!canal || c.id === canal));
+  // A publicação precisa dos dois: um projeto com cortes e um destino. O
+  // driver NÃO entra aqui de propósito — quem escolhe é o resolvedor do
+  // backend, e um seletor de driver na tela seria a porta que o ADR-010 fecha,
+  // reaberta por fora.
+  // O destino que veio pronto (o canal do projeto, o canal da página) só vale
+  // se ainda for um destino possível: um canal sem conta ligada não é.
+  const destinos = new Set([
+    ...canaisDestino.map((c) => `canal:${c.id}`),
+    ...contasDestino.map((c) => `conta:${c.id}`),
+  ]);
+  const destino = destinos.has(envio.destino) ? envio.destino : '';
+  destinoAtual.current = destino;
+  const podePublicar = corpoDoDestino(envio.job_id, destino) && !ocupado;
+  const destinoEhCanal = destino.startsWith('canal:');
 
   return (
       <div className="space-y-6">
@@ -311,39 +315,54 @@ export default function PublicacoesTab({
         {mostra('publicar') && (
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">publicar</h3>
-          {projetos.length === 0 || contasDestino.length === 0 ? (
+          {(projeto ? false : projetos.length === 0) || (canaisDestino.length === 0 && contasDestino.length === 0) ? (
             <p className="text-muted text-[13px]">
-              {projetos.length === 0
+              {!projeto && projetos.length === 0
                 ? 'Nenhum projeto com cortes ainda.'
                 : 'Ligue uma conta a um canal (ou cadastre uma nas Configurações) para escolher um destino.'}
             </p>
           ) : (
             <>
               <div className="flex flex-wrap gap-2">
+                {!projeto && (
+                  <select
+                    className="input-field text-sm py-1.5 flex-1 min-w-[12rem]"
+                    value={envio.job_id}
+                    onChange={(e) => setEnvio({ ...envio, job_id: e.target.value })}
+                    aria-label="projeto"
+                  >
+                    <option value="">escolha um projeto…</option>
+                    {projetos.map((j) => (
+                      <option key={j.job_id} value={j.job_id}>
+                        {j.title || j.job_id.slice(0, 8)} · {j.clip_count} corte
+                        {j.clip_count === 1 ? '' : 's'}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select
-                  className="input-field text-sm py-1.5 flex-1 min-w-[12rem]"
-                  value={envio.job_id}
-                  onChange={(e) => setEnvio({ ...envio, job_id: e.target.value })}
+                  className="input-field text-sm py-1.5 flex-1 min-w-[12rem] sm:flex-none sm:w-auto"
+                  value={destino}
+                  onChange={(e) => setEnvio({ ...envio, destino: e.target.value })}
+                  aria-label="destino"
                 >
-                  <option value="">escolha um projeto…</option>
-                  {projetos.map((j) => (
-                    <option key={j.job_id} value={j.job_id}>
-                      {j.title || j.job_id.slice(0, 8)} · {j.clip_count} corte
-                      {j.clip_count === 1 ? '' : 's'}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="input-field text-sm py-1.5 w-auto"
-                  value={envio.account_id}
-                  onChange={(e) => setEnvio({ ...envio, account_id: e.target.value })}
-                >
-                  <option value="">conta…</option>
-                  {contasDestino.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {PLATAFORMAS[c.platform]?.nome || c.platform} · {c.handle}
-                    </option>
-                  ))}
+                  <option value="">para onde…</option>
+                  {canaisDestino.length > 0 && (
+                    <optgroup label="o canal inteiro (um galho por conta)">
+                      {canaisDestino.map((c) => (
+                        <option key={c.id} value={`canal:${c.id}`}>
+                          {c.name} · {contasPorCanal[c.id].map((x) => PLATAFORMAS[x.platform]?.nome || x.platform).join(', ')}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="uma conta só">
+                    {contasDestino.map((c) => (
+                      <option key={c.id} value={`conta:${c.id}`}>
+                        {PLATAFORMAS[c.platform]?.nome || c.platform} · {c.handle}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
                 <button className="btn-primary text-sm inline-flex items-center gap-1.5"
                         disabled={!podePublicar} onClick={publicar}>
@@ -358,9 +377,11 @@ export default function PublicacoesTab({
                 </button>
               </div>
               <p className="text-muted text-[12px] leading-snug">
-                O destino é a conta; o driver é consequência. Com credencial e
-                quota, o corte sobe sozinho; sem, ele entra na fila manual com a
-                legenda pronta.
+                {destinoEhCanal
+                  ? 'No canal, cada corte vira um galho por conta: o texto da plataforma de cada uma, e horário próprio ao agendar.'
+                  : 'O destino é a conta; o driver é consequência.'}{' '}
+                Com a conta conectada, o corte sobe sozinho; sem, ele entra na fila manual com a
+                legenda pronta, e você marca “já publiquei” com o link do post.
               </p>
               {agenda && (
                 // O horário aparece ANTES de agendar. Descobrir a que horas o
@@ -368,19 +389,26 @@ export default function PublicacoesTab({
                 <p className="text-muted text-[12px] leading-snug">
                   <strong className="text-ink2">agendar</strong> espalha os
                   cortes em {agenda.janelas.map((h) => `${h}h`).join(', ')}, no
-                  máximo {agenda.por_dia} por dia, com ±{agenda.jitter_min} min
+                  máximo {agenda.por_dia} por dia em cada conta, com ±{agenda.jitter_min} min
                   de variação — horário exato todo dia é um dos sinais que a
-                  detecção de automação cruza.
+                  detecção de automação cruza. Se o computador estiver desligado na
+                  hora, os atrasados saem um de cada vez quando ele voltar.
                 </p>
               )}
             </>
           )}
           {ultimoEnvio && (
             <ul className="text-[13px] space-y-1 pt-1">
-              {ultimoEnvio.map((r) => (
-                <li key={r.clip_index}
-                    className={r.ok ? 'text-muted' : 'text-danger'}>
-                  corte {r.clip_index + 1}: {r.detail || (r.ok ? 'ok' : 'falhou')}
+              {ultimoEnvio.map((r, i) => (
+                <li key={`${r.clip_index}-${r.account_id || i}`}
+                    className={`flex items-center gap-1.5 ${r.ok ? 'text-muted' : 'text-danger'}`}>
+                  {r.platform && <IconePlataforma platform={r.platform} size={13} />}
+                  <span>
+                    corte {r.clip_index + 1}{r.handle ? ` · ${r.handle}` : ''}:{' '}
+                    {r.scheduled_at && r.ok
+                      ? `agendado para ${new Date(r.scheduled_at).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+                      : (r.detail || (r.ok ? 'ok' : 'falhou'))}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -393,58 +421,12 @@ export default function PublicacoesTab({
         {mostra('fila') && (
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">{tituloDaFila}</h3>
-          {filaVisivel.length === 0 ? (
-            <p className="text-muted text-[13px]">{vazioDaFila}</p>
-          ) : (
-            <ul className="space-y-2">
-              {filaVisivel.map((p) => {
-                const estado = ESTADO[p.status] || { texto: p.status, cor: 'text-muted' };
-                return (
-                  <li key={p.id}
-                      className="flex items-center gap-3 text-sm border-t border-rule pt-2 first:border-0 first:pt-0">
-                    <span className="text-ink truncate flex-1">
-                      {p.clip.title || `corte ${(p.clip.index ?? 0) + 1}`}
-                    </span>
-                    <span className="text-muted text-xs hidden sm:inline-flex items-center gap-1.5">
-                      <IconePlataforma platform={p.account.platform} size={14} />
-                      {p.account.handle}
-                    </span>
-                    <span className={`text-xs ${estado.cor}`}>
-                      {estado.texto}
-                      {p.scheduled_at && p.status === 'scheduled' && (
-                        <> · {new Date(p.scheduled_at).toLocaleString(undefined,
-                          { day: '2-digit', month: 'short', hour: '2-digit',
-                            minute: '2-digit' })}</>
-                      )}
-                    </span>
-                    {p.status === 'scheduled' && (
-                      <button
-                        className="text-muted hover:text-ok shrink-0"
-                        disabled={ocupado}
-                        title="já publiquei"
-                        onClick={() => acao(() =>
-                          apiFetch(`/api/publicacoes/${p.id}/publicado`,
-                                   { method: 'POST' }))}
-                      >
-                        <CheckCircle2 size={15} />
-                      </button>
-                    )}
-                    {p.status !== 'published' && (
-                      <button
-                        className="text-muted hover:text-danger shrink-0"
-                        disabled={ocupado}
-                        title="tirar da fila"
-                        onClick={() => acao(() =>
-                          apiFetch(`/api/publicacoes/${p.id}`, { method: 'DELETE' }))}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <FilaDePublicacoes
+            publicacoes={filaVisivel}
+            ocupado={ocupado}
+            aoMudar={carregar}
+            vazio={vazioDaFila}
+          />
         </section>
         )}
       </div>

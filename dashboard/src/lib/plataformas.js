@@ -3,10 +3,13 @@
 // canal nessa ordem. YouTube e TikTok são as principais; o Instagram entra
 // junto, "menos trabalhado", e é o que a frota de aparelhos mais vai usar
 // (decisão do autor, 26-set-2026).
+//
+// `exemploDeLink` é o formato que o botão "copiar link" de cada app dá -- é o
+// que aparece no campo do "já publiquei" (etapa 7.3).
 export const PLATAFORMAS = {
-  youtube: { nome: 'YouTube', cor: '#ff0033' },
-  tiktok: { nome: 'TikTok', cor: '#fe2c55' },
-  instagram: { nome: 'Instagram', cor: '#d62976' },
+  youtube: { nome: 'YouTube', cor: '#ff0033', exemploDeLink: 'https://youtube.com/shorts/…' },
+  tiktok: { nome: 'TikTok', cor: '#fe2c55', exemploDeLink: 'https://vm.tiktok.com/…' },
+  instagram: { nome: 'Instagram', cor: '#d62976', exemploDeLink: 'https://www.instagram.com/reel/…' },
 };
 
 export const ORDEM_DAS_PLATAFORMAS = ['youtube', 'tiktok', 'instagram'];

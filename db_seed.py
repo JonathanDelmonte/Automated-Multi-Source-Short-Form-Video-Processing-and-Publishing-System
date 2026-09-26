@@ -17,6 +17,7 @@ import asyncio
 import sys
 
 import db
+import db_acerto
 import template
 from db_models import Template, Tenant, User
 
@@ -41,6 +42,9 @@ async def seed(*, with_ddl: bool = True) -> dict:
     """Garante tenant, usuario dono e template v1. Devolve o que encontrou/criou."""
     if with_ddl:
         await db.create_all()
+        # ANTES de semear: o seed consulta `users.password_hash`, que um banco
+        # anterior a Fase 4 nao tem. Ver `db_acerto`.
+        await acertar_tabelas_antigas()
 
     criado = {"tenant": False, "user": False, "template": False}
     async with db.tenant() as t:
@@ -62,6 +66,22 @@ async def seed(*, with_ddl: bool = True) -> dict:
 
         await t.commit()
     return criado
+
+
+async def acertar_tabelas_antigas() -> dict:
+    """Leva as tabelas de um SQLite que ja existia as regras do modelo.
+
+    O `create_all` so cria o que falta; o `db_acerto` refaz o que ficou para
+    tras. Numa thread, porque e `sqlite3` sincrono e roda no boot da API.
+    """
+    caminho = db_acerto.caminho_do_banco(db.database_url())
+    if not caminho:
+        return {}
+    feito = await asyncio.to_thread(db_acerto.acertar, caminho)
+    if feito.get("reconstruidas") or feito.get("indices"):
+        # As conexoes do pool conheceram o schema de antes.
+        await db.engine().dispose()
+    return feito
 
 
 def main(argv: list[str]) -> int:

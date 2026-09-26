@@ -24,11 +24,19 @@ corte nao publicado. Aqui, ao contrario do `job_registry`, o erro sobe.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Iterable, Optional
 
 import db
 import db_models
 import publishers
+
+
+def _utc(quando: Optional[datetime]) -> Optional[datetime]:
+    """O SQLite devolve datetime sem fuso; tudo o que vai para o banco e UTC."""
+    if quando is None:
+        return None
+    return quando if quando.tzinfo else quando.replace(tzinfo=timezone.utc)
 
 
 class FilaError(RuntimeError):
@@ -200,7 +208,7 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
         raise FilaError(f"{type(e).__name__}: {e}")
 
     await _fechar(pub_id, status=resultado.status,
-                  remote_id=resultado.remote_id)
+                  remote_id=resultado.remote_id, url=resultado.url)
     return {
         "id": pub_id,
         "driver": driver.id,
@@ -263,18 +271,64 @@ async def devidas(agora) -> list:
             .where(db_models.Publication.scheduled_at <= agora)
             .order_by(db_models.Publication.scheduled_at))
         return [{"id": p.id, "tenant_id": p.tenant_id, "clip_id": p.clip_id,
-                 "account_id": p.account_id, "driver": p.driver}
+                 "account_id": p.account_id, "driver": p.driver,
+                 "scheduled_at": _utc(p.scheduled_at)}
                 for p in achadas.scalars().all()]
 
 
-async def reservar(pub_id: str) -> bool:
-    """Marca a publicacao como `publishing` **so se ainda estava `scheduled`**.
+#: Quanto para tras os posts de uma conta contam para a agenda. O espacamento
+#: e de horas e o teto e do dia local, entao dois dias cobrem os dois.
+JANELA_DOS_POSTS_RECENTES = timedelta(hours=48)
 
-    E um UPDATE condicional, e nao um leia-e-escreva, porque durante um deploy
-    ha DUAS instancias com o mesmo banco e o mesmo laco. Quem conseguir mudar a
-    linha publica; a outra recebe zero linhas afetadas e segue. Sem isto o mesmo
-    corte subiria duas vezes -- e a unicidade `(corte, conta)` nao pega esse
-    caso, porque a linha e a mesma.
+
+async def ocupados_das_contas(conta_ids: Iterable[str], agora: datetime,
+                              tenant_id: Optional[str] = None) -> dict:
+    """`{conta: [horarios]}`: o que cada conta ja tem, para a agenda respeitar.
+
+    Tres coisas contam: o post de verdade dos ultimos dois dias
+    (`publication_posts`), o que esta subindo agora (`publishing`, contado como
+    agora) e o agendado que ainda nao venceu. O vencido nao entra: e ele que
+    esta sendo decidido.
+
+    **Sessao crua, e por isso o filtro e explicito**: o laco do agendador e do
+    servidor e atravessa os tenants, como `devidas()`; quem chama de uma
+    requisicao passa o `tenant_id` dela.
+    """
+    from sqlalchemy import and_, or_, select as _select
+    ids = [c for c in dict.fromkeys(conta_ids) if c]
+    if not ids:
+        return {}
+    agora = _utc(agora)
+    P, Post = db_models.Publication, db_models.PublicationPost
+    abertas = (_select(P.account_id, P.status, P.scheduled_at)
+               .where(P.account_id.in_(ids))
+               .where(or_(P.status == "publishing",
+                          and_(P.status == "scheduled",
+                               P.scheduled_at.is_not(None),
+                               P.scheduled_at > agora))))
+    postadas = (_select(P.account_id, Post.posted_at)
+                .join(Post, and_(Post.publication_id == P.id,
+                                 Post.tenant_id == P.tenant_id))
+                .where(P.account_id.in_(ids))
+                .where(Post.posted_at >= agora - JANELA_DOS_POSTS_RECENTES))
+    if tenant_id:
+        abertas = abertas.where(P.tenant_id == tenant_id)
+        postadas = postadas.where(P.tenant_id == tenant_id)
+    ocupados: dict = {}
+    async with db.session() as s:
+        for conta, status, marcada in (await s.execute(abertas)).all():
+            quando = agora if status == "publishing" else _utc(marcada)
+            ocupados.setdefault(conta, []).append(quando)
+        for conta, postada in (await s.execute(postadas)).all():
+            ocupados.setdefault(conta, []).append(_utc(postada))
+    return ocupados
+
+
+async def reagendar(pub_id: str, quando: datetime) -> bool:
+    """Muda a hora de uma publicacao que ainda espera.
+
+    UPDATE condicional, como `reservar()`: se a outra instancia ja pegou a
+    linha para publicar, a hora nova nao a desfaz.
     """
     from sqlalchemy import update as _update
     async with db.session() as s:
@@ -282,7 +336,31 @@ async def reservar(pub_id: str) -> bool:
             _update(db_models.Publication)
             .where(db_models.Publication.id == pub_id)
             .where(db_models.Publication.status == "scheduled")
-            .values(status="publishing"))
+            .values(scheduled_at=_utc(quando).astimezone(timezone.utc)))
+        await s.commit()
+        return (r.rowcount or 0) > 0
+
+
+async def reservar(pub_id: str, agora: Optional[datetime] = None) -> bool:
+    """Marca a publicacao como `publishing` **so se ainda estava `scheduled`**.
+
+    E um UPDATE condicional, e nao um leia-e-escreva, porque durante um deploy
+    ha DUAS instancias com o mesmo banco e o mesmo laco. Quem conseguir mudar a
+    linha publica; a outra recebe zero linhas afetadas e segue. Sem isto o mesmo
+    corte subiria duas vezes -- e a unicidade `(corte, conta)` nao pega esse
+    caso, porque a linha e a mesma.
+
+    Com `agora`, so reserva o que de fato venceu: se a triagem da outra
+    instancia acabou de reespalhar a linha para amanha, ela nao sai hoje.
+    """
+    from sqlalchemy import update as _update
+    consulta = (_update(db_models.Publication)
+                .where(db_models.Publication.id == pub_id)
+                .where(db_models.Publication.status == "scheduled"))
+    if agora is not None:
+        consulta = consulta.where(db_models.Publication.scheduled_at <= _utc(agora))
+    async with db.session() as s:
+        r = await s.execute(consulta.values(status="publishing"))
         await s.commit()
         return (r.rowcount or 0) > 0
 
@@ -313,13 +391,29 @@ async def publicar_reservada(pub_id: str, clip_row, account_row,
         await _fechar(pub_id, status="failed")
         raise FilaError(f"{type(e).__name__}: {e}")
     await _fechar(pub_id, status=resultado.status,
-                  remote_id=resultado.remote_id)
+                  remote_id=resultado.remote_id, url=resultado.url)
     return {"id": pub_id, "driver": driver.id, "status": resultado.status,
             "ok": resultado.ok, "url": resultado.url, "detail": resultado.detail}
 
 
+async def _registrar_post(t, pub_id: str, url: Optional[str] = None) -> None:
+    """Grava que a publicacao foi ao ar, agora, com o link se houver.
+
+    Uma linha por publicacao: um segundo "ja publiquei" corrige o link, nao
+    cria outro post -- e nao muda a hora, que e o que a trava do agendador le.
+    """
+    existentes = await t.all(db_models.PublicationPost,
+                             db_models.PublicationPost.publication_id == pub_id)
+    if existentes:
+        if url:
+            existentes[0].url = url
+        return
+    t.add(db_models.PublicationPost(publication_id=pub_id, url=url or None))
+
+
 async def _fechar(pub_id: str, status: str,
-                  remote_id: Optional[str] = None) -> None:
+                  remote_id: Optional[str] = None,
+                  url: Optional[str] = None) -> None:
     async with db.tenant() as t:
         linha = await t.get(db_models.Publication, pub_id)
         if linha is None:
@@ -327,15 +421,29 @@ async def _fechar(pub_id: str, status: str,
         linha.status = status if status in db_models.PUB_STATUSES else "failed"
         if remote_id:
             linha.remote_id = remote_id
+        if linha.status == "scheduled":
+            # O driver entregou a fila manual: a linha agora espera uma
+            # PESSOA, nao uma hora -- e `scheduled_at` nulo e o que diz isso.
+            # Com a hora antiga ainda marcada, o laco a veria vencida de novo
+            # no minuto seguinte e entregaria outra vez, a cada minuto, para
+            # sempre. Foi o que acontecia ate a etapa 7.3.
+            linha.scheduled_at = None
+        elif linha.status == "published":
+            await _registrar_post(t, pub_id, url)
         await t.commit()
 
 
-async def marcar_publicado(pub_id: str, remote_id: Optional[str] = None) -> bool:
+async def marcar_publicado(pub_id: str, remote_id: Optional[str] = None,
+                           url: Optional[str] = None) -> bool:
     """O botao "ja publiquei" da fila manual.
 
     O driver `manual` termina em `scheduled` porque nao tem como saber que a
     pessoa apertou publicar. Este e o unico caminho que move a linha para
     `published`, e ele e humano de proposito.
+
+    Desde a 7.3 ele guarda o link do post (`publication_posts`): sem ele, o que
+    se posta a mao nunca e medido. Repetir o botao numa linha ja publicada
+    corrige o link.
     """
     async with db.tenant() as t:
         linha = await t.get(db_models.Publication, pub_id)
@@ -344,8 +452,19 @@ async def marcar_publicado(pub_id: str, remote_id: Optional[str] = None) -> bool
         linha.status = "published"
         if remote_id:
             linha.remote_id = remote_id
+        await _registrar_post(t, pub_id, url)
         await t.commit()
         return True
+
+
+async def plataforma_da_publicacao(pub_id: str) -> Optional[str]:
+    """A plataforma da conta desta publicacao, ou None se ela nao existe."""
+    async with db.tenant() as t:
+        linha = await t.get(db_models.Publication, pub_id)
+        if linha is None:
+            return None
+        conta = await t.get(db_models.Account, linha.account_id)
+        return conta.platform if conta else None
 
 
 async def cancelar(pub_id: str) -> bool:
@@ -375,16 +494,23 @@ async def publicadas_com_remote_id() -> list:
     So `published` e so com `remote_id`: uma linha na fila manual nao tem video
     do outro lado para medir, e medir o que nao foi publicado registraria zero
     views como se fosse resultado.
+
+    A plataforma vem junto porque e ELA que diz de onde medir, e nao o driver:
+    um video do YouTube postado a mao, com o link registrado no "ja
+    publiquei", mede igual a um que subiu pela API.
     """
-    from sqlalchemy import select as _select
+    from sqlalchemy import and_, select as _select
+    P, A = db_models.Publication, db_models.Account
     async with db.session() as s:
         achadas = await s.execute(
-            _select(db_models.Publication)
-            .where(db_models.Publication.status == "published")
-            .where(db_models.Publication.remote_id.is_not(None)))
+            _select(P, A.platform)
+            .join(A, and_(A.id == P.account_id, A.tenant_id == P.tenant_id))
+            .where(P.status == "published")
+            .where(P.remote_id.is_not(None)))
         return [{"id": p.id, "tenant_id": p.tenant_id, "driver": p.driver,
-                 "remote_id": p.remote_id, "account_id": p.account_id}
-                for p in achadas.scalars().all()]
+                 "remote_id": p.remote_id, "account_id": p.account_id,
+                 "platform": plataforma}
+                for p, plataforma in achadas.all()]
 
 
 async def gravar_metrica(publication_id: str, views=None,
@@ -487,6 +613,9 @@ async def listar(status: Optional[str] = None) -> list:
         linhas = await t.all(db_models.Publication)
         cortes = {c.id: c for c in await t.all(db_models.Clip)}
         contas = {a.id: a for a in await t.all(db_models.Account)}
+        posts = {p.publication_id: p for p in await t.all(db_models.PublicationPost)}
+        canal_de = {l.account_id: l.channel_id
+                    for l in await t.all(db_models.ChannelAccount)}
 
     saida = []
     for linha in linhas:
@@ -500,11 +629,18 @@ async def listar(status: Optional[str] = None) -> list:
             "status": linha.status,
             "driver": linha.driver,
             "remote_id": linha.remote_id,
-            "created_at": linha.created_at.isoformat() if linha.created_at else None,
+            # Sempre com o fuso (`_utc`): o SQLite devolve a hora sem ele, e o
+            # navegador le "2026-09-26T14:00:00" como hora LOCAL -- a agenda
+            # aparecia com a diferenca do fuso (3 h no Brasil) ate a 7.3.
+            "created_at": _utc(linha.created_at).isoformat() if linha.created_at else None,
             # Nulo aqui significa "fila manual, esperando uma pessoa"; com data,
             # "agendada, esperando a hora". Ver `agendar()`.
-            "scheduled_at": (linha.scheduled_at.isoformat()
+            "scheduled_at": (_utc(linha.scheduled_at).isoformat()
                              if linha.scheduled_at else None),
+            # Quando foi ao ar e o link, quando ja foi (`publication_posts`).
+            "posted_at": (_utc(posts[linha.id].posted_at).isoformat()
+                          if linha.id in posts and posts[linha.id].posted_at else None),
+            "url": posts[linha.id].url if linha.id in posts else None,
             "clip": {
                 "id": linha.clip_id,
                 "job_id": corte.job_id if corte else None,
@@ -517,6 +653,7 @@ async def listar(status: Optional[str] = None) -> list:
                 "id": linha.account_id,
                 "platform": conta.platform if conta else None,
                 "handle": conta.handle if conta else None,
+                "channel_id": canal_de.get(linha.account_id),
             },
         })
     saida.sort(key=lambda p: p.get("created_at") or "", reverse=True)

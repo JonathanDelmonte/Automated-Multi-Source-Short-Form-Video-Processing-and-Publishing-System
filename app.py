@@ -9,6 +9,7 @@ import atualizar_motor
 import sources
 import publishers
 import publish_queue
+import links_de_post
 import canais
 import auth
 import scheduler
@@ -5812,9 +5813,10 @@ async def coletar_metricas() -> dict:
     medidas = erros = 0
     loop = asyncio.get_event_loop()
     for pub in pendentes:
-        # Hoje so o YouTube tem de onde medir: os outros drivers nao devolvem
-        # `remote_id` porque nao publicam por API.
-        if pub["driver"] != "youtube-api":
+        # Hoje so o YouTube tem de onde medir. Pela PLATAFORMA, e nao pelo
+        # driver: o corte postado a mao, com o link registrado no "ja
+        # publiquei", e um video do canal como qualquer outro (etapa 7.3).
+        if pub.get("platform") != "youtube":
             continue
         db.usar_tenant(pub["tenant_id"])
         try:
@@ -5923,6 +5925,66 @@ async def _publicar_uma_agendada(pendente: dict) -> None:
         print(f"⏰ Agendada {pendente['id']} falhou: {e}")
 
 
+def _teto_do_agendador() -> int:
+    """Quantos por dia e por conta: a agenda, sem passar da cota do YouTube."""
+    return min(scheduler.por_dia(), publishers.quota.uploads_por_dia())
+
+
+async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
+    """Uma volta do laco: o que venceu passa pela trava e o que sobra sai.
+
+    **A trava do post atrasado** (etapa 7.3): com o PC desligado na hora
+    marcada, varios posts vencem juntos, e esta volta publicava todos, um atras
+    do outro. Agora `scheduler.triar_vencidas` deixa sair no maximo UM por
+    conta -- se o espacamento desde o ultimo post dela e o teto do dia deixarem
+    -- e reespalha o resto nas janelas seguintes, com jitter. No dia normal
+    nada muda: cada janela vence sozinha.
+
+    Devolve `{"publicadas": [...], "reagendadas": {...}}` para o teste e para o
+    log; nunca levanta.
+    """
+    agora = agora or datetime.now(timezone.utc)
+    feito = {"publicadas": [], "reagendadas": {}}
+    try:
+        pendentes = await publish_queue.devidas(agora)
+        if not pendentes:
+            return feito
+        ocupados = await publish_queue.ocupados_das_contas(
+            {p["account_id"] for p in pendentes}, agora)
+    except Exception as e:
+        # Falha aberto e silencioso: o banco fora do ar nao pode encher o
+        # log a cada minuto nem derrubar o resto da API.
+        print(f"⚠️  Agendador: nao consegui ler a fila ({e})")
+        return feito
+
+    triagem = scheduler.triar_vencidas(pendentes, agora, ocupados,
+                                       teto_por_dia=_teto_do_agendador())
+    for pub_id, quando in triagem.reagendar.items():
+        try:
+            if await publish_queue.reagendar(pub_id, scheduler.para_utc(quando)):
+                feito["reagendadas"][pub_id] = quando
+        except Exception as e:
+            print(f"⚠️  Agendador: nao consegui reagendar {pub_id} ({e})")
+    if feito["reagendadas"]:
+        horas = ", ".join(q.strftime("%d/%m %H:%M")
+                          for q in sorted(feito["reagendadas"].values()))
+        print(f"⏰ Trava do post atrasado: {len(feito['reagendadas'])} "
+              f"publicacao(oes) vencida(s) ficaram para depois ({horas}), "
+              "para nao sairem juntas.")
+
+    for pendente in pendentes:
+        if pendente["id"] not in triagem.agora:
+            continue
+        try:
+            if not await publish_queue.reservar(pendente["id"], agora):
+                continue        # a outra instancia pegou primeiro
+            await _publicar_uma_agendada(pendente)
+            feito["publicadas"].append(pendente["id"])
+        except Exception as e:
+            print(f"⚠️  Agendador: {pendente['id']} explodiu ({e})")
+    return feito
+
+
 async def _laco_do_agendador():
     """Acorda, pega o que venceu, publica.
 
@@ -5936,26 +5998,62 @@ async def _laco_do_agendador():
         await asyncio.sleep(INTERVALO_DO_AGENDADOR)
         if _draining:
             continue
-        try:
-            pendentes = await publish_queue.devidas(datetime.now(timezone.utc))
-        except Exception as e:
-            # Falha aberto e silencioso: o banco fora do ar nao pode encher o
-            # log a cada minuto nem derrubar o resto da API.
-            print(f"⚠️  Agendador: nao consegui ler a fila ({e})")
-            continue
-        for pendente in pendentes:
-            try:
-                if not await publish_queue.reservar(pendente["id"]):
-                    continue        # a outra instancia pegou primeiro
-                await _publicar_uma_agendada(pendente)
-            except Exception as e:
-                print(f"⚠️  Agendador: {pendente['id']} explodiu ({e})")
+        await _uma_volta_do_agendador()
 
 
 class AgendarIn(BaseModel):
     job_id: str
-    account_id: str
+    #: A conta, ou o canal -- um dos dois. Com o canal, cada conta ligada a
+    #: ele ganha o seu galho (etapa 7.3).
+    account_id: Optional[str] = None
+    channel_id: Optional[str] = None
     clips: Optional[List[int]] = None
+
+
+_ORDEM_DAS_PLATAFORMAS = {"youtube": 0, "tiktok": 1, "instagram": 2}
+
+
+async def _contas_do_pedido(account_id: Optional[str],
+                            channel_id: Optional[str]) -> list:
+    """As contas de destino: a conta pedida, ou todas as do canal.
+
+    **O galho por plataforma** (etapa 7.3): num canal ligado, o corte vira uma
+    publicacao por conta, cada uma com o texto da plataforma dela e horario
+    proprio. A unicidade `(corte, conta)` de `publications` ja era o galho; o
+    que faltava era publicar no canal de uma vez.
+    """
+    if bool(account_id) == bool(channel_id):
+        raise HTTPException(status_code=400,
+                            detail="Diga a conta (account_id) ou o canal "
+                                   "(channel_id) -- um dos dois.")
+    try:
+        async with db.tenant() as t:
+            if account_id:
+                conta = await t.get(db_models.Account, account_id)
+                contas = [conta] if conta else []
+            else:
+                if await t.get(db_models.Channel, channel_id) is None:
+                    raise HTTPException(status_code=404, detail="Canal nao encontrado")
+                ligadas = {l.account_id for l in await t.all(
+                    db_models.ChannelAccount,
+                    db_models.ChannelAccount.channel_id == channel_id)}
+                contas = [c for c in await t.all(db_models.Account) if c.id in ligadas]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if account_id and not contas:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+    if channel_id and not contas:
+        raise HTTPException(status_code=400,
+                            detail="Este canal ainda nao tem conta ligada. Ligue "
+                                   "uma conta nos ajustes do canal.")
+    return sorted(contas, key=lambda c: (_ORDEM_DAS_PLATAFORMAS.get(c.platform, 9),
+                                         c.handle.lower()))
+
+
+def _da_conta(conta) -> dict:
+    return {"account_id": conta.id, "platform": conta.platform, "handle": conta.handle}
 
 
 @app.get("/api/agenda")
@@ -5970,9 +6068,9 @@ async def agendar_cortes(req: AgendarIn, request: Request):
     """Agenda os cortes de um projeto em vez de publicar agora.
 
     O teto por dia e o menor entre a agenda configurada e a quota do YouTube:
-    agendar oito uploads para um dia que so comporta seis deixaria dois
-    falhando a cada noite, e a falha apareceria horas depois de quem clicou ter
-    ido dormir.
+    agendar mais envios do que o dia comporta deixaria o excedente falhando a
+    cada noite, e a falha apareceria horas depois de quem clicou ter ido
+    dormir.
     """
     job = jobs.get(req.job_id) or _job_view_from_disk(req.job_id)
     if job is None:
@@ -5986,39 +6084,44 @@ async def agendar_cortes(req: AgendarIn, request: Request):
         raise HTTPException(status_code=404,
                             detail="Nenhum corte para agendar neste projeto")
 
+    contas = await _contas_do_pedido(req.account_id, req.channel_id)
+    # Os horarios que cada conta ja tem entram na conta: agendar dois projetos
+    # no mesmo canal nao pode por dois posts na mesma janela.
     try:
-        async with db.tenant() as t:
-            conta = await t.get(db_models.Account, req.account_id)
+        ocupados = await publish_queue.ocupados_das_contas(
+            [c.id for c in contas], datetime.now(timezone.utc),
+            tenant_id=db.tenant_atual())
     except Exception as e:
         raise _erro_da_fila(e)
-    if conta is None:
-        raise HTTPException(status_code=404, detail="Conta nao encontrada")
-
-    teto = min(scheduler.por_dia(), publishers.quota.uploads_por_dia())
-    horarios = scheduler.proximos_horarios(len(escolhidos), teto_por_dia=teto)
 
     resultados = []
-    for item, quando in zip(escolhidos, horarios):
-        corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
-        if corte is None:
-            resultados.append({"clip_index": item.clip.index, "ok": False,
-                               "detail": "este corte nao esta no banco; "
-                                         "reprocesse o projeto para registra-lo"})
-            continue
-        try:
-            linha = await publish_queue.agendar(
-                corte, conta, scheduler.para_utc(quando))
-        except publish_queue.FilaError as e:
-            resultados.append({"clip_index": item.clip.index, "ok": False,
-                               "detail": str(e)})
-            continue
-        except Exception as e:
-            raise _erro_da_fila(e)
-        resultados.append({"clip_index": item.clip.index, "ok": True, **linha})
+    for conta in contas:
+        # Horario proprio por conta: o jitter e sorteado de novo para cada
+        # galho, e o YouTube e o TikTok do mesmo corte nao saem no mesmo minuto.
+        horarios = scheduler.proximos_horarios(
+            len(escolhidos), teto_por_dia=_teto_do_agendador(),
+            ocupados=ocupados.get(conta.id, []))
+        for item, quando in zip(escolhidos, horarios):
+            base = {"clip_index": item.clip.index, **_da_conta(conta)}
+            corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
+            if corte is None:
+                resultados.append({**base, "ok": False,
+                                   "detail": "este corte nao esta no banco; "
+                                             "reprocesse o projeto para registra-lo"})
+                continue
+            try:
+                linha = await publish_queue.agendar(
+                    corte, conta, scheduler.para_utc(quando))
+            except publish_queue.FilaError as e:
+                resultados.append({**base, "ok": False, "detail": str(e)})
+                continue
+            except Exception as e:
+                raise _erro_da_fila(e)
+            resultados.append({**base, "ok": True, **linha})
 
     agendados = sum(1 for r in resultados if r.get("ok"))
-    print(f"⏰ {agendados} corte(s) de {req.job_id} agendados para "
-          f"{conta.platform}/{conta.handle}")
+    destino = ", ".join(f"{c.platform}/{c.handle}" for c in contas)
+    print(f"⏰ {agendados} publicacao(oes) de {req.job_id} agendadas para {destino}")
     return {"resultados": resultados, "agendados": agendados,
             "agenda": scheduler.descricao()}
 
@@ -6637,7 +6740,9 @@ class ContaIn(BaseModel):
 
 class PublicarIn(BaseModel):
     job_id: str
-    account_id: str
+    #: A conta, ou o canal -- um dos dois (ver `_contas_do_pedido`).
+    account_id: Optional[str] = None
+    channel_id: Optional[str] = None
     #: Os cortes a publicar, por indice. Vazio publica todos os do job.
     clips: Optional[List[int]] = None
     visibility: str = "private"
@@ -6705,19 +6810,54 @@ async def listar_publicacoes(status: Optional[str] = None):
         raise _erro_da_fila(e)
 
 
+class PublicadoIn(BaseModel):
+    #: O link do post. Opcional para quem chama sem ele (o painel de antes),
+    #: mas e o que deixa o post feito a mao ser medido.
+    url: Optional[str] = None
+
+
 @app.post("/api/publicacoes/{pub_id}/publicado")
-async def marcar_publicado(pub_id: str, remote_id: Optional[str] = None):
+async def marcar_publicado(pub_id: str, req: Optional[PublicadoIn] = None,
+                           remote_id: Optional[str] = None):
     """"Ja publiquei" -- o unico caminho que move a fila manual para
     `published`, e ele e humano de proposito: o driver `manual` entregou o
-    pacote e nao tem como saber que a pessoa apertou publicar."""
+    pacote e nao tem como saber que a pessoa apertou publicar.
+
+    **Pede o link do post** (etapa 7.3): sem ele, o que se posta a mao nunca e
+    medido. O link e lido por `links_de_post` -- o id do video sai dele -- e
+    recusado se for de outra plataforma: medir o video errado seria pior que
+    nao medir. Repetir o botao numa publicacao ja publicada corrige o link.
+    """
+    url = ((req.url if req else None) or "").strip()
+    aviso = None
+    post = None
     try:
-        if not await publish_queue.marcar_publicado(pub_id, remote_id):
+        plataforma = await publish_queue.plataforma_da_publicacao(pub_id)
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if plataforma is None:
+        raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
+    if url:
+        try:
+            # Numa thread: o link curto do TikTok e seguido pela rede.
+            post = await asyncio.to_thread(links_de_post.ler_com_rede, plataforma, url)
+        except links_de_post.LinkInvalido as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if post.id is None:
+            aviso = ("guardei o link, mas nao deu para ler o numero do video "
+                     "(link curto, sem internet agora?). Para medir, cole o "
+                     "link completo, aberto no navegador.")
+    try:
+        if not await publish_queue.marcar_publicado(
+                pub_id, (post.id if post else None) or remote_id,
+                post.url if post else None):
             raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
-        return {"success": True}
     except HTTPException:
         raise
     except Exception as e:
         raise _erro_da_fila(e)
+    return {"success": True, "url": post.url if post else None,
+            "remote_id": post.id if post else remote_id, "aviso": aviso}
 
 
 @app.delete("/api/publicacoes/{pub_id}")
@@ -6763,13 +6903,7 @@ async def publicar_cortes(req: PublicarIn, request: Request):
         raise HTTPException(status_code=404,
                             detail=f"Nenhum corte com os indices {req.clips}")
 
-    try:
-        async with db.tenant() as t:
-            conta = await t.get(db_models.Account, req.account_id)
-    except Exception as e:
-        raise _erro_da_fila(e)
-    if conta is None:
-        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+    contas = await _contas_do_pedido(req.account_id, req.channel_id)
 
     opts = publishers.PublishOptions(visibility=req.visibility,
                                      scheduled_at=req.scheduled_at,
@@ -6780,32 +6914,35 @@ async def publicar_cortes(req: PublicarIn, request: Request):
         if corte is None:
             # Job anterior ao bloco 3.3, ou banco que falhou na hora de gravar.
             # Dizer qual corte e por que e melhor que 404 no lote inteiro.
-            resultados.append({"clip_index": item.clip.index, "ok": False,
-                               "detail": "este corte nao esta no banco; "
-                                         "reprocesse o projeto para registra-lo"})
+            for conta in contas:
+                resultados.append({"clip_index": item.clip.index, **_da_conta(conta),
+                                   "ok": False,
+                                   "detail": "este corte nao esta no banco; "
+                                             "reprocesse o projeto para registra-lo"})
             continue
         # O arquivo pode ter mudado desde o fim do job (legenda, recorte), e e
         # o atual que vai ao ar. Atualizar aqui deixa a linha descrevendo o que
         # foi publicado, e nao o que existia quando o job acabou.
         await job_registry.atualizar_render_key(
             corte.id, os.path.basename(item.clip.path))
-        try:
-            resultado = await publish_queue.publicar(
-                corte, conta, item.clip.path, item.meta, opts)
-        except publish_queue.FilaError as e:
-            resultados.append({"clip_index": item.clip.index, "ok": False,
-                               "detail": str(e)})
-            continue
-        except Exception as e:
-            resultados.append({"clip_index": item.clip.index, "ok": False,
-                               "detail": f"{type(e).__name__}: {e}"})
-            continue
-        resultado["clip_index"] = item.clip.index
-        resultados.append(resultado)
+        for conta in contas:
+            base = {"clip_index": item.clip.index, **_da_conta(conta)}
+            try:
+                resultado = await publish_queue.publicar(
+                    corte, conta, item.clip.path, item.meta, opts)
+            except publish_queue.FilaError as e:
+                resultados.append({**base, "ok": False, "detail": str(e)})
+                continue
+            except Exception as e:
+                resultados.append({**base, "ok": False,
+                                   "detail": f"{type(e).__name__}: {e}"})
+                continue
+            resultados.append({**base, **resultado})
 
     publicados = sum(1 for r in resultados if r.get("ok"))
-    print(f"📤 {publicados}/{len(resultados)} corte(s) de {req.job_id} "
-          f"para {conta.platform}/{conta.handle}")
+    destino = ", ".join(f"{c.platform}/{c.handle}" for c in contas)
+    print(f"📤 {publicados}/{len(resultados)} publicacao(oes) de {req.job_id} "
+          f"para {destino}")
     return {"resultados": resultados, "publicados": publicados,
             "quota_youtube": publishers.quota.estado()}
 

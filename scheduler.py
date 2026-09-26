@@ -6,8 +6,9 @@ ha de informacao, e de onde vem:
 
 * **3 por dia.** Nao e chute: o §1 faz a conta ("3 videos/dia gastam 4.800 e
   sobra metade para listagem e reprocessamento") e o ADR-007 repete o numero
-  como ponto de partida. O teto duro e outro -- 6/dia, do contador de quota --
-  e o agendador nunca o ultrapassa.
+  como ponto de partida. O teto duro e outro -- o contador de quota do YouTube
+  (100 envios/dia desde jun-2026; eram 6 pela regra antiga) -- e o agendador
+  nunca o ultrapassa.
 * **Espacamento minimo de 3 h e jitter de ±25 min**, os numeros que o ADR-007
   propos. Sao **defaults**, nao verdades: calibrar horario de publicacao exige
   retencao real, que e a tabela `metrics` e a Fase 5. Estao em variaveis de
@@ -21,6 +22,19 @@ desliga o jitter, so o reduz ao piso, com uma linha no log dizendo por que.
 Vale para todos os drivers, inclusive os de risco zero -- custa nada e evita
 retrofit no dia em que o `browser` for ligado a mao.
 
+**A agenda e por conta** (etapa 7.3). Cada conta tem os horarios dela, e
+um horario novo respeita os que a conta ja tem -- os posts recentes e os
+agendados --, entao agendar dois projetos no mesmo canal nao poe dois posts na
+mesma janela.
+
+**A trava do post atrasado** (`triar_vencidas`, etapa 7.3, pedido do autor em
+26-set-2026: "posta quando o PC voltar, mas nunca varios de uma vez"). Com o
+PC desligado na hora marcada, varios posts vencem juntos; o laco publicava
+todos, um atras do outro, no primeiro minuto em que o motor voltava. Agora, por
+conta, sai no maximo o primeiro -- se o espacamento desde o ultimo post e o
+teto do dia deixarem -- e os outros sao reespalhados nas janelas seguintes,
+com o mesmo jitter.
+
 Modulo de biblioteca padrao: as funcoes sao puras e recebem `agora` e o
 sorteador, entao o CI exercita o calculo inteiro sem relogio e sem banco.
 """
@@ -28,8 +42,9 @@ from __future__ import annotations
 
 import os
 import random
+from dataclasses import dataclass, field
 from datetime import datetime, time as _time, timedelta, timezone
-from typing import Callable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 #: Quantos cortes por dia, por padrao. A conta do §1.
 POR_DIA_PADRAO = 3
@@ -106,26 +121,41 @@ def jitter_minutos() -> int:
     return pedido
 
 
+def _com_fuso(quando: datetime) -> datetime:
+    """O banco SQLite devolve datetime sem fuso, e o que vai para ele e UTC."""
+    return quando if quando.tzinfo else quando.replace(tzinfo=timezone.utc)
+
+
 def proximos_horarios(quantos: int, agora: Optional[datetime] = None,
                       *, sorteador: Optional[Callable[[int, int], int]] = None,
                       horas: Optional[Sequence[int]] = None,
                       jitter: Optional[int] = None,
                       gap: Optional[timedelta] = None,
-                      teto_por_dia: Optional[int] = None) -> list:
+                      teto_por_dia: Optional[int] = None,
+                      ocupados: Iterable[datetime] = ()) -> list:
     """`quantos` horarios futuros, com jitter e espacamento respeitados.
 
     Devolve datetimes **com fuso**, no fuso local do servidor -- a mesma escolha
     de `publishers.pacote.dia_de`, e pelo mesmo motivo: "publicar as 11h" e uma
     frase sobre o dia de quem publica.
 
-    Tres regras, e a ordem entre elas importa:
+    `ocupados` sao os horarios que a conta ja tem: posts recentes e agendados.
+    Contam para o espacamento e para o teto do dia.
+
+    As regras, e a ordem entre elas importa:
 
     1. **jitter primeiro**, sobre a hora cheia da janela;
     2. **espacamento depois**, empurrando para a frente o que ficou perto
-       demais. Ao contrario, duas janelas a uma hora de distancia com jitter de
-       -25 e +25 minutos terminariam a 10 minutos uma da outra -- o jitter
-       destruindo justamente a regra que o espacamento existe para manter;
-    3. **nada no passado**: uma janela que ja passou hoje vai para amanha, com
+       demais do horario ANTERIOR. Ao contrario, duas janelas a uma hora de
+       distancia com jitter de -25 e +25 minutos terminariam a 10 minutos uma
+       da outra -- o jitter destruindo justamente a regra que o espacamento
+       existe para manter;
+    3. **janela tomada fica para a proxima**: perto demais de um horario
+       POSTERIOR que a conta ja tem, a janela e pulada em vez de empurrada.
+       Empurrar para depois do ocupado daria posts a exatamente 3 h um do
+       outro, dia apos dia -- o relogio regular que o jitter existe para
+       apagar;
+    4. **nada no passado**: uma janela que ja passou hoje vai para amanha, com
        jitter proprio. Agendar para tras publicaria tudo de uma vez no primeiro
        tique do laco, que e o oposto de espacar.
     """
@@ -142,12 +172,17 @@ def proximos_horarios(quantos: int, agora: Optional[datetime] = None,
     teto = por_dia() if teto_por_dia is None else max(1, int(teto_por_dia))
     sorteia = sorteador or (lambda a, b: random.randint(a, b))
 
+    tomados = sorted(_com_fuso(o).astimezone(agora.tzinfo) for o in ocupados)
+    por_dia_ocupado: dict = {}
+    for o in tomados:
+        por_dia_ocupado[o.date()] = por_dia_ocupado.get(o.date(), 0) + 1
+
     escolhidos: list = []
     dia = agora.date()
     # Teto de dias para nao girar para sempre se a configuracao for absurda
     # (janela unica e espacamento de 20 h, por exemplo).
     for _ in range(366):
-        usados_no_dia = 0
+        usados_no_dia = por_dia_ocupado.get(dia, 0)
         for hora in horas:
             if len(escolhidos) >= quantos:
                 return escolhidos
@@ -156,14 +191,84 @@ def proximos_horarios(quantos: int, agora: Optional[datetime] = None,
             base = datetime.combine(dia, _time(hour=hora),
                                     tzinfo=agora.tzinfo)
             quando = base + timedelta(minutes=sorteia(-amplitude, amplitude))
-            if escolhidos and quando - escolhidos[-1] < gap:
-                quando = escolhidos[-1] + gap
+            todos = sorted(tomados + escolhidos)
+            antes = [t for t in todos if t <= quando]
+            if antes and quando - antes[-1] < gap:
+                quando = antes[-1] + gap
+            if any(t > quando - gap and t < quando + gap for t in todos):
+                continue        # janela tomada: a proxima
             if quando <= agora:
                 continue
             escolhidos.append(quando)
             usados_no_dia += 1
         dia = dia + timedelta(days=1)
     return escolhidos
+
+
+@dataclass
+class Triagem:
+    """O que fazer com as publicacoes vencidas de uma volta do laco."""
+    #: Os ids que saem agora -- no maximo um por conta.
+    agora: list = field(default_factory=list)
+    #: {id: novo horario} das que ficam para depois.
+    reagendar: dict = field(default_factory=dict)
+
+
+def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
+                   ocupados_por_conta: Optional[dict] = None, *,
+                   sorteador: Optional[Callable[[int, int], int]] = None,
+                   horas: Optional[Sequence[int]] = None,
+                   jitter: Optional[int] = None,
+                   gap: Optional[timedelta] = None,
+                   teto_por_dia: Optional[int] = None) -> Triagem:
+    """A trava do post atrasado: por conta, sai no maximo UM, e o resto espera.
+
+    `vencidas` sao dicts com `id`, `account_id` e `scheduled_at`.
+    `ocupados_por_conta` e `{conta: [horarios]}` com os posts recentes de
+    verdade (e os que estao subindo agora) e os agendados que ainda nao
+    venceram.
+
+    Por conta, a vencida mais antiga sai agora se as duas regras deixarem: o
+    espacamento minimo desde o ultimo post da conta e o teto do dia. As outras
+    -- e a primeira, se ela nao puder -- ganham horarios novos pelas mesmas
+    regras de `proximos_horarios`, respeitando o que a conta ja tem marcado.
+
+    No dia normal nao muda nada: cada janela vence sozinha, com o espacamento
+    ja respeitado desde o agendamento. A trava so atua quando varios vencem
+    juntos -- o PC que ficou desligado --, e ai e ela que impede a rajada.
+    """
+    agora = _com_fuso(agora)
+    local = agora.astimezone()
+    gap = espacamento_minimo() if gap is None else gap
+    teto = por_dia() if teto_por_dia is None else max(1, int(teto_por_dia))
+    ocupados_por_conta = ocupados_por_conta or {}
+
+    por_conta: dict = {}
+    for item in vencidas:
+        por_conta.setdefault(item["account_id"], []).append(item)
+
+    triagem = Triagem()
+    for conta, itens in por_conta.items():
+        itens = sorted(itens, key=lambda i: (_com_fuso(i["scheduled_at"]), i["id"]))
+        tomados = sorted(_com_fuso(o).astimezone(local.tzinfo)
+                         for o in ocupados_por_conta.get(conta, ()))
+        passados = [t for t in tomados if t <= local]
+        hoje = sum(1 for t in passados if t.date() == local.date())
+        folga = not passados or local - passados[-1] >= gap
+        if folga and hoje < teto:
+            triagem.agora.append(itens[0]["id"])
+            tomados.append(local)
+            resto = itens[1:]
+        else:
+            resto = itens
+        if not resto:
+            continue
+        horarios = proximos_horarios(
+            len(resto), local, sorteador=sorteador, horas=horas, jitter=jitter,
+            gap=gap, teto_por_dia=teto, ocupados=tomados)
+        for item, quando in zip(resto, horarios):
+            triagem.reagendar[item["id"]] = quando
+    return triagem
 
 
 def descricao() -> dict:

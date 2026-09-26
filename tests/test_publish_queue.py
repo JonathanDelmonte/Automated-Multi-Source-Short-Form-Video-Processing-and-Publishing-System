@@ -177,7 +177,7 @@ class TestContas:
 
     def test_a_listagem_traz_a_quota_do_youtube(self):
         corpo = _chama("GET", "/api/contas").json()
-        assert corpo["quota_youtube"]["uploads_por_dia"] == 6
+        assert corpo["quota_youtube"]["uploads_por_dia"] == 100
 
 
 # --------------------------------------------------------------------------- #

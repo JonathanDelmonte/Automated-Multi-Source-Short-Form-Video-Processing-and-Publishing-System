@@ -1,7 +1,9 @@
-"""Driver `youtube-api`, contador de quota e cofre (Fase 3, bloco 3.4).
+"""Driver `youtube-api`, contador de quota e cofre (Fase 3, bloco 3.4; cota
+nova na etapa 7.3).
 
-O numero que o plano manda respeitar: **1600 unidades por `videos.insert`
-contra 10.000/dia = 6 uploads/dia**. O contador existe para que o 7o upload
+O numero de hoje: **100 `videos.insert` por dia, numa cota so do envio**, e
+10.000 unidades para as outras chamadas (desde jun-2026; antes, 1.600 das
+10.000 por envio, 6 por dia). O contador existe para que o envio que nao cabe
 CAIA NA FILA MANUAL em vez de virar um job vermelho -- que e o oposto do que a
 cascata da secao 6 promete.
 
@@ -54,33 +56,55 @@ def conta(**kw):
 
 class TestQuota:
 
-    def test_o_numero_do_plano(self):
-        assert quota.CUSTO_INSERT == 1600
+    def test_o_numero_de_hoje(self):
+        """Congelado de proposito: a regra do YouTube ja mudou duas vezes, e
+        o 6 antigo ficou no codigo meses depois de deixar de valer. Se mudar
+        de novo, este teste obriga a mudanca a ser uma decisao."""
+        assert quota.UPLOADS_POR_DIA_PADRAO == 100
+        assert quota.uploads_por_dia() == 100
         assert quota.TETO_PADRAO == 10000
-        assert quota.uploads_por_dia() == 6
 
-    def test_a_conta_da_secao_1_fecha(self):
-        """"3 videos/dia gastam 4.800 e sobra metade para listagem e
-        reprocessamento"."""
+    def test_o_envio_nao_gasta_as_unidades(self):
+        """Desde jun-2026 o envio mora na cota dele. Debitar unidades por
+        envio, como antes, faria o coletor de metricas achar que o dia acabou."""
         for _ in range(3):
-            quota.registrar()
-        assert quota.usadas() == 4800
-        assert quota.restante() == 5200
+            quota.registrar_upload()
+        assert quota.uploads_hoje() == 3
+        assert quota.usadas() == 0
+        assert quota.restante() == quota.TETO_PADRAO
 
-    def test_o_setimo_upload_nao_cabe(self):
-        for _ in range(6):
+    def test_o_envio_que_passa_do_teto_nao_cabe(self, monkeypatch):
+        monkeypatch.setenv("YOUTUBE_UPLOADS_DAILY", "3")
+        for _ in range(3):
             assert quota.cabe()
-            quota.registrar()
+            quota.registrar_upload()
         assert quota.cabe() is False
-        assert quota.estado()["uploads_hoje"] == 6
+        assert quota.estado()["uploads_hoje"] == 3
 
-    def test_aumento_de_quota_muda_o_teto(self, monkeypatch):
+    def test_o_centesimo_primeiro_nao_cabe(self):
+        for _ in range(100):
+            quota.registrar_upload()
+        assert quota.cabe() is False
+        assert quota.uploads_restantes() == 0
+
+    def test_as_outras_chamadas_saem_das_unidades(self):
+        assert quota.registrar_unidades(1) == quota.TETO_PADRAO - 1
+        assert quota.usadas() == 1
+        assert quota.uploads_hoje() == 0
+        assert quota.cabe_unidades(quota.TETO_PADRAO - 1)
+        assert not quota.cabe_unidades(quota.TETO_PADRAO)
+
+    def test_aumento_de_cota_muda_os_tetos(self, monkeypatch):
+        monkeypatch.setenv("YOUTUBE_UPLOADS_DAILY", "250")
         monkeypatch.setenv("YOUTUBE_QUOTA_DAILY", "50000")
-        assert quota.uploads_por_dia() == 31
+        assert quota.uploads_por_dia() == 250
+        assert quota.teto_diario() == 50000
 
-    def test_teto_invalido_cai_no_padrao(self, monkeypatch):
+    @pytest.mark.parametrize("variavel", ["YOUTUBE_UPLOADS_DAILY", "YOUTUBE_QUOTA_DAILY"])
+    def test_teto_invalido_cai_no_padrao(self, monkeypatch, variavel):
         for valor in ("zero", "-5", "0", ""):
-            monkeypatch.setenv("YOUTUBE_QUOTA_DAILY", valor)
+            monkeypatch.setenv(variavel, valor)
+            assert quota.uploads_por_dia() == quota.UPLOADS_POR_DIA_PADRAO
             assert quota.teto_diario() == quota.TETO_PADRAO
 
     def test_o_dia_e_o_do_pacifico_e_nao_o_nosso(self):
@@ -93,10 +117,20 @@ class TestQuota:
             datetime(2026, 9, 16, 20, 0, tzinfo=timezone.utc)) == "2026-09-16"
 
     def test_o_contador_zera_na_virada(self, monkeypatch):
-        quota.registrar()
-        assert quota.usadas() == 1600
+        quota.registrar_upload()
+        quota.registrar_unidades(7)
+        assert quota.uploads_hoje() == 1 and quota.usadas() == 7
         monkeypatch.setattr(quota, "dia_do_youtube", lambda agora=None: "2099-01-01")
-        assert quota.usadas() == 0
+        assert quota.uploads_hoje() == 0 and quota.usadas() == 0
+
+    def test_o_arquivo_de_antes_continua_lido(self):
+        """O arquivo de quem usava a cota antiga tem as duas contagens; so o
+        significado das unidades mudou."""
+        os.makedirs(os.environ["OUTPUT_DIR"], exist_ok=True)
+        with open(os.path.join(os.environ["OUTPUT_DIR"], quota.ARQUIVO), "w") as fh:
+            json.dump({"dia": quota.dia_do_youtube(), "unidades": 3200, "uploads": 2}, fh)
+        assert quota.uploads_hoje() == 2
+        assert quota.uploads_restantes() == 98
 
     def test_arquivo_corrompido_nao_derruba(self):
         os.makedirs(os.environ["OUTPUT_DIR"], exist_ok=True)
@@ -109,15 +143,19 @@ class TestQuota:
         """O contador e melhor-esforco, como o orcamento de LLM: nunca quebra
         o que estava funcionando."""
         monkeypatch.setattr(quota, "_gravar", lambda dados: None)
-        assert quota.registrar() >= 0
+        assert quota.registrar_upload() >= 0
+        assert quota.registrar_unidades(1) >= 0
 
-    def test_estado_explica_por_que_caiu_na_fila(self):
-        for _ in range(6):
-            quota.registrar()
+    def test_estado_explica_por_que_caiu_na_fila(self, monkeypatch):
+        monkeypatch.setenv("YOUTUBE_UPLOADS_DAILY", "2")
+        for _ in range(2):
+            quota.registrar_upload()
+        quota.registrar_unidades(5)
         estado = quota.estado()
         assert estado["cabe_mais_um"] is False
-        assert estado["uploads_hoje"] == 6
-        assert estado["restante"] == 400
+        assert estado["uploads_hoje"] == 2
+        assert estado["uploads_restantes"] == 0
+        assert estado["restante"] == quota.TETO_PADRAO - 5
 
 
 # --------------------------------------------------------------------------- #
@@ -244,8 +282,8 @@ class TestCorpoDoVideo:
         assert privacidade("unlisted") == "unlisted"
 
     def test_titulo_perde_as_setas(self):
-        """A API recusa `<` e `>`, e a recusa vem DEPOIS do upload: 1600
-        unidades gastas porque um hook trazia uma seta."""
+        """A API recusa `<` e `>`, e a recusa vem DEPOIS do upload: um envio
+        da cota do dia gasto porque um hook trazia uma seta."""
         corpo = corpo_do_video(PostMeta(title="Olha isso <aqui>"),
                                PublishOptions())
         assert corpo["snippet"]["title"] == "Olha isso aqui"
@@ -352,17 +390,18 @@ class TestDriverNaCascata:
     def test_quota_acabada_devolve_o_corte_para_a_fila(self, credenciado):
         """O comportamento inteiro do bloco em uma linha: o 7o upload do dia
         cai na fila manual em vez de virar um job vermelho."""
-        for _ in range(6):
-            quota.registrar()
+        for _ in range(quota.uploads_por_dia()):
+            quota.registrar_upload()
         assert publishers.resolve("youtube", conta()).id == "manual"
 
     def test_a_conta_pode_pedir_a_fila_manual(self, credenciado):
         assert publishers.resolve(
             "youtube", conta(driver_pref="manual")).id == "manual"
 
-    def test_custo_em_unidades_de_quota(self):
+    def test_custo_em_envios_da_cota(self):
+        """Na cota do envio a unidade e a chamada: tres cortes, tres envios."""
         custo = YouTubeApiPublisher().cost(3)
-        assert custo.quota_units == 4800
+        assert custo.quota_units == 3
         assert custo.usd == 0.0
         assert custo.risk_score == 0.0
 
@@ -373,8 +412,8 @@ class TestDriverNaCascata:
     def test_capability_diz_por_que_nao_atende(self, credenciado):
         driver = YouTubeApiPublisher()
         assert driver.capability(conta()) == "public"
-        for _ in range(6):
-            quota.registrar()
+        for _ in range(quota.uploads_por_dia()):
+            quota.registrar_upload()
         assert driver.capability(conta()) == "none"
 
     def test_app_nao_verificado_e_private_only(self, credenciado, monkeypatch):
@@ -402,8 +441,8 @@ class TestPublish:
     def test_sem_quota_levanta_quota_esgotada(self, credenciado, tmp_path):
         arquivo = tmp_path / "c.mp4"
         arquivo.write_bytes(b"x")
-        for _ in range(6):
-            quota.registrar()
+        for _ in range(quota.uploads_por_dia()):
+            quota.registrar_upload()
         with pytest.raises(QuotaEsgotada) as e:
             YouTubeApiPublisher().publish(
                 RenderedClip(path=str(arquivo), job_id="j", index=0),
@@ -417,13 +456,13 @@ class TestPublish:
             RenderedClip(path=str(arquivo), job_id="j", index=0),
             PostMeta(title="T"), PublishOptions(dry_run=True), conta())
         assert r.ok is True
-        assert quota.usadas() == 0
+        assert quota.uploads_hoje() == 0
         assert '"title": "T"' in r.detail
 
     def test_debita_a_quota_antes_de_chamar(self, credenciado, tmp_path,
                                             monkeypatch):
         """O YouTube cobra quando aceita a requisicao: um upload que morre no
-        meio ja gastou as 1600. Contar so no sucesso deixaria o contador abaixo
+        meio ja gastou o envio. Contar so no sucesso deixaria o contador abaixo
         da verdade justamente no dia ruim."""
         from publishers import youtube_api
 
@@ -438,7 +477,7 @@ class TestPublish:
             YouTubeApiPublisher().publish(
                 RenderedClip(path=str(arquivo), job_id="j", index=0),
                 PostMeta(title="T"), PublishOptions(), conta())
-        assert quota.usadas() == 1600
+        assert quota.uploads_hoje() == 1
 
     def test_caminho_feliz_com_a_rede_dublada(self, credenciado, tmp_path,
                                               monkeypatch):
@@ -458,7 +497,7 @@ class TestPublish:
         assert r.status == "published"
         assert r.remote_id == "VIDEOID123"
         assert r.url == "https://www.youtube.com/watch?v=VIDEOID123"
-        assert "restam 8400" in r.detail
+        assert "restam 99 envio(s) hoje" in r.detail
 
     def test_avisa_quando_o_youtube_rebaixa_a_privacidade(self, credenciado,
                                                           tmp_path, monkeypatch):

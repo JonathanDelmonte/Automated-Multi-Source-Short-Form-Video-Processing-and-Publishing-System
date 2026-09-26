@@ -255,6 +255,30 @@ modo privado primeiro, conferido no app de cada plataforma (a ressalva da Fase
 3 continua valendo). E um teste prova a trava: cinco posts vencidos para a mesma
 conta não saem juntos.
 
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.3a | motor: cota nova do YouTube (100 envios/dia), agenda por conta, a trava do post atrasado, "já publiquei" com link, os galhos do canal no publicar e no agendar; e o acerto do banco que já existe (`db_acerto`) | feita (26-set) |
+| 7.3b | cadastro de aplicativo por pessoa e "Conectar YouTube" pelo site | a fazer |
+| 7.3c | TikTok pela Content Posting API, privado até a auditoria | a fazer |
+| 7.3d | Instagram na versão simples | a fazer |
+| 7.3e | conferir as telas no computador e no celular, docs, CI | a fazer |
+
+A trava tem o teste que o "pronto quando" pede
+(`tests/test_agendador.py::TestTravaNoLaco::test_cinco_posts_vencidos_da_mesma_conta_nao_saem_juntos`):
+cinco posts vencidos para a mesma conta, uma volta do laço, e sai um; os outros
+quatro ficam para as janelas seguintes, espaçados, e a volta seguinte não
+publica nada. Conferido também no navegador: publicar um projeto no Canal
+infantil abre um galho por conta (YouTube e TikTok), o "já publiquei" recusa o
+link do TikTok no galho do YouTube e guarda o link certo, e agendar no canal dá
+horário próprio a cada conta.
+
+Dois defeitos antigos apareceram no caminho e foram consertados junto: a linha
+agendada que caía na fila manual era entregue de novo a cada minuto, para
+sempre; e a agenda mostrava as horas com a diferença do fuso (3 h no Brasil),
+porque o banco devolve a hora sem ele.
+
 ### 7.4 — Análises por canal
 
 - **YouTube**: visualizações e retenção, pela API de Analytics que o coletor já

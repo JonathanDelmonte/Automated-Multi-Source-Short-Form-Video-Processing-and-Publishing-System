@@ -78,7 +78,9 @@ class TestTenantEmTodaTabela:
                      # Fase 7 (7.1): o canal e as duas ligacoes dele. Tabelas
                      # novas, e nao colunas: o boot usa create_all, que nunca
                      # acrescenta coluna a tabela existente.
-                     "channels", "channel_accounts", "channel_jobs"}
+                     "channels", "channel_accounts", "channel_jobs",
+                     # 7.3: quando e onde a publicacao foi ao ar.
+                     "publication_posts"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

@@ -204,7 +204,7 @@ function ConteudoDaAba({ aba, canal }) {
             itens={[
               'Buscar vídeos sem direitos autorais no nicho do canal, guardando a licença e o crédito de cada um.',
               'Cortar e editar com o template e o estilo do canal.',
-              'Postar nos horários do canal. A trava de segurança chega antes, na etapa 7.3: um post de cada vez, nunca vários juntos, mesmo depois de o computador ficar desligado.',
+              'Postar nos horários do canal, com a trava de segurança que já vale na Agenda: um post de cada vez, nunca vários juntos, mesmo depois de o computador ficar desligado.',
             ]}
           />
           <Secao titulo="antes de postar">

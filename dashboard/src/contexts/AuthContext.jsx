@@ -1,35 +1,30 @@
-// Auth + billing session state for cloud mode.
-// - Reads /api/config to learn whether billing is enabled at all.
-// - Handles the magic-link and Google OAuth redirect hashes.
-// - Exposes the current user, plan and minute balance to the app.
-// When billingEnabled is false the provider is inert and the app behaves as the
-// classic BYOK dashboard.
+// A sessão do painel: a config do motor (`/api/config`), quem está logado e a
+// entrada pela auth própria (Fase 4: e-mail e senha, `auth.py`).
+//
+// O login do projeto original -- link mágico por e-mail e Google -- saiu na
+// limpeza da 7.1 (26-set-2026): os endpoints que ele chamava moravam no módulo
+// comercial, que saiu no ADR-001, e o código ficou aqui sem ter com quem falar.
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getApiUrl, setMediaToken, SERVIDORES, usarServidor } from '../config';
-import { apiFetch, apiJson, getToken, setToken, clearToken } from '../lib/api';
-import { track, identify, reset as resetAnalytics } from '../lib/analytics';
-import { report as reportAttribution } from '../lib/attribution';
+import { apiJson, getToken, setToken, clearToken } from '../lib/api';
 
 const AuthContext = createContext(null);
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }) {
-  const [config, setConfig] = useState({ billingEnabled: false, googleAuthEnabled: false, authAtiva: false });
+  const [config, setConfig] = useState({ authAtiva: false });
   const [me, setMe] = useState(null);           // /api/me payload, or null when signed out
   const [loading, setLoading] = useState(true);
   // `/api/config` já respondeu pelo menos uma vez. Antes disso nada que a
   // config decide (auth, chave de LLM) pode ser afirmado -- nem negado.
   const [configCarregada, setConfigCarregada] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
 
   const refreshMe = useCallback(async () => {
     if (!getToken()) { setMe(null); return null; }
     try {
       const data = await apiJson('/api/me');
       setMe(data);
-      // Same profileId (user uuid) the server-side events use.
-      identify(data?.user, { plan: data?.plan || 'free' });
       return data;
     } catch (e) {
       // Stale/invalid token: drop it and fall back to anonymous BYOK.
@@ -38,71 +33,6 @@ export function AuthProvider({ children }) {
       return null;
     }
   }, []);
-
-  // Handle auth redirect hashes: #/auth/verify?ml=... and #/auth/callback?token=...
-  const handleAuthHash = useCallback(async () => {
-    const hash = window.location.hash || '';
-    const match = hash.match(/^#\/auth\/(verify|callback)\??(.*)$/);
-    if (!match) return false;
-    const [, kind, query] = match;
-    const params = new URLSearchParams(query);
-
-    setSigningIn(true);
-    let destination = '#app';
-    try {
-      if (kind === 'callback') {
-        const token = params.get('token');
-        if (token) {
-          setToken(token);
-          // Scrub the token from the URL immediately (replaceState, no new
-          // history entry) so the bearer token isn't left reachable via Back.
-          try {
-            window.history.replaceState(null, document.title,
-              window.location.pathname + window.location.search);
-          } catch (_) { /* ignore */ }
-        }
-      } else if (kind === 'verify') {
-        const ml = params.get('ml');
-        if (ml) {
-          const data = await apiJson('/api/auth/magic-link/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: ml }),
-          });
-          if (data.token) setToken(data.token);
-        }
-      }
-      const signedInMe = await refreshMe();
-      // This handler only runs on the auth redirect, so a resolved user here is
-      // a fresh sign-in / sign-up — the top of the conversion funnel.
-      if (signedInMe?.user) {
-        track('Signup', { props: { method: kind === 'verify' ? 'magic_link' : 'google' } });
-        // Server-side twin of the Signup event: the one place we learn which
-        // channel produced an account. Awaited but never allowed to throw.
-        await reportAttribution(apiJson);
-      }
-      // Everyone lands in the app. First-time (unpaid) sign-in gets the Clip
-      // Generator tutorial, not a pricing dump — they need one successful job
-      // before the rest of the tools unlock. os_welcomed keeps this once-only
-      // even if they skip the tutorial.
-      const paid = ['starter', 'creator', 'pro'].includes(signedInMe?.plan);
-      let welcomed = false;
-      try { welcomed = localStorage.getItem('os_welcomed') === '1'; } catch (_) { /* ignore */ }
-      if (signedInMe?.user && !paid && !welcomed) {
-        try {
-          localStorage.setItem('os_show_clip_tutorial', '1');
-          localStorage.setItem('os_welcomed', '1');
-        } catch (_) { /* ignore */ }
-      }
-    } catch (e) {
-      // fall through — user lands signed-out
-    } finally {
-      setSigningIn(false);
-      // Clear the sensitive hash, land wherever we resolved above.
-      window.location.hash = destination;
-    }
-    return true;
-  }, [refreshMe]);
 
   // O token curto das URLs de mídia. Sem ele, com a auth ligada, todo `<video>`
   // do painel volta 404 — o player não tem como mandar cabeçalho.
@@ -156,48 +86,26 @@ export function AuthProvider({ children }) {
       setConfig(cfg);
       setConfigCarregada(true);
       try {
-        // `authAtiva` entrou aqui na Fase 4, e não é detalhe: `billingEnabled`
-        // é sempre falso neste fork (ADR-001), então sem esta segunda condição
-        // o `refreshMe` nunca rodava no boot — e quem tinha token válido caía
-        // na tela de login para sempre, porque `me` ficava nulo.
-        if (cfg.billingEnabled || cfg.authAtiva) {
-          const handled = cfg.billingEnabled ? await handleAuthHash() : false;
-          if (!handled) await refreshMe();
-          if (cfg.authAtiva) await pegarMediaToken();
+        // Com a auth ligada, quem tem token válido volta logado: sem o
+        // `refreshMe` no boot, `me` ficava nulo e a pessoa caía na tela de
+        // login para sempre (Fase 4).
+        if (cfg.authAtiva) {
+          await refreshMe();
+          await pegarMediaToken();
         }
       } catch (_) { /* sessão inválida: o refreshMe já limpa o token */ }
       setLoading(false);
     })();
     return () => { vivo = false; };
-  }, [handleAuthHash, refreshMe, pegarMediaToken]);
-
-  const requestMagicLink = useCallback(async (email) => {
-    const res = await apiFetch('/api/auth/magic-link', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    if (res.status === 429) throw new Error('Too many attempts. Try again in a few minutes.');
-    if (!res.ok) throw new Error('Could not send sign-in link.');
-    return true;
-  }, []);
-
-  const loginWithGoogle = useCallback(() => {
-    window.location.href = getApiUrl('/api/auth/google');
-  }, []);
+  }, [refreshMe, pegarMediaToken]);
 
   const logout = useCallback(() => {
     clearToken();
     setMediaToken('');
     setMe(null);
-    resetAnalytics();
   }, []);
 
   // --- Auth própria (Fase 4) -------------------------------------------------
-  // O magic-link e o Google acima morreram com o `cloud/` (ADR-001): os
-  // endpoints que eles chamam não existem mais neste fork. Ficam no arquivo
-  // porque o frontend inteiro vai ser trocado e apagá-los agora seria mexer em
-  // código marcado para sair. O que funciona é isto.
 
   // Recarrega `authAtiva` do servidor. Chamado depois do bootstrap, quando a
   // resposta de `/api/config` de antes já está desatualizada por definição.
@@ -242,7 +150,6 @@ export function AuthProvider({ children }) {
   }, [refreshMe, refreshConfig, pegarMediaToken]);
 
   const value = {
-    billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
     // O programa deste computador tem chave do Gemini (do .env ou colada nas
     // Configurações): o navegador não precisa ter a dele.
@@ -251,26 +158,16 @@ export function AuthProvider({ children }) {
     // compara com a publicada.
     motor: config.motor || null,
     configCarregada,
-    googleAuthEnabled: config.googleAuthEnabled,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,
-    signingIn,
-    user: me?.user || null,
     me,
-    plan: me?.plan || null,
-    entitled: !!me?.entitled,
-    minutes: me?.minutes || null,
-    // `user_id` é o campo do `/api/me` desta fase; `user` era o do cloud.
-    isSignedIn: !!(me?.user_id || me?.user),
+    // `user_id` é o campo do `/api/me` da Fase 4.
+    isSignedIn: !!me?.user_id,
     authAtiva: !!config.authAtiva,
-    // Managed = signed-in AND entitled (active plan or top-up credit).
-    isManaged: !!(config.billingEnabled && me?.entitled),
     refreshMe,
     refreshConfig,
     entrar,
     definirDono,
-    requestMagicLink,
-    loginWithGoogle,
     logout,
   };
 

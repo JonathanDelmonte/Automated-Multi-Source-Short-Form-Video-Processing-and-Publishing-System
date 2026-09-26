@@ -242,10 +242,9 @@ paga. Foi re-alojado no passo de descrição, que agora é o último.
 > upstream. Ver `DECISOES.md`, ADR-009, e `docs/OPORTUNIDADES.md` Parte D para o
 > que preservar ao trocar o frontend.
 >
-> **Continuam pendentes:** `examples/n8n/`, `ops/` e `design.md`, mais a UI de
-> cobrança do painel (`TrialGate`, `TopUpModal`, `PlanChoiceModal`, `UsageMeter`,
-> `InvoicesCard`, `WatermarkModal`), inalcançável desde o ADR-001. Nenhum deles
-> está no caminho de quem abre a ferramenta.
+> **O resto saiu na limpeza da etapa 7.1a (26-set-2026):** `examples/n8n/`,
+> `ops/` e `design.md`, a UI de cobrança do painel, as telas de conta em nuvem e
+> a aba AI Agent. Ver o `PLANO-DA-PLATAFORMA.md`.
 
 ### 0.4 — Cascata de LLM gratuita · 1–2 dias · ✅ CONCLUÍDA
 

@@ -24,7 +24,9 @@ def test_a_config_e_pedida_ate_o_servidor_responder():
 
 def test_falta_de_chave_so_vale_com_a_config_carregada():
     fonte = APP.read_text(encoding="utf-8")
-    assert "const keysMissing = !billingEnabled && configCarregada && !geminiOk;" in fonte
+    # O `!billingEnabled` que vinha na frente saiu com a UI de cobranca (7.1a):
+    # a guarda e a outra metade, a config ja carregada.
+    assert "const keysMissing = configCarregada && !geminiOk;" in fonte
 
 
 def test_enquanto_espera_o_painel_diz_o_que_esta_fazendo():

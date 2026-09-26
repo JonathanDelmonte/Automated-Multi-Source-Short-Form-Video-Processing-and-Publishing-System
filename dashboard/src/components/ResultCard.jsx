@@ -6,9 +6,6 @@ import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import Modal from './ui/Modal';
 import SegmentedControl from './ui/SegmentedControl';
-import WatermarkModal, { watermarkNoticeDismissed } from './WatermarkModal';
-import TikTokDraftNotice from './TikTokDraftNotice';
-import { useAuth } from '../contexts/AuthContext';
 import { renderInBrowser } from '../lib/renderInBrowser';
 
 const QUIET_BTN = 'group flex flex-col items-center justify-center gap-1 py-2.5 sm:py-2 px-1 rounded-input border border-rule hover:bg-paper3 text-[11px] lowercase text-ink2 whitespace-nowrap transition-colors disabled:opacity-45 disabled:cursor-not-allowed';
@@ -29,11 +26,9 @@ function formatDuration(clip) {
     return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
 }
 
-export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, geminiNoMotor = false, isManaged, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, onEditClip = null, onReframeClip = null }) {
+export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, geminiNoMotor = false, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, onEditClip = null, onReframeClip = null }) {
     const [showDescModal, setShowDescModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
-    const [showWatermarkModal, setShowWatermarkModal] = useState(false);
-    const { plan } = useAuth();
     const videoRef = React.useRef(null);
     // Pristine base clip (no burned subtitles/hook), stable regardless of how
     // clip.video_url mutates after server edits. Used as the compositing base
@@ -226,10 +221,9 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
         try {
             const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
 
-            // Managed (paid) users get the Gemini key resolved server-side;
-            // only BYOK/self-host needs a local key -- ou a do programa deste
-            // computador, colada nas Configurações (chaves_ia.py).
-            if (!apiKey && !isManaged && !geminiNoMotor) {
+            // A chave do navegador ou a do programa deste computador, colada
+            // nas Configurações (chaves_ia.py).
+            if (!apiKey && !geminiNoMotor) {
                 throw new Error("Falta a chave do Google Gemini: coloque-a nas Configurações.");
             }
             const geminiHeaders = apiKey ? { 'X-Gemini-Key': apiKey } : {};
@@ -733,12 +727,6 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
                     <button
                         onClick={(e) => {
                             e.preventDefault();
-                            // Free clips are watermarked — surface the upsell once
-                            // before the first download, then get out of the way.
-                            if (plan === 'free' && !watermarkNoticeDismissed()) {
-                                setShowWatermarkModal(true);
-                                return;
-                            }
                             downloadClip();
                         }}
                         className={`${QUIET_BTN}${onEditClip ? ' col-span-2' : ''}`}
@@ -826,13 +814,6 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
                 onRemove={burnedHook ? handleRemoveHook : null}
             />
 
-
-            {showWatermarkModal && (
-                <WatermarkModal
-                    onClose={() => setShowWatermarkModal(false)}
-                    onContinue={downloadClip}
-                />
-            )}
 
         </div>
     );

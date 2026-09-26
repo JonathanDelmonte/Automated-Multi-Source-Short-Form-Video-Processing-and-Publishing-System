@@ -195,13 +195,19 @@ parecem arbitrarias no codigo estao justificadas la.
   `#/oauth/authorize`, `#/deleted` ou `#/auth/`.
   - Saiu junto o que so servia a isso: o inicializador do OpenPanel no
     `index.html`, o `public/op1.js`, o `lib/consent.js` e o `CookieBanner`.
-    **`lib/analytics.js` continua existindo como no-op explicito** -- ha 13
-    chamadas a `track()` em quatro arquivos, e o cabecalho do modulo diz por
-    que elas ficaram. Nao reintroduzir telemetria sem decisao consciente.
-  - **Ficou de fora de proposito**: a UI de cobranca (`TrialGate`,
-    `TopUpModal`, `PlanChoiceModal`, `UsageMeter`, `InvoicesCard`,
-    `WatermarkModal`), inalcancavel via `billingEnabled` desde o ADR-001, e
-    `examples/n8n/`, `ops/`, `design.md`. Candidatos ao proximo corte.
+    **`lib/analytics.js` saiu na limpeza da 7.1a** (26-set-2026): as
+    chamadas a `track()` moravam todas na UI de cobranca e no tutorial de
+    cadastro em nuvem, e nao sobrou nenhuma. Nao reintroduzir telemetria sem
+    decisao consciente.
+  - **O resto saiu na limpeza da 7.1a (26-set-2026)**: a UI de cobranca
+    (`TrialGate`, `TopUpModal`, `PlanChoiceModal`, `UsageMeter`,
+    `InvoicesCard`, `WatermarkModal`, `TrialUpgradeModal`), as telas de conta
+    em nuvem (`AccountPage` e os cartoes dela, `OAuthConsent`, as rotas
+    `#/account`, `#/oauth/authorize`, `#/deleted` e `#/auth/`), o login por
+    link magico e Google do `AuthContext`, `LoginModal`, `ProfileMenu`,
+    `HistoryTab`, `Gallery`, `ClipTutorial`, `TikTokDraftNotice`, a aba AI
+    Agent, e `examples/n8n/`, `ops/`, `design.md`. O `billingEnabled` e o
+    `isManaged` sairam do contexto: nao sobrou quem os lesse.
   - O que preservar ao trocar o frontend esta na Parte D de
     `docs/OPORTUNIDADES.md`: sao ~580 linhas (`src/tokens.css` com 53, o
     mapeamento em `tailwind.config.js`, as classes de `index.css` e os tres

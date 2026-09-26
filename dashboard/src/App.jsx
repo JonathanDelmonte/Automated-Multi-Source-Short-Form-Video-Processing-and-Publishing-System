@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { FolderOpen, ArrowLeft, Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { FolderOpen, ArrowLeft, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, Image, RotateCcw, AlertTriangle, KeyRound, Copy, Loader2, Download, Menu } from 'lucide-react';
 import ChavesDeIA from './components/ChavesDeIA';
 import MediaInput from './components/MediaInput';
 import ProjectsList from './components/ProjectsList';
@@ -11,26 +11,15 @@ import Versoes from './components/Versoes';
 import { seloDaIA } from './lib/seloDaIA';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
-// import Gallery from './components/Gallery';
 import ThumbnailStudio from './components/ThumbnailStudio';
 import ClipEditor from './components/ClipEditor';
 import ReframeEditor from './components/ReframeEditor';
-import UsageMeter from './components/UsageMeter';
-import TopUpModal from './components/TopUpModal';
-import PlanChoiceModal from './components/PlanChoiceModal';
-import ClipTutorial from './components/ClipTutorial';
-import TrialUpgradeModal from './components/TrialUpgradeModal';
-import LoginModal from './components/LoginModal';
-import TrialGate from './components/TrialGate';
-import HistoryTab from './components/HistoryTab';
-import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
-import { apiFetch, apiJson, QuotaError } from './lib/api';
+import { apiFetch } from './lib/api';
 import { API_BASE_URL } from './config';
 import { URL_DO_INSTALADOR } from './lib/ajudante';
 import AvisoDoMotor from './components/AvisoDoMotor';
-import { track } from './lib/analytics';
 import { useAquecerTranscricao } from './lib/aquecerTranscricao';
 
 // Simple TikTok icon sine Lucide might not have it or it varies
@@ -40,116 +29,12 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
   </svg>
 );
 
-// Cloud accounts get an auto-generated opaque id (os_<hash>) as username —
-// meaningless to the user, so the selector shows connected networks instead.
-const isAutoProfileId = (username) => /^os_[0-9a-f]/i.test(username || "");
-
 const formatRetention = (seconds) => {
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)} day${seconds >= 172800 ? 's' : ''}`;
-  if (seconds >= 3600) return `${Math.round(seconds / 3600)} hour${seconds >= 7200 ? 's' : ''}`;
+  if (seconds >= 86400) return `${Math.round(seconds / 86400)} dia${seconds >= 172800 ? 's' : ''}`;
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)} hora${seconds >= 7200 ? 's' : ''}`;
   return `${Math.max(1, Math.round(seconds / 60))} min`;
 };
 
-const ProfileNetworkIcons = ({ profile, size = 12 }) => (
-  <span className="flex items-center gap-1.5">
-    <span className={profile?.connected?.includes('tiktok') ? 'text-ink' : 'text-muted opacity-40'}>
-      <TikTokIcon size={size} />
-    </span>
-    <span className={profile?.connected?.includes('instagram') ? 'text-ink' : 'text-muted opacity-40'}>
-      <Instagram size={size} />
-    </span>
-    <span className={profile?.connected?.includes('youtube') ? 'text-ink' : 'text-muted opacity-40'}>
-      <Youtube size={size} />
-    </span>
-  </span>
-);
-
-const UserProfileSelector = ({ profiles, selectedUserId, onSelect, onConnect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  if (!profiles || profiles.length === 0) return null;
-
-  const selectedProfile = profiles.find(p => p.username === selectedUserId) || profiles[0];
-  const autoId = isAutoProfileId(selectedProfile?.username);
-
-  return (
-    <div className="relative z-50">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label="social profile"
-        /* Phone: avatar + chevron only. A 180px pill next to the menu button,
-           the section title and the minutes meter overflowed a 360px header. */
-        className="flex items-center justify-between gap-1 bg-paper2 border border-rule2 rounded-input px-2 sm:px-3 py-2 text-sm text-ink2 hover:bg-paper3 transition-colors sm:min-w-[180px]"
-      >
-        <span className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-full bg-paper3 border border-rule flex items-center justify-center font-mono text-micro text-brass shrink-0">
-            {autoId ? "S" : (selectedProfile?.username?.substring(0, 1).toUpperCase() || "U")}
-          </div>
-          {autoId ? (
-            <span className="hidden sm:flex"><ProfileNetworkIcons profile={selectedProfile} size={13} /></span>
-          ) : (
-            <span className="hidden sm:block font-medium text-ink truncate max-w-[100px]">{selectedProfile?.username || "Select User"}</span>
-          )}
-        </span>
-        <ChevronDown size={14} className={`text-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute top-full mt-2 right-0 w-64 card overflow-hidden">
-          <div className="max-h-60 overflow-y-auto custom-scrollbar">
-            {profiles.map((profile) => (
-              <button
-                key={profile.username}
-                onClick={() => {
-                  onSelect(profile.username);
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-paper3 transition-colors text-left group border-b border-rule last:border-0"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-paper3 flex items-center justify-center font-mono text-micro text-ink border border-rule shrink-0">
-                    {isAutoProfileId(profile.username) ? "S" : profile.username.substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-ink2 group-hover:text-ink transition-colors truncate">
-                      {isAutoProfileId(profile.username)
-                        ? `Social profile ${profiles.indexOf(profile) + 1}`
-                        : profile.username}
-                    </div>
-                    <div className="flex gap-2 mt-0.5">
-                      {/* Status indicators */}
-                      <div className={`flex items-center gap-1 ${profile.connected.includes('tiktok') ? 'text-ink2' : 'text-muted opacity-40'}`}>
-                        <TikTokIcon size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 ${profile.connected.includes('instagram') ? 'text-ink2' : 'text-muted opacity-40'}`}>
-                        <Instagram size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 ${profile.connected.includes('youtube') ? 'text-ink2' : 'text-muted opacity-40'}`}>
-                        <Youtube size={10} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {selectedUserId === profile.username && <Check size={14} className="text-brass shrink-0" />}
-              </button>
-            ))}
-          </div>
-          {/* For managed users this dropdown otherwise does nothing (one profile,
-              nothing to switch) — its real job is being the door to connecting
-              the greyed-out networks it displays. */}
-          {onConnect && (
-            <button
-              onClick={() => { setIsOpen(false); onConnect(); }}
-              className="w-full flex items-center gap-2 px-4 py-3 text-sm text-brass hover:bg-paper3 transition-colors text-left border-t border-rule"
-            >
-              <Share2 size={14} /> Connect / manage accounts
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
 
 const SESSION_KEY = 'openshorts_session';
 // Matches the self-host JOB_RETENTION_SECONDS default. A restore whose job was
@@ -274,25 +159,12 @@ const pollJob = async (jobId) => {
 };
 
 function App() {
-  // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, geminiNoMotor, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
+  const { isSignedIn, jobRetentionSeconds, localLlm, geminiNoMotor, configCarregada, authAtiva, motor, loading: authLoading } = useAuth();
   // Segura o modelo de transcrição na placa enquanto esta aba estiver aberta.
   // Só depois da config, e só com sessão quando a instalação tem senha: antes
   // disso o servidor responderia 401 a cada dois minutos.
   useAquecerTranscricao(configCarregada && (!authAtiva || isSignedIn));
-  const [showLogin, setShowLogin] = useState(false);
-  const [showTopUp, setShowTopUp] = useState(false);
-  const [showPlanChoice, setShowPlanChoice] = useState(false);
-  const [tutorialPhase, setTutorialPhase] = useState(null); // null | intro | coach | celebrate
-  const [showTrialUpgrade, setShowTrialUpgrade] = useState(false);
-  const [topUpInfo, setTopUpInfo] = useState({});
-  // Durable R2 URLs (per clip index) for the current job — used as a fallback when
-  // the ephemeral local /videos/ files have been cleaned up (e.g. after a reload).
-  const [durableClips, setDurableClips] = useState({});
-
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  // Post-generation social nudge: shown at the results peak until the user
-  // either connects a network or dismisses it. Only 2.7% of cloud users who
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
@@ -343,13 +215,6 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
   // Mobile only: the full nav lives in a drawer behind the header's menu button.
   const [navOpen, setNavOpen] = useState(false);
-  // Reopened-project state (paid mode): per-clip {index, server_file, active_layers}
-  // restored from the backend so ResultCards resume editing where they left off.
-  const [projectState, setProjectState] = useState(null);
-  // True when the current job was reopened from the library: its source video
-  // was never persisted, so the session must not fall back to /api/source.
-  const [noSource, setNoSource] = useState(false);
-
   const [sessionRecovered, setSessionRecovered] = useState(false);
   // Clip editor overlay: index of the clip being edited, or null.
   const [editingClip, setEditingClip] = useState(null);
@@ -370,86 +235,10 @@ function App() {
     setIsSyncedPlaying(false);
   };
 
-  // --- Project persistence (paid mode) ---
-  // Debounced sync of each clip's browser-only edit state (Remotion layers +
-  // current server file) to the backend, so a reopened project resumes intact.
-  const clipStateSync = useRef({ jobId: null, pending: {}, files: {}, timer: null });
-  // Read by in-flight async chases to notice that the user moved on to another job.
-  const jobIdRef = useRef(jobId);
-  useEffect(() => { jobIdRef.current = jobId; }, [jobId]);
-
-  const flushClipState = () => {
-    const s = clipStateSync.current;
-    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
-    const entries = Object.entries(s.pending);
-    if (!s.jobId || entries.length === 0) return;
-    const clips = entries.map(([i, v]) => ({
-      index: Number(i),
-      active_layers: v.activeLayers,
-      server_file: v.serverVideoFile,
-    }));
-    s.pending = {};
-    apiFetch(`/api/projects/${s.jobId}/state`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clips }),
-    }).catch(() => {});
-  };
-
-  // One /api/history read, reduced to this job's clips.
-  const fetchDurableMap = async () => {
-    const d = await apiJson('/api/history');
-    const map = {};
-    for (const v of (d.videos || [])) {
-      if (v.job_id === jobId && v.clip_index != null) map[v.clip_index] = { url: v.view_url, filename: v.filename };
-    }
-    return map;
-  };
-
-  // A server-side edit rewrites the clip's file while the R2 re-archive behind it
-  // is still in flight (_archive_clip_edit_bg is fire-and-forget), so the durable
-  // map goes stale and the card falls back to streaming from the API. Re-read the
-  // map on a backoff until the archived name matches the clip's new file, then it
-  // can play from R2 again. Gives up quietly: staying on /videos is correct, just
-  // slower, and is exactly what happens for self-hosted users all the time.
-  const chaseDurableFile = async (index, expectedFile) => {
-    const forJob = jobId;
-    for (const delay of [2500, 6000, 15000, 30000]) {
-      await new Promise((r) => setTimeout(r, delay));
-      if (jobIdRef.current !== forJob) return;
-      let map;
-      try { map = await fetchDurableMap(); } catch { return; }
-      // A new job started mid-chase: this map describes the old one, so dropping
-      // it here keeps it from overwriting the new job's URLs.
-      if (jobIdRef.current !== forJob) return;
-      setDurableClips(map);
-      if (map[index]?.filename === expectedFile) return;
-    }
-  };
-
-  const handleClipStateChange = (index, state) => {
-    if (!isManaged || !jobId) return;
-    const s = clipStateSync.current;
-    if (s.jobId !== jobId) { s.pending = {}; s.files = {}; s.jobId = jobId; }
-    s.pending[index] = state;
-    // Cards report on mount too, so only an actual change of server file means an
-    // edit just landed. The first report per clip is the mount, never a chase.
-    const files = s.files || (s.files = {});
-    const file = state?.serverVideoFile;
-    if (file && files[index] !== file) {
-      const isMount = files[index] === undefined;
-      files[index] = file;
-      if (!isMount) chaseDurableFile(index, file);
-    }
-    if (s.timer) clearTimeout(s.timer);
-    s.timer = setTimeout(flushClipState, 2000);
-  };
-
   // A recut replaced the clip's server file with a fresh render (burned layers
-  // reset), so update the results, the reopened-project state and the synced
-  // per-clip edit state, and let the ResultCard remount from the new file.
+  // reset), so update the results and let the ResultCard remount from the new
+  // file.
   const handleClipRerendered = (index, data) => {
-    const newFile = (data.new_video_url || '').split('/').pop();
     setResults((prev) => {
       if (!prev?.clips?.[index]) return prev;
       const clips = prev.clips.slice();
@@ -462,40 +251,6 @@ function App() {
       };
       return { ...prev, clips };
     });
-    setProjectState((prev) => {
-      if (!prev?.clips) return prev;
-      return {
-        ...prev,
-        clips: prev.clips.map((c) => (c.index === index
-          ? { ...c, server_file: newFile, active_layers: null }
-          : c)),
-      };
-    });
-    // The old durable R2 object is deleted when the recut is archived, so the
-    // stale URL would 404 as a fallback; drop it until the next refresh.
-    setDurableClips((prev) => {
-      if (!(index in prev)) return prev;
-      const next = { ...prev };
-      delete next[index];
-      return next;
-    });
-    handleClipStateChange(index, { activeLayers: null, serverVideoFile: newFile });
-  };
-
-  // Reopen an archived project from the History tab: the backend re-downloads
-  // its files from R2 into the server's working dir and returns the full state.
-  const restoreProject = async (projectJobId) => {
-    const data = await apiJson(`/api/projects/${projectJobId}/restore`, { method: 'POST' });
-    flushClipState();
-    setProjectState(data.project_state || null);
-    setNoSource(true);
-    setJobId(data.job_id);
-    setResults(data.result || null);
-    setLogs(['♻️ Project restored from your library.']);
-    setProcessingMedia(null);
-    setQualityGate(null);
-    setStatus('complete');
-    setActiveTab('dashboard');
   };
 
   // Apply one subtitle style to every clip of the job, sequentially.
@@ -537,7 +292,6 @@ function App() {
       }
     }
     setBulkSub({ running: false, current: total, total, errors });
-    refreshMe();
     // Refresh results so each ResultCard picks up its new subtitled video_url.
     try {
       const data = await pollJob(jobId);
@@ -581,12 +335,9 @@ function App() {
         setJobId(session.jobId);
         setResults(session.results || null);
         // Restore the source preview. Older sessions (or uploads) saved no
-        // media, so fall back to the backend-served source for this job —
-        // except for reopened projects, whose source was never persisted.
+        // media, so fall back to the backend-served source for this job.
         if (session.processingMedia) setProcessingMedia(session.processingMedia);
-        else if (!session.noSource) setProcessingMedia({ type: 'server', payload: `/api/source/${session.jobId}` });
-        if (session.noSource) setNoSource(true);
-        if (session.projectState) setProjectState(session.projectState);
+        else setProcessingMedia({ type: 'server', payload: `/api/source/${session.jobId}` });
         if (session.activeTab) setActiveTab(session.activeTab);
         // If was processing, resume polling; if complete/error, just show results
         setStatus(session.status === 'processing' ? 'processing' : session.status);
@@ -617,8 +368,6 @@ function App() {
         results,
         processingMedia: persistMedia,
         activeTab,
-        noSource,
-        projectState,
         timestamp: Date.now()
       };
       localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
@@ -626,7 +375,7 @@ function App() {
       // localStorage full or serialization error - ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, status, results, activeTab, noSource, projectState]);
+  }, [jobId, status, results, activeTab]);
 
   useEffect(() => {
     // A chave do Gemini no NAVEGADOR é a de antes das chaves no programa
@@ -638,62 +387,15 @@ function App() {
     } catch { /* localStorage bloqueado: vale só nesta aba */ }
   }, [apiKey]);
 
-  // For managed users, fetch the durable R2 URLs of the current job's clips. The
-  // preview player prefers them (free egress, edge-served, and not competing with
-  // the renders for the API process), and falls back to /videos when the local
-  // file is newer than the archived one or the signed link fails.
-  // Kept fresh by chaseDurableFile after each edit and by the completion chase
-  // below; until either lands, the card just streams from /videos.
-  useEffect(() => {
-    if (!isManaged || !jobId || !(results?.clips?.length)) { setDurableClips({}); return; }
-    let cancelled = false;
-    fetchDurableMap()
-      .then((map) => { if (!cancelled) setDurableClips(map); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // Keyed on the clip COUNT, not on results: the status poll hands back a new
-    // results object every couple of seconds while the job runs, and this used to
-    // re-read the history on every one of them.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isManaged, jobId, results?.clips?.length]);
-
-  // A job is marked complete BEFORE _archive_managed_job has finished uploading
-  // (app.py:878), so the read above can land while R2 still has nothing for it and
-  // every card would stream from the API for the rest of the session. Chase until
-  // all clips have a durable copy.
-  useEffect(() => {
-    const count = results?.clips?.length || 0;
-    if (!isManaged || !jobId || status !== 'complete' || !count) return;
-    let cancelled = false;
-    (async () => {
-      for (const delay of [0, 3000, 8000, 20000, 40000]) {
-        if (delay) await new Promise((r) => setTimeout(r, delay));
-        if (cancelled) return;
-        let map;
-        try { map = await fetchDurableMap(); } catch { return; }
-        if (cancelled) return;
-        setDurableClips(map);
-        if (Object.keys(map).length >= count) return;
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isManaged, jobId, status, results?.clips?.length]);
-
   // Declarado aqui, e nao mais abaixo: o efeito de polling passou a depender
   // dele para limpar a sessao de um job que sumiu, e `const` nao sofre
   // hoisting -- no array de dependencias ele cairia na zona morta temporal.
   const handleReset = useCallback(() => {
-    // Flush any pending edit-state sync before dropping the project: the clips
-    // themselves are already archived to R2 as they were edited.
-    flushClipState();
     setStatus('idle');
     setJobId(null);
     setResults(null);
     setLogs([]);
     setProcessingMedia(null);
-    setProjectState(null);
-    setNoSource(false);
     setStage(null);
     // Voltar para a tela inicial e o momento em que a lista precisa estar certa:
     // o job que acabou de terminar tem de aparecer nela sem esperar o polling.
@@ -797,13 +499,11 @@ function App() {
             if (data.logs) setLogs(linhasDoStatus(data));
             setStatus('complete');
             clearInterval(interval);
-            refreshMe();
           } else if (data.status === 'failed') {
             setStatus('error');
             const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
             setLogs(prev => [...(data.logs ? linhasDoStatus(data) : prev), "Error: " + errorMsg]);
             clearInterval(interval);
-            refreshMe();
           } else {
             // Update logs if available
             if (data.logs) setLogs(linhasDoStatus(data));
@@ -825,99 +525,21 @@ function App() {
       }, 2000);
     }
     return () => clearInterval(interval);
-  }, [status, jobId, refreshMe, handleReset]);
+  }, [status, jobId, handleReset]);
 
 
-  // Hosted is paid-only (no BYOK core). Self-host uses BYOK keys.
-  // `keysMissing` now means "self-host BYOK keys missing" — it never fires on hosted.
-  // A self-hosted server running the moment picker on a local LLM
-  // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
+  // A chave do navegador, um LLM local (LLM_BASE_URL) ou a do programa deste
+  // computador bastam para o motor achar os momentos.
   // `geminiNoMotor`: a chave colada nas Configurações mora no programa deste
   // computador, e não no navegador (chaves_ia.py).
   const geminiOk = !!apiKey || !!localLlm || geminiNoMotor;
   // So com a config em mãos: antes dela, `localLlm` nulo quer dizer "ainda não
   // sei", não "não tem". Confundir os dois era o aviso de chave que aparecia
   // logo depois do atualizar.bat e sumia no F5.
-  const keysMissing = !billingEnabled && configCarregada && !geminiOk;
-  const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
-
-  // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
-  // after the auth redirect). QA: #app?tutorial=1. Resume coach if they refreshed
-  // mid-job. Runs once on mount so a later isSignedIn flip cannot reset intro→coach.
-  useEffect(() => {
-    let showTutorial = false;
-    let resumeCoach = false;
-    try {
-      const q = new URLSearchParams((window.location.hash.split('?')[1] || ''));
-      const qa = q.get('tutorial');
-      if (qa === '1') showTutorial = true;
-      if (qa === 'coach') resumeCoach = true;
-      if (qa === 'celebrate') { setTutorialPhase('celebrate'); return; }
-      if (localStorage.getItem('os_show_clip_tutorial') === '1') showTutorial = true;
-      if (localStorage.getItem('os_clip_tutorial') === 'coach') resumeCoach = true;
-    } catch (_) { /* ignore */ }
-    if (showTutorial) {
-      setTutorialPhase('intro');
-      setActiveTab('dashboard');
-    } else if (resumeCoach) {
-      setTutorialPhase('coach');
-      setActiveTab('dashboard');
-    }
-  }, []);
-
-  // Legacy: an older build may still have set os_show_plan_choice. Don't open it
-  // on top of the tutorial.
-  useEffect(() => {
-    if (tutorialPhase) return;
-    if (!(billingEnabled && isSignedIn)) return;
-    let showPlans = false;
-    try { showPlans = localStorage.getItem('os_show_plan_choice') === '1'; } catch (_) { /* ignore */ }
-    if (showPlans) {
-      setShowPlanChoice(true);
-      try { localStorage.removeItem('os_show_plan_choice'); } catch (_) { /* ignore */ }
-    }
-  }, [billingEnabled, isSignedIn, tutorialPhase]);
-
-  const tutorialLock = tutorialPhase === 'intro' || tutorialPhase === 'coach' || tutorialPhase === 'celebrate';
-
-  useEffect(() => {
-    if (tutorialLock && activeTab !== 'dashboard') setActiveTab('dashboard');
-  }, [tutorialLock, activeTab]);
-
-  useEffect(() => {
-    if (tutorialPhase === 'coach' && status === 'complete' && (results?.clips?.length > 0)) {
-      setTutorialPhase('celebrate');
-      track('ClipTutorialCompleted', { props: { clips: results.clips.length } });
-    }
-  }, [tutorialPhase, status, results]);
-
-  const finishTutorial = () => {
-    try { localStorage.setItem('os_clip_tutorial', 'done'); } catch (_) { /* ignore */ }
-    try { localStorage.removeItem('os_show_clip_tutorial'); } catch (_) { /* ignore */ }
-    setTutorialPhase(null);
-  };
-  const startTutorial = () => {
-    try { localStorage.setItem('os_clip_tutorial', 'coach'); } catch (_) { /* ignore */ }
-    try { localStorage.removeItem('os_show_clip_tutorial'); } catch (_) { /* ignore */ }
-    track('ClipTutorialStarted');
-    setTutorialPhase('coach');
-    setActiveTab('dashboard');
-  };
-  const skipTutorial = () => {
-    track('ClipTutorialSkipped', { props: { phase: tutorialPhase } });
-    finishTutorial();
-  };
-  // Included in the plan (fully managed, no keys): Clip Generator + YouTube Studio.
-  const INCLUDED_TOOL_TABS = ['dashboard', 'thumbnails'];
-  const TOOL_NAMES = { dashboard: 'the Clip Generator', thumbnails: 'the YouTube Studio' };
-  const gateThisTab = needsPlan && INCLUDED_TOOL_TABS.includes(activeTab);      // included tool, no plan yet
+  const keysMissing = configCarregada && !geminiOk;
 
   const handleProcess = async (data, forceLowQuality = false) => {
-    // Hosted: must be signed in AND on an active plan/trial. Self-host: BYOK keys.
-    if (billingEnabled) {
-      if (!isSignedIn) { setShowLogin(true); return; }
-      if (!isManaged) { window.location.hash = '#/pricing'; return; }
-    } else if (keysMissing) {
+    if (keysMissing) {
       setShowKeyModal(true);
       return;
     }
@@ -928,13 +550,10 @@ function App() {
     // backend-served source once the job id is known.
     setProcessingMedia(data.type === 'thumbnail_session' ? null : data);
     setQualityGate(null);
-    setProjectState(null);
-    setNoSource(false);
 
     try {
       let body;
-      // BYOK sends the Gemini header; managed users rely on the bearer token
-      // that apiFetch attaches automatically.
+      // A chave do navegador vai no cabeçalho; a do programa, o motor já tem.
       const headers = apiKey ? { 'X-Gemini-Key': apiKey } : {};
 
       // Advanced generation controls: only sent when the user set them, so the
@@ -998,23 +617,8 @@ function App() {
       if (data.type === 'thumbnail_session') {
         setProcessingMedia({ type: 'server', payload: `/api/source/${resData.job_id}` });
       }
-      // Minutes are reserved at job start, not at complete.
-      refreshMe();
 
     } catch (e) {
-      if (e instanceof QuotaError) {
-        setStatus('idle');
-        refreshMe();
-        // Trial users hit the trial minute cap → prompt them to activate the plan
-        // now (unlocks full minutes). Active users → offer a top-up.
-        if (me?.status === 'trialing') {
-          setShowTrialUpgrade(true);
-        } else {
-          setTopUpInfo({ required: e.minutesRequired, remaining: e.minutesRemaining });
-          setShowTopUp(true);
-        }
-        return;
-      }
       setStatus('error');
       setLogs(l => [...l, `Error starting job: ${e.message}`]);
     }
@@ -1037,10 +641,8 @@ function App() {
   const navItems = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
     { id: 'projects', icon: FolderOpen, label: 'Projetos', short: 'projetos', primary: true },
-    { id: 'ai-agent', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
     { id: 'thumbnails', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     { id: 'publicar', icon: Share2, label: 'Publicação', short: 'publicar', primary: true },
-    ...(billingEnabled && isSignedIn ? [{ id: 'history', icon: History, label: 'History', short: 'history' }] : []),
     { id: 'settings', icon: Settings, label: 'Configurações', short: 'config' },
   ].map((item, i) => ({ ...item, ord: String(i + 1).padStart(2, '0') }));
   const activeNav = navItems.find((n) => n.id === activeTab);
@@ -1055,11 +657,9 @@ function App() {
   }, [navOpen]);
 
   const goToTab = (id) => {
-    if (tutorialLock && id !== 'dashboard') return;
     setActiveTab(id);
     setNavOpen(false);
   };
-  const tabLocked = (id) => tutorialLock && id !== 'dashboard';
 
   // Shared footer links (landing, repo, pricing, contact) — same list in the
   // desktop rail and the mobile drawer, so they can never drift apart.
@@ -1095,20 +695,15 @@ function App() {
           return (
             <button
               key={item.id}
-              data-tutorial={item.id === 'dashboard' ? 'nav-clips' : undefined}
               onClick={() => goToTab(item.id)}
-              title={tabLocked(item.id) ? 'Finish your first clips to unlock' : item.label}
-              disabled={tabLocked(item.id)}
-              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted hover:text-ink2 hover:bg-paper3/50'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-muted' : ''}`}
+              title={item.label}
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted hover:text-ink2 hover:bg-paper3/50'}`}
             >
               {isActive && (
                 <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-brass rounded-full" aria-hidden="true" />
               )}
               <NavIcon size={18} className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
               <span className="text-sm lowercase hidden lg:block flex-1 text-left truncate">{item.label}</span>
-              {tabLocked(item.id)
-                ? <Lock size={12} className="shrink-0 hidden lg:block" />
-                : item.byok ? <span className="readout hidden lg:block">BYOK</span> : null}
               <span className="readout hidden lg:block">{item.ord}</span>
             </button>
           );
@@ -1156,19 +751,14 @@ function App() {
               <button
                 key={item.id}
                 onClick={() => goToTab(item.id)}
-                disabled={tabLocked(item.id)}
                 aria-current={isActive ? 'page' : undefined}
-                title={tabLocked(item.id) ? 'Finish your first clips to unlock' : undefined}
-                className={`relative w-full flex items-center gap-3 px-3 py-3 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted active:bg-paper3/60'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={`relative w-full flex items-center gap-3 px-3 py-3 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted active:bg-paper3/60'}`}
               >
                 {isActive && (
                   <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-brass rounded-full" aria-hidden="true" />
                 )}
                 <NavIcon size={18} className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
                 <span className="text-[0.95rem] lowercase flex-1 text-left truncate">{item.label}</span>
-                {tabLocked(item.id)
-                  ? <Lock size={12} className="shrink-0" />
-                  : item.byok ? <span className="readout shrink-0">BYOK</span> : null}
               </button>
             );
           })}
@@ -1196,12 +786,9 @@ function App() {
             return (
               <button
                 key={item.id}
-                data-tutorial={item.id === 'dashboard' ? 'nav-clips' : undefined}
                 onClick={() => goToTab(item.id)}
-                disabled={tabLocked(item.id)}
                 aria-current={isActive ? 'page' : undefined}
-                title={tabLocked(item.id) ? 'Finish your first clips to unlock' : undefined}
-                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] transition-colors ${isActive ? 'text-ink' : 'text-muted active:text-ink2'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] transition-colors ${isActive ? 'text-ink' : 'text-muted active:text-ink2'}`}
               >
                 <NavIcon size={19} className={isActive ? 'text-brass' : ''} />
                 <span className="text-[10.5px] lowercase leading-none truncate max-w-full px-0.5">{item.short}</span>
@@ -1257,7 +844,7 @@ function App() {
             >
               <Menu size={20} />
             </button>
-            <span data-tutorial="nav-clips" className="md:hidden font-display uppercase tracking-wide text-base text-ink truncate">
+            <span className="md:hidden font-display uppercase tracking-wide text-base text-ink truncate">
               {activeNav?.label || 'Virtu Clips'}
             </span>
             {/* Dentro de um projeto, o que falta e VOLTAR -- o unico botao
@@ -1288,34 +875,11 @@ function App() {
 
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
 
-            {/* Cloud: minutes meter + account/sign-in. For free users the meter
-                opens the upgrade modal — otherwise the only path to a plan is
-                failing against the quota wall. */}
-            {billingEnabled && isManaged && (
-              <UsageMeter onClick={() => {
-                if (plan === 'free') { setTopUpInfo({ context: 'upsell' }); setShowTopUp(true); }
-                else { window.location.hash = '#/account'; }
-              }} />
-            )}
-            {billingEnabled && isSignedIn && !isManaged && (
-              <button onClick={() => setShowPlanChoice(true)}
-                className="btn-primary px-4 py-2 text-xs">
-                Choose a plan
-              </button>
-            )}
-            {billingEnabled && !isSignedIn && (
-              <button onClick={() => setShowLogin(true)}
-                className="btn-ghost px-4 py-2 text-xs">
-                Sign in
-              </button>
-            )}
-            {billingEnabled && isSignedIn && <ProfileMenu />}
-
             {/* Hidden below sm: the standing banner underneath already says the
                 same thing, and two warnings in a 360px header is just noise. */}
             {keysMissing && (
               <button
-                onClick={() => (billingEnabled && !isSignedIn ? setShowLogin(true) : goToTab('settings'))}
+                onClick={() => goToTab('settings')}
                 className="badge-warn hover:brightness-125 transition-all hidden sm:inline-flex"
                 title="Colocar uma chave de IA"
               >
@@ -1371,9 +935,6 @@ function App() {
           </div>
         )}
 
-        {/* Included tools (Clip Generator, YouTube Studio): non-blocking trial prompt. */}
-        {gateThisTab && <TrialGate toolName={TOOL_NAMES[activeTab] || 'this'} />}
-
         {/* Main Workspace */}
         <div className="flex-1 overflow-hidden relative">
 
@@ -1390,136 +951,18 @@ function App() {
                 </div>
               </div>
               {/* As chaves primeiro: sem elas nada processa. */}
-              {!billingEnabled && !isManaged && (
-                <ChavesDeIA chaveDoNavegador={apiKey} esquecerChaveDoNavegador={() => setApiKey('')} />
-              )}
-              {/* Self-hosted installs have no account page, so the agent
-                  how-to lives here; cloud users get it (with OAuth) in Account. */}
-              {!billingEnabled && <div className="mb-6"><McpConnectCard /></div>}
+              <ChavesDeIA chaveDoNavegador={apiKey} esquecerChaveDoNavegador={() => setApiKey('')} />
+              <div className="mb-6"><McpConnectCard /></div>
               {/* Por ultimo: e o que se copia para pedir ajuda, nao o que se usa. */}
-              {!billingEnabled && <Versoes />}
-              {isManaged ? (
-                <div className="card p-6 mb-2">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-input bg-paper3 flex items-center justify-center shrink-0">
-                        <Shield size={16} className="text-brass" />
-                      </div>
-                      <h2 className="text-base font-medium text-ink lowercase">Included in your plan</h2>
-                    </div>
-                    <span className="badge-ok">Managed</span>
-                  </div>
-                  <p className="text-xs text-muted mb-5 leading-relaxed">
-                    Your plan includes the <strong>Clip Generator</strong> and <strong>YouTube Studio</strong>,
-                    fully managed — no API keys required.
-                  </p>
-                </div>
-              ) : billingEnabled ? (
-                <div className="card p-6 mb-2">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-input bg-paper3 flex items-center justify-center shrink-0">
-                        <Sparkles size={16} className="text-brass" />
-                      </div>
-                      <h2 className="text-base font-medium text-ink lowercase">Choose your plan</h2>
-                    </div>
-                    <span className="badge-ok">Free plan available</span>
-                  </div>
-                  <p className="text-xs text-muted mb-5 leading-relaxed">
-                    Generate shorts with zero setup — no API keys needed. Start free with 20 min/month, or go paid from $12/mo. Cancel anytime.
-                  </p>
-                  <button onClick={() => setShowPlanChoice(true)} className="btn-primary py-2 px-4 text-sm">
-                    <Sparkles size={16} /> Choose a plan
-                  </button>
-                </div>
-              ) : null}
-
-
+              <Versoes />
             </div>
           )}
 
-
-          {/* View: AI Agent */}
-          {activeTab === 'ai-agent' && (
-            <div className="h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 md:p-10 animate-fade">
-              <div className="max-w-4xl mx-auto space-y-8">
-
-                {/* Header */}
-                <div className="space-y-3">
-                  <p className="eyebrow flex items-center gap-2">
-                    <Bot size={12} /> 03 · AI AGENT · AUTONOMOUS SKILL
-                  </p>
-                  <h1 className="font-display uppercase tracking-wide text-3xl md:text-4xl text-ink">
-                    Your Personal Clipping Team
-                  </h1>
-                  <p className="text-muted text-base md:text-lg leading-relaxed max-w-2xl">
-                    Drop your videos in a folder and a team of AI clippers picks the viral moments, edits them, and queues them for your approval — like having a 24/7 short-form editing crew on autopilot.
-                  </p>
-                </div>
-
-                {/* Mobile-format warning */}
-                <div className="px-4 py-3 rounded-card border border-rule bg-paper2 flex items-start gap-3">
-                  <Smartphone size={18} className="text-warn shrink-0 mt-0.5" />
-                  <div className="text-sm text-ink2">
-                    <p className="font-medium text-ink mb-1">Upload videos already in vertical (9:16) mobile format.</p>
-                    <p className="text-muted leading-relaxed">
-                      The agent does not reframe horizontal footage. Make sure every source video is shot or pre-cropped to mobile/portrait format before dropping it into the input folder.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Workflow */}
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div className="card p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-input bg-paper3 flex items-center justify-center">
-                      <Upload size={18} className="text-brass" />
-                    </div>
-                    <h3 className="font-medium text-ink lowercase">1. Drop your videos</h3>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Put your long-form vertical footage in the watched folder. The skill picks one video per run.
-                    </p>
-                  </div>
-
-                  <div className="card p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-input bg-paper3 flex items-center justify-center">
-                      <Users size={18} className="text-brass" />
-                    </div>
-                    <h3 className="font-medium text-ink lowercase">2. AI clippers work</h3>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Whisper transcribes, Gemini 3 Flash spots viral beats, FFmpeg cuts each clip and adds a hook overlay.
-                    </p>
-                  </div>
-
-                  <div className="card p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-input bg-paper3 flex items-center justify-center">
-                      <CheckCircle2 size={18} className="text-brass" />
-                    </div>
-                    <h3 className="font-medium text-ink lowercase">3. You validate, it ships</h3>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Approve the candidates you like and the clips are rendered ready to publish.
-                    </p>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-
-          {/* View: History */}
-          {activeTab === 'history' && (
-            <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
-              <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
-                <HistoryTab onReopenProject={restoreProject} />
-              </div>
-            </div>
-          )}
 
           {activeTab === 'thumbnails' && (
             <ThumbnailStudio
               geminiApiKey={apiKey}
               geminiNoMotor={geminiNoMotor}
-              managed={isManaged}
               onCreateClips={(sessionId) => {
                 setActiveTab('dashboard');
                 // The Studio source is the user's own upload, published to their
@@ -1528,11 +971,6 @@ function App() {
               }}
             />
           )}
-
-          {/* View: Gallery */}
-          {/* {activeTab === 'gallery' && (
-            <Gallery />
-          )} */}
 
           {activeTab === 'publicar' && <PublicacoesTab />}
 
@@ -1563,18 +1001,16 @@ function App() {
                   </p>
                   {/* The same pipeline is an MCP server: point people at the
                       one place that explains how to drive it from an agent. */}
-                  {!tutorialLock && (
                   <p className="text-xs text-muted">
-                    Or let an agent do it:{' '}
-                    <a
-                      href={billingEnabled ? '#/account' : '#app'}
-                      onClick={(e) => { if (!billingEnabled) { e.preventDefault(); goToTab('settings'); } }}
+                    Ou deixe um agente de IA fazer:{' '}
+                    <button
+                      type="button"
+                      onClick={() => goToTab('settings')}
                       className="text-ink2 underline underline-offset-2 hover:text-brass transition-colors"
                     >
-                      connect Claude, ChatGPT or n8n →
-                    </a>
+                      conectar o Claude, o Cursor ou o n8n →
+                    </button>
                   </p>
-                  )}
                 </div>
 
                 <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
@@ -1747,7 +1183,7 @@ function App() {
                     {/* Tokens, e nao dolares (25-set-2026): o selo dizia "GEMINI · $0.012"
                         com chave gratuita, que nao cobra nada -- e o preco e o do plano
                         pago. Quem respondeu e quanto custaria ficam no title. */}
-                    {results?.cost_analysis && !isManaged && (
+                    {results?.cost_analysis && (
                       <span className="readout bg-paper3 px-2.5 py-1 rounded-full" title={seloDaIA(results.cost_analysis).detalhe}>
                         {seloDaIA(results.cost_analysis).texto}
                       </span>
@@ -1771,24 +1207,12 @@ function App() {
 
                 {status === 'complete' && results?.clips?.length > 0 && (
                   <div className="mb-2 space-y-2">
-                    {/* Peak-moment upsell: they just SAW their clips — sell while
-                        they're proud of the result, before asking for stars. */}
-                    {plan === 'free' && (
-                      <button
-                        onClick={() => { setTopUpInfo({ context: 'upsell' }); setShowTopUp(true); }}
-                        className="w-full text-left px-3 py-2.5 rounded-input bg-paper3 border border-brass/40 hover:border-brass text-sm transition-colors"
-                      >
-                        <span className="text-ink">Like these clips?</span>{' '}
-                        <span className="text-muted">They carry a watermark and delete in 7 days.</span>{' '}
-                        <span className="text-brass font-medium">Keep them forever →</span>
-                      </button>
-                    )}
-                    {/* Self-host only: cloud archives clips to the video library,
-                        here they really are gone once the retention sweep runs. */}
-                    {!billingEnabled && jobRetentionSeconds > 0 && (
+                    {/* Só aparece se alguém ligou a limpeza por idade
+                        (JOB_RETENTION_SECONDS): o padrão deste fork é nunca apagar. */}
+                    {jobRetentionSeconds > 0 && (
                       <div className="px-3 py-2.5 rounded-input bg-paper3 border border-paper3 text-sm">
-                        <span className="text-ink">Clips are kept for {formatRetention(jobRetentionSeconds)}, then deleted.</span>{' '}
-                        <span className="text-muted">Download what you want to keep, or raise JOB_RETENTION_SECONDS in your env.</span>
+                        <span className="text-ink">Os cortes ficam guardados por {formatRetention(jobRetentionSeconds)} e depois são apagados.</span>{' '}
+                        <span className="text-muted">Baixe o que quiser manter, ou aumente o JOB_RETENTION_SECONDS no .env.</span>
                       </div>
                     )}
                   </div>
@@ -1805,12 +1229,8 @@ function App() {
                           jobId={jobId}
                           onEditClip={(index) => setEditingClip(index)}
                           onReframeClip={(index) => setReframingClip(index)}
-                          initialState={projectState?.clips?.find((c) => c.index === i) || null}
-                          onStateChange={handleClipStateChange}
-                          durable={durableClips[i]}
                           geminiApiKey={apiKey}
                           geminiNoMotor={geminiNoMotor}
-                          isManaged={isManaged}
                           onPlay={(time) => handleClipPlay(time)}
                           onPause={handleClipPause}
                           onBulkSubtitle={handleBulkSubtitles}
@@ -1928,32 +1348,6 @@ function App() {
           clipTitle={results.clips[reframingClip].video_title_for_youtube_short || ''}
           onClose={() => setReframingClip(null)}
           onReframed={handleClipRerendered}
-        />
-      )}
-      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {tutorialPhase && (
-        <ClipTutorial
-          phase={tutorialPhase}
-          jobStatus={status}
-          onStart={startTutorial}
-          onSkip={skipTutorial}
-          onDismissCelebrate={finishTutorial}
-        />
-      )}
-      {showPlanChoice && <PlanChoiceModal onClose={() => setShowPlanChoice(false)} />}
-      {showTopUp && (
-        <TopUpModal
-          onClose={() => setShowTopUp(false)}
-          required={topUpInfo.required}
-          remaining={topUpInfo.remaining}
-          context={topUpInfo.context || 'wall'}
-        />
-      )}
-      {showTrialUpgrade && (
-        <TrialUpgradeModal
-          plan={plan}
-          onActivated={refreshMe}
-          onClose={() => setShowTrialUpgrade(false)}
         />
       )}
     </div>

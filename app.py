@@ -2557,6 +2557,12 @@ async def get_config():
         # quando o NAVEGADOR nao tinha a chave -- e desde as chaves no motor
         # (chaves_ia.py) ela pode morar so aqui.
         "geminiNoMotor": bool((os.environ.get("GEMINI_API_KEY") or "").strip()),
+        # Este motor sabe fazer serie em partes (7.6). O site e publicado antes
+        # de o programa de quem usa ser atualizado, e um motor de antes da 7.6
+        # IGNORA o campo `serie` do `/api/process`: a pessoa pediria 60 partes
+        # e receberia cinco cortes escolhidos pela IA, sem erro nenhum. Sem
+        # esta marca, o formulario manda atualizar em vez de enviar.
+        "series": True,
     }
 
 

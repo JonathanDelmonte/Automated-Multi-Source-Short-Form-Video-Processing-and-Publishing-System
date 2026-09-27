@@ -8,6 +8,7 @@ import Modal from '../components/ui/Modal';
 import Pagina, { CabecalhoDaPagina, EmBreve } from '../components/ui/Pagina';
 import { enviarVideo, guardarMidia } from '../lib/processar';
 import { usePainel } from '../lib/painel';
+import { useAuth } from '../contexts/AuthContext';
 import { hrefDe, ir } from '../lib/rota';
 
 // Criar (etapa 7.1): primeiro o canal, depois o que criar.
@@ -29,6 +30,7 @@ const OUTROS = {
 
 export default function Criar({ tipo = null, canalInicial = null }) {
   const { apiKey, keysMissing, pedirChave, canais } = usePainel();
+  const { configCarregada, seriesNoMotor } = useAuth();
   const [canalId, setCanalId] = useState(canalInicial);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState(null);
@@ -124,7 +126,8 @@ export default function Criar({ tipo = null, canalInicial = null }) {
       )}
 
       {ehSerie
-        ? <SerieInput onProcess={processar} isProcessing={enviando} canalId={canalValido} canalNome={canal?.name} />
+        ? <SerieInput onProcess={processar} isProcessing={enviando} canalId={canalValido} canalNome={canal?.name}
+                      motorAntigo={configCarregada && !seriesNoMotor} />
         : <MediaInput onProcess={processar} isProcessing={enviando} />}
 
       <p className="text-xs text-muted flex items-center gap-1.5">

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, ChevronDown, FileVideo, Link2, Loader2, Radio, Upload, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, ChevronDown, FileVideo, Link2, Loader2, Radio, Upload, X } from 'lucide-react';
 import SegmentedControl from './ui/SegmentedControl';
 import {
   BLOCOS, BLOCO_PADRAO, DURACAO_PADRAO, DURACOES, ESTILOS, ROTULOS,
@@ -31,7 +31,7 @@ function lerDuracao(arquivo, aoLer) {
   }
 }
 
-export default function SerieInput({ onProcess, isProcessing, canalId = null, canalNome = null }) {
+export default function SerieInput({ onProcess, isProcessing, canalId = null, canalNome = null, motorAntigo = false }) {
   const [modo, setModo] = useState('url');
   const [url, setUrl] = useState('');
   const [arquivo, setArquivo] = useState(null);
@@ -63,7 +63,7 @@ export default function SerieInput({ onProcess, isProcessing, canalId = null, ca
     ? previsao(duracaoDoArquivo, duracao, lerTempo(inicio), lerTempo(fim))
     : null), [modo, duracaoDoArquivo, duracao, inicio, fim]);
   const temFonte = modo === 'url' ? !!url.trim() : !!arquivo;
-  const pode = temFonte && confirmado && !problema && !conta?.erro && !isProcessing;
+  const pode = temFonte && confirmado && !problema && !conta?.erro && !isProcessing && !motorAntigo;
 
   const enviar = (e) => {
     e.preventDefault();
@@ -260,6 +260,18 @@ export default function SerieInput({ onProcess, isProcessing, canalId = null, ca
           público) ou tenho autorização. Vídeo com direitos autorais de outra pessoa leva reclamação ou strike no canal.
         </span>
       </label>
+
+      {motorAntigo && (
+        // O site é publicado antes do programa de quem usa: um programa de antes
+        // da 7.6 ignoraria o pedido de série e faria cortes comuns, em silêncio.
+        <p className="flex items-start gap-2 text-[13px] text-brass" data-aviso-serie-motor>
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <span>
+            O programa deste computador é de antes das séries: ele faria cortes comuns no lugar das partes.
+            Atualize-o primeiro — o aviso no topo do site tem o botão.
+          </span>
+        </p>
+      )}
 
       <button type="submit" disabled={!pode} className="w-full btn-primary">
         {isProcessing ? <><Loader2 size={16} className="animate-spin" /> enviando…</> : 'criar a série'}

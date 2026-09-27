@@ -574,6 +574,10 @@ buraco e sem repetição.
   clique. Aberta por inteiro, uma live de 1 hora eram 60 grupos, e a parte que
   falhou ficava no fim da página. A aba Agenda do canal passou a mostrar também o
   que falhou e o que está subindo: é justamente o que destrava as partes paradas.
+- **O site novo com o programa antigo não cria série.** O site é publicado antes
+  de o programa de quem usa ser atualizado, e um programa de antes da 7.6 ignora
+  o pedido de série: faria cortes comuns, sem erro nenhum. O formulário pergunta
+  ao programa se ele sabe fazer série e, se não souber, manda atualizar.
 
 **O que a série consertou de antes**, porque numa série os defeitos apareciam
 toda vez:

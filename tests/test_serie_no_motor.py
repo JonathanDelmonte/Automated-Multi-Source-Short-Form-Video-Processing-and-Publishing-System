@@ -190,6 +190,11 @@ def _andar_ate(entregues, parar, limite=400):
 
 class TestPedido:
 
+    def test_o_motor_diz_que_sabe_fazer_serie(self, ambiente):
+        """O painel so envia uma serie com esta marca: um motor de antes da 7.6
+        ignoraria o campo e faria cortes comuns, em silencio."""
+        assert _chama("GET", "/api/config").json()["series"] is True
+
     def test_a_serie_nao_precisa_de_ia_e_o_documento_vai_para_a_pasta(self, ambiente):
         canal = _canal(language="pt-BR")
         r = _pedir_serie(canal["id"], nome="Live do Fulano", duracao_parte_s=45,

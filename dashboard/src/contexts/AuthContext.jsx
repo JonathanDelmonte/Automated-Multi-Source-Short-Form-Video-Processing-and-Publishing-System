@@ -157,6 +157,9 @@ export function AuthProvider({ children }) {
     // Versão e origem do motor (ajudante, docker, codigo): o AvisoDoMotor
     // compara com a publicada.
     motor: config.motor || null,
+    // O programa sabe fazer série em partes (7.6). Um de antes ignoraria o
+    // pedido e faria cortes comuns, em silêncio.
+    seriesNoMotor: config.series === true,
     configCarregada,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,

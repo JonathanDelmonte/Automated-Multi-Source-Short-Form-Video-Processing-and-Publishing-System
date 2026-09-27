@@ -294,6 +294,17 @@ def test_a_serie_so_agenda():
     assert "serie={!!serie}" in _fonte("pages", "Projeto.jsx")
 
 
+def test_com_o_programa_antigo_a_serie_nao_e_enviada():
+    """O site e publicado antes do programa de quem usa, e um motor de antes
+    da 7.6 ignora o campo `serie`: a pessoa pediria 60 partes e receberia
+    cortes comuns, sem erro. O formulario so envia com a marca do motor."""
+    assert "seriesNoMotor: config.series === true," in _fonte("contexts", "AuthContext.jsx")
+    assert "motorAntigo={configCarregada && !seriesNoMotor}" in _fonte("pages", "Criar.jsx")
+    serie = _fonte("components", "SerieInput.jsx")
+    assert "&& !motorAntigo;" in serie
+    assert "data-aviso-serie-motor" in serie
+
+
 def test_a_serie_vai_no_envio():
     processar = _fonte("lib", "processar.js")
     assert "serie: dados.serie || null," in processar

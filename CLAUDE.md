@@ -2951,6 +2951,10 @@ do codigo que ela mudou.
   partes num clique. Aberta, uma live de 1 hora eram 60 grupos com a parte que
   falhou no fim da pagina. A aba Agenda do canal lista tambem `failed` e
   `publishing` (`Canal.NA_FILA`): e o que destrava as partes paradas.
+- **O site novo com o programa velho nao envia serie** (`/api/config.series`,
+  `SerieInput.motorAntigo`). Um motor de antes da 7.6 IGNORA o campo `serie` do
+  `/api/process` e faria cortes comuns escolhidos pela IA, sem erro nenhum -- e o
+  site e publicado antes de o programa de quem usa ser atualizado.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

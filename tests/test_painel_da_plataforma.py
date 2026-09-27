@@ -587,7 +587,10 @@ def test_a_calibracao_nao_diz_coeficiente_que_o_motor_nao_deu():
     # O programa de antes da 7.4 nao manda `tipos`: o TikTok so publicava.
     ({"platform": "tiktok", "conexao": {"publicar": False, "medir": False}}, ["publicar"], ["medir"]),
     ({"platform": "tiktok", "conexao": {"tipos": ["publicar", "medir"]}}, ["publicar", "medir"], []),
-    ({"platform": "youtube", "conexao": {}}, ["publicar", "medir"], []),
+    # O programa de antes da 7.6 nao conhece a playlist (`organizar`).
+    ({"platform": "youtube", "conexao": {}}, ["publicar", "medir"], ["organizar"]),
+    ({"platform": "youtube", "conexao": {"tipos": ["publicar", "medir", "organizar"]}},
+     ["publicar", "medir", "organizar"], []),
     # Um tipo que a tela nao sabe descrever nao vira botao sem nome.
     ({"platform": "youtube", "conexao": {"tipos": ["publicar", "algo-novo"]}}, ["publicar"], []),
 ])

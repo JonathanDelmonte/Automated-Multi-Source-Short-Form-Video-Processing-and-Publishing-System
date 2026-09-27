@@ -35,6 +35,13 @@ conta, sai no maximo o primeiro -- se o espacamento desde o ultimo post e o
 teto do dia deixarem -- e os outros sao reespalhados nas janelas seguintes,
 com o mesmo jitter.
 
+**A fila de uma serie** (`replanejar_fila`, etapa 7.6): as partes de uma serie
+numa conta saem na ORDEM. Quando a ordem se desfaz -- uma parte falhou e foi
+tentada de novo, a pessoa pulou uma, o PC ficou desligado --, os horarios das
+partes que faltam sao refeitos de uma vez, na ordem das partes, pelas mesmas
+regras. Reespalhar so as atrasadas as poria depois das seguintes, que ja tem
+as janelas: a serie inteira andaria para o fim da agenda.
+
 Modulo de biblioteca padrao: as funcoes sao puras e recebem `agora` e o
 sorteador, entao o CI exercita o calculo inteiro sem relogio e sem banco.
 """
@@ -270,10 +277,7 @@ def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
         itens = sorted(itens, key=lambda i: (_com_fuso(i["scheduled_at"]), i["id"]))
         tomados = sorted(_com_fuso(o).astimezone(local.tzinfo)
                          for o in ocupados_por_conta.get(conta, ()))
-        passados = [t for t in tomados if t <= local]
-        hoje = sum(1 for t in passados if t.date() == local.date())
-        folga = not passados or local - passados[-1] >= gap
-        if folga and hoje < teto:
+        if pode_sair_agora(local, tomados, gap, teto):
             triagem.agora.append(itens[0]["id"])
             tomados.append(local)
             resto = itens[1:]
@@ -287,6 +291,52 @@ def triar_vencidas(vencidas: Sequence[dict], agora: datetime,
         for item, quando in zip(resto, horarios):
             triagem.reagendar[item["id"]] = quando
     return triagem
+
+
+def pode_sair_agora(local: datetime, tomados: Sequence[datetime], gap: timedelta,
+                    teto: int) -> bool:
+    """As duas regras da trava: o espacamento desde o ultimo post da conta e o
+    teto do dia (no dia de quem usa). `tomados` ja no fuso de `local`."""
+    passados = [t for t in tomados if t <= local]
+    hoje = sum(1 for t in passados if t.date() == local.date())
+    folga = not passados or local - passados[-1] >= gap
+    return folga and hoje < teto
+
+
+def replanejar_fila(quantos: int, agora: datetime, ocupados: Iterable[datetime] = (), *,
+                    agenda: Optional[AgendaDaConta] = None,
+                    sorteador: Optional[Callable[[int, int], int]] = None,
+                    horas: Optional[Sequence[int]] = None,
+                    jitter: Optional[int] = None,
+                    gap: Optional[timedelta] = None,
+                    teto_por_dia: Optional[int] = None) -> tuple:
+    """Os horarios de uma fila que sai NA ORDEM -- as partes de uma serie numa
+    conta (7.6). Devolve `(sai_agora, horarios)`: com `sai_agora`, o primeiro
+    da fila sai ja e `horarios` e dos outros; sem, `horarios` e de todos.
+
+    `ocupados` e o que a conta tem FORA desta fila (os posts recentes e os
+    agendados de outros projetos): quem chama tira dali os horarios da propria
+    fila, que estao sendo refeitos. As regras sao as de sempre -- a trava do
+    post atrasado para sair agora, e `proximos_horarios` para o resto --, entao
+    a serie continua espacada, com jitter e dentro do teto do dia.
+    """
+    agenda = agenda or AgendaDaConta()
+    agora = _com_fuso(agora)
+    local = agora.astimezone(agenda.fuso) if agenda.fuso else agora.astimezone()
+    gap = espacamento_minimo() if gap is None else gap
+    teto = max(1, int(agenda.teto)) if agenda.teto else (
+        por_dia() if teto_por_dia is None else max(1, int(teto_por_dia)))
+    horas = agenda.horas if agenda.horas else horas
+    tomados = sorted(_com_fuso(o).astimezone(local.tzinfo) for o in ocupados)
+    if quantos <= 0:
+        return False, []
+    if pode_sair_agora(local, tomados, gap, teto):
+        return True, proximos_horarios(quantos - 1, local, sorteador=sorteador, horas=horas,
+                                       jitter=jitter, gap=gap, teto_por_dia=teto,
+                                       ocupados=tomados + [local])
+    return False, proximos_horarios(quantos, local, sorteador=sorteador, horas=horas,
+                                    jitter=jitter, gap=gap, teto_por_dia=teto,
+                                    ocupados=tomados)
 
 
 def descricao(agenda: Optional[AgendaDaConta] = None) -> dict:

@@ -30,6 +30,7 @@ from typing import Iterable, Optional
 import db
 import db_models
 import publishers
+import series
 
 
 def _utc(quando: Optional[datetime]) -> Optional[datetime]:
@@ -85,8 +86,11 @@ def _conexao(linha) -> dict:
     if linha.platform != "youtube":
         return {"publicar": False, "medir": False, "tipos": tipos}
     import metrics_collector
+    import playlists_youtube
     return {"publicar": vault.existe(linha.credentials_ref, vault.CAMPOS),
             "medir": metrics_collector.credencial_de_leitura(linha.handle) is not None,
+            # A playlist de cada serie (7.6): a terceira conexao, opcional.
+            "organizar": playlists_youtube.credencial(linha.handle) is not None,
             "tipos": tipos}
 
 
@@ -267,6 +271,7 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
         # o engine async esta preso ao loop que o criou -- um `asyncio.run`
         # dentro da thread criaria um segundo loop e a conexao pertenceria ao
         # errado.
+        EM_VOO.add(pub_id)
         resultado = await asyncio.get_event_loop().run_in_executor(
             None, driver.publish, clip, meta, opts, conta)
     except publishers.PublisherError as e:
@@ -275,6 +280,8 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
     except Exception as e:
         await _fechar(pub_id, status="failed")
         raise FilaError(f"{type(e).__name__}: {e}")
+    finally:
+        EM_VOO.discard(pub_id)
 
     await _fechar(pub_id, status=resultado.status,
                   remote_id=resultado.remote_id, url=resultado.url)
@@ -453,6 +460,7 @@ async def publicar_reservada(pub_id: str, clip_row, account_row,
         path=caminho_do_arquivo, job_id=clip_row.job_id,
         index=int((clip_row.rubric_json or {}).get("clip_index") or 0),
         title=meta.title, clip_id=clip_row.id)
+    EM_VOO.add(pub_id)
     try:
         resultado = await asyncio.get_event_loop().run_in_executor(
             None, driver.publish, clip, meta, opts, conta)
@@ -462,6 +470,8 @@ async def publicar_reservada(pub_id: str, clip_row, account_row,
     except Exception as e:
         await _fechar(pub_id, status="failed")
         raise FilaError(f"{type(e).__name__}: {e}")
+    finally:
+        EM_VOO.discard(pub_id)
     await _fechar(pub_id, status=resultado.status,
                   remote_id=resultado.remote_id, url=resultado.url)
     return {"id": pub_id, "driver": driver.id, "status": resultado.status,
@@ -537,6 +547,176 @@ async def plataforma_da_publicacao(pub_id: str) -> Optional[str]:
             return None
         conta = await t.get(db_models.Account, linha.account_id)
         return conta.platform if conta else None
+
+
+#: As publicacoes que ESTE processo esta enviando agora. Uma linha `publishing`
+#: fora daqui por muito tempo ficou presa: o motor reiniciou no meio do envio,
+#: e ninguem mais vai fecha-la (`destravar_presas`).
+EM_VOO: set = set()
+#: Quanto tempo uma publicacao pode ficar `publishing` sem ninguem deste
+#: processo cuidando dela. Um corte sobe em segundos; o dreno de um deploy
+#: termina em 14 minutos -- trinta e folga para os dois.
+PRESA_APOS = timedelta(minutes=30)
+_VISTA_SUBINDO: dict = {}
+
+
+async def destravar_presas(agora: datetime) -> list:
+    """Vira `failed` a publicacao presa em `publishing` (7.6), e devolve quais.
+
+    Um reinicio no meio do envio deixava a linha "subindo" para sempre: a fila
+    mostrava "subindo" dias depois, e uma serie parava inteira atras dela, sem
+    botao nenhum que a destravasse. `failed` e o estado que pede a pessoa --
+    tentar de novo ou pular --, e nunca e automatico: o envio pode ter chegado
+    ao YouTube antes do reinicio, e so quem olha o canal sabe.
+
+    A contagem e da primeira vez que ESTE processo viu a linha subindo sem
+    estar enviando-a, e nao de um relogio no banco (nao ha coluna para isso).
+    Sessao crua: o laco atravessa tenants.
+    """
+    from sqlalchemy import select as _select, update as _update
+    P = db_models.Publication
+    async with db.session() as s:
+        subindo = [r[0] for r in (await s.execute(
+            _select(P.id).where(P.status == "publishing"))).all()]
+    for pid in list(_VISTA_SUBINDO):
+        if pid not in subindo or pid in EM_VOO:
+            _VISTA_SUBINDO.pop(pid, None)
+    presas = []
+    for pid in subindo:
+        if pid in EM_VOO:
+            continue
+        desde = _VISTA_SUBINDO.setdefault(pid, agora)
+        if agora - desde >= PRESA_APOS:
+            presas.append(pid)
+    if not presas:
+        return []
+    async with db.session() as s:
+        await s.execute(_update(P).where(P.id.in_(presas))
+                        .where(P.status == "publishing").values(status="failed"))
+        await s.commit()
+    for pid in presas:
+        _VISTA_SUBINDO.pop(pid, None)
+    print(f"⚠️  Agendador: {len(presas)} publicacao(oes) presa(s) subindo ha mais de "
+          f"{int(PRESA_APOS.total_seconds() // 60)} min viraram 'falhou' (o motor "
+          "reiniciou no meio do envio?). Confira na plataforma antes de tentar de novo.")
+    return presas
+
+
+async def tentar_de_novo(pub_id: str, agora: datetime) -> Optional[dict]:
+    """"Tentar de novo" uma publicacao que falhou (7.6): ela volta para a fila
+    com a hora de agora, e o agendador a leva na proxima volta -- pela trava de
+    sempre, e, numa serie, na ordem das partes. None quando nao existe.
+
+    Ate aqui uma publicacao que falhava nao tinha volta: a unicidade (corte,
+    conta) recusava agendar de novo, e numa serie isso era um buraco para
+    sempre. A decisao e da pessoa, e nao automatica, pelo mesmo motivo de
+    `destravar_presas`: o envio pode ter chegado a plataforma.
+    """
+    async with db.tenant() as t:
+        linha = await t.get(db_models.Publication, pub_id)
+        if linha is None:
+            return None
+        if linha.status != "failed":
+            raise FilaError("so uma publicacao que falhou pode ser tentada de novo")
+        linha.status = "scheduled"
+        linha.scheduled_at = _utc(agora)
+        await t.commit()
+        return {"id": linha.id, "status": "scheduled",
+                "scheduled_at": _utc(agora).isoformat()}
+
+
+async def linhas_das_series(pendentes: list) -> list:
+    """As publicacoes das series que tem parte entre `pendentes`, nas contas
+    delas (7.6): o que `series.planos` le para decidir a ordem.
+
+    Sessao crua, como `devidas()`: o laco do agendador atravessa os tenants.
+    """
+    from sqlalchemy import and_, select as _select
+    clip_ids = {p["clip_id"] for p in pendentes if p.get("clip_id")}
+    if not clip_ids:
+        return []
+    SP, P = db_models.SeriesPart, db_models.Publication
+    async with db.session() as s:
+        series_ids = {r[0] for r in (await s.execute(
+            _select(SP.series_id).where(SP.clip_id.in_(clip_ids)))).all()}
+        if not series_ids:
+            return []
+        contas = {p["account_id"] for p in pendentes}
+        achadas = (await s.execute(
+            _select(P.id, P.tenant_id, P.clip_id, P.account_id, P.status,
+                    P.scheduled_at, SP.series_id, SP.part)
+            .join(SP, and_(SP.clip_id == P.clip_id, SP.tenant_id == P.tenant_id))
+            .where(SP.series_id.in_(series_ids))
+            .where(P.account_id.in_(contas)))).all()
+    return [{"id": i, "tenant_id": t, "clip_id": c, "account_id": a, "status": st,
+             "scheduled_at": _utc(q), "serie_id": se, "parte": pa}
+            for (i, t, c, a, st, q, se, pa) in achadas]
+
+
+# --------------------------------------------------------------------------- #
+# A playlist de cada serie no YouTube (7.6)
+# --------------------------------------------------------------------------- #
+#
+# Sessao crua, como `devidas()`: quem arruma as playlists e o laco do agendador,
+# que atravessa os tenants. Quem grava repoe o tenant de cada linha.
+
+async def partes_no_youtube() -> list:
+    """As publicacoes de partes de series em contas do YouTube, com o que a
+    playlist precisa: a conta, o id do video, a parte e a serie."""
+    from sqlalchemy import and_, select as _select
+    P, SP, S, A = (db_models.Publication, db_models.SeriesPart, db_models.Series,
+                   db_models.Account)
+    async with db.session() as s:
+        achadas = (await s.execute(
+            _select(P.id, P.tenant_id, P.account_id, A.handle, P.status, P.remote_id,
+                    SP.series_id, SP.part, S.name, S.language)
+            .join(SP, and_(SP.clip_id == P.clip_id, SP.tenant_id == P.tenant_id))
+            .join(S, and_(S.id == SP.series_id, S.tenant_id == SP.tenant_id))
+            .join(A, and_(A.id == P.account_id, A.tenant_id == P.tenant_id))
+            .where(A.platform == "youtube"))).all()
+    return [{"id": i, "tenant_id": t, "account_id": a, "handle": h, "status": st,
+             "remote_id": r, "serie_id": se, "parte": pa, "nome": n, "idioma": lg}
+            for (i, t, a, h, st, r, se, pa, n, lg) in achadas]
+
+
+async def playlists_e_itens() -> tuple:
+    """`({(tenant, serie, conta): (linha, playlist_id)}, {publicacoes que ja
+    estao numa playlist})`."""
+    from sqlalchemy import select as _select
+    SPL, SPI = db_models.SeriesPlaylist, db_models.SeriesPlaylistItem
+    async with db.session() as s:
+        listas = (await s.execute(_select(SPL.tenant_id, SPL.series_id, SPL.account_id,
+                                          SPL.id, SPL.playlist_id))).all()
+        itens = (await s.execute(_select(SPI.publication_id))).all()
+    return ({(t, se, a): (i, pl) for (t, se, a, i, pl) in listas},
+            {r[0] for r in itens})
+
+
+async def gravar_playlist(tenant_id: str, serie_id: str, account_id: str,
+                          playlist_id: str) -> str:
+    async with db.tenant(tenant_id) as t:
+        linha = t.add(db_models.SeriesPlaylist(series_id=serie_id, account_id=account_id,
+                                               playlist_id=playlist_id))
+        await t.commit()
+        return linha.id
+
+
+async def gravar_item_da_playlist(tenant_id: str, playlist_row: str, pub_id: str,
+                                  item_id: Optional[str]) -> None:
+    async with db.tenant(tenant_id) as t:
+        t.add(db_models.SeriesPlaylistItem(series_playlist_id=playlist_row,
+                                           publication_id=pub_id, item_id=item_id or None))
+        await t.commit()
+
+
+async def esquecer_playlist(tenant_id: str, playlist_row: str) -> None:
+    """A playlist foi apagada no YouTube: sai daqui (e os itens com ela, pelo
+    CASCADE), e a proxima volta cria outra com as partes que ja sairam."""
+    async with db.tenant(tenant_id) as t:
+        linha = await t.get(db_models.SeriesPlaylist, playlist_row)
+        if linha is not None:
+            await t.session.delete(linha)
+            await t.commit()
 
 
 async def cancelar(pub_id: str) -> bool:
@@ -816,6 +996,11 @@ async def listar(status: Optional[str] = None) -> list:
         posts = {p.publication_id: p for p in await t.all(db_models.PublicationPost)}
         canal_de = {l.account_id: l.channel_id
                     for l in await t.all(db_models.ChannelAccount)}
+        # A serie em partes (7.6): qual parte e cada corte, e o nome da serie.
+        parte_de = {p.clip_id: p for p in await t.all(db_models.SeriesPart)}
+        series_por_id = {s.id: s for s in await t.all(db_models.Series)}
+        playlist_de = {(pl.series_id, pl.account_id): pl.playlist_id
+                       for pl in await t.all(db_models.SeriesPlaylist)}
 
     saida = []
     for linha in linhas:
@@ -855,6 +1040,31 @@ async def listar(status: Optional[str] = None) -> list:
                 "handle": conta.handle if conta else None,
                 "channel_id": canal_de.get(linha.account_id),
             },
+            "serie": _serie_da_publicacao(parte_de.get(linha.clip_id), series_por_id,
+                                          playlist_de, linha.account_id),
         })
+    # A parte parada porque uma anterior, na mesma conta, falhou ou ficou
+    # presa subindo (7.6): a fila diz qual, para a pessoa tentar de novo ou
+    # pular. A espera normal pela parte de antes nao e noticia.
+    paradas = series.paradas(
+        {"id": p["id"], "account_id": p["account"]["id"], "status": p["status"],
+         "scheduled_at": p["scheduled_at"], "serie_id": (p["serie"] or {}).get("id"),
+         "parte": (p["serie"] or {}).get("parte")} for p in saida)
+    for p in saida:
+        p["parada"] = paradas.get(p["id"])
     saida.sort(key=lambda p: p.get("created_at") or "", reverse=True)
     return saida
+
+
+def _serie_da_publicacao(parte, series_por_id: dict, playlist_de: dict,
+                         account_id: str) -> Optional[dict]:
+    if parte is None:
+        return None
+    import playlists_youtube
+    serie = series_por_id.get(parte.series_id)
+    playlist = playlist_de.get((parte.series_id, account_id))
+    return {"id": parte.series_id, "parte": parte.part,
+            "nome": serie.name if serie else None,
+            "partes": serie.total_parts if serie else None,
+            # A playlist da serie nesta conta do YouTube, quando ja existe.
+            "playlist": (playlists_youtube.URL_DA_PLAYLIST + playlist) if playlist else None}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import MediaInput from '../components/MediaInput';
+import SerieInput from '../components/SerieInput';
 import SeletorDeCanal from '../components/SeletorDeCanal';
 import TiposDeCriacao from '../components/TiposDeCriacao';
 import Modal from '../components/ui/Modal';
@@ -17,10 +18,12 @@ import { hrefDe, ir } from '../lib/rota';
 //
 // Enviado o vídeo, a tela vai para o projeto (`#/projetos/<id>`), que é onde o
 // progresso e os cortes moram.
+//
+// `#/criar/serie` (7.6) é a série em partes: o mesmo envio, com o documento da
+// série junto. Nenhuma IA escolhe trecho, então ela não pede chave de IA.
 
 const OUTROS = {
   ia: { titulo: 'Vídeo criado por IA', etapa: '7.7' },
-  serie: { titulo: 'Série em partes', etapa: '7.6' },
   longo: { titulo: 'Vídeo longo', etapa: '7.8' },
 };
 
@@ -37,7 +40,8 @@ export default function Criar({ tipo = null, canalInicial = null }) {
   const canal = canalValido ? canais.porId[canalValido] : null;
 
   const processar = async (dados, forcar = false) => {
-    if (keysMissing) {
+    // A série não usa IA para escolher trecho: sem chave, ela anda igual.
+    if (keysMissing && !dados.serie) {
       pedirChave();
       return;
     }
@@ -97,6 +101,8 @@ export default function Criar({ tipo = null, canalInicial = null }) {
     );
   }
 
+  const ehSerie = tipo === 'serie';
+
   return (
     <Pagina largura="estreita">
       <a href={hrefDe(`/criar${canalValido ? `?canal=${canalValido}` : ''}`)} className="btn-quiet px-3 py-1.5 text-xs w-fit">
@@ -104,8 +110,10 @@ export default function Criar({ tipo = null, canalInicial = null }) {
       </a>
       <CabecalhoDaPagina
         rotulo={canal ? `criar · ${canal.name}` : 'criar'}
-        titulo="Cortes de um vídeo"
-        descricao="Envie um vídeo ou cole um link. A IA acha os melhores momentos e entrega cortes verticais, com legenda e gancho."
+        titulo={ehSerie ? 'Série em partes' : 'Cortes de um vídeo'}
+        descricao={ehSerie
+          ? 'Cole o link de uma live ou de um vídeo longo sem direitos autorais. Ele vira Parte 1, 2, 3…, com o número no vídeo e no título, e vai para a agenda na ordem.'
+          : 'Envie um vídeo ou cole um link. A IA acha os melhores momentos e entrega cortes verticais, com legenda e gancho.'}
       />
       {escolhaDoCanal}
 
@@ -115,7 +123,9 @@ export default function Criar({ tipo = null, canalInicial = null }) {
         </p>
       )}
 
-      <MediaInput onProcess={processar} isProcessing={enviando} />
+      {ehSerie
+        ? <SerieInput onProcess={processar} isProcessing={enviando} canalId={canalValido} canalNome={canal?.name} />
+        : <MediaInput onProcess={processar} isProcessing={enviando} />}
 
       <p className="text-xs text-muted flex items-center gap-1.5">
         <Bot size={13} className="shrink-0" />

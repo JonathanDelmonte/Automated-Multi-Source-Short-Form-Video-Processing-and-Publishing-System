@@ -87,7 +87,11 @@ class TestTenantEmTodaTabela:
                      # receita, os videos que ela achou, a licenca de cada
                      # fonte e a caixa de aprovacao.
                      "channel_settings", "recipes", "candidates",
-                     "source_licenses", "clip_approvals"}
+                     "source_licenses", "clip_approvals",
+                     # 7.6: a serie em partes, qual corte e qual parte, e a
+                     # playlist do YouTube de cada serie.
+                     "series", "series_parts", "series_playlists",
+                     "series_playlist_items"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

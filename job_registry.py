@@ -272,6 +272,12 @@ async def registrar_clipes(job_id: str, shorts: list, transcript=None,
     novo. Um job retomado depois de um redeploy roda o fim do pipeline outra
     vez, e sem isto o mesmo corte apareceria duas vezes no banco -- e
     `publications` tem unicidade por corte, nao por conteudo.
+
+    **O indice de cada corte vem dele (`clip_index`), e nao da posicao na
+    lista** (7.6). A lista que chega aqui e a dos cortes que renderizaram: com
+    o terceiro de cinco falhando, o quarto era gravado como "corte 3" -- e a
+    publicacao do corte 3 subia o arquivo do 4. Numa serie, isso e a Parte 4
+    indo ao ar com o titulo da Parte 3.
     """
     if not shorts:
         return 0
@@ -296,13 +302,70 @@ async def registrar_clipes(job_id: str, shorts: list, transcript=None,
                     job_id=job_id,
                     start_word_idx=inicio, end_word_idx=fim,
                     score=_score(clip),
-                    rubric_json=_rubrica(clip, visual=not palavras, indice=i),
+                    rubric_json=_rubrica(clip, visual=not palavras,
+                                         indice=indice_do_corte(clip, i)),
                     render_key=arquivos.get(i)))
                 gravados += 1
             await t.commit()
             return gravados
     except Exception as e:
         _avisar(e, f"registrar cortes de {job_id}")
+        return 0
+
+
+def indice_do_corte(clip: dict, posicao: int) -> int:
+    """O indice do corte no metadata: o `clip_index` que o `app.py` pendura em
+    cada corte do resultado, ou a posicao, quando a lista e a do metadata
+    inteira (um job recuperado do disco)."""
+    indice = clip.get("clip_index") if isinstance(clip, dict) else None
+    if isinstance(indice, int) and not isinstance(indice, bool) and indice >= 0:
+        return indice
+    return int(posicao)
+
+
+async def registrar_serie(job_id: str, serie: Optional[dict], shorts: list) -> int:
+    """Grava a serie em partes (7.6) e qual corte e qual parte; devolve
+    quantas partes entraram.
+
+    Roda depois de `registrar_clipes`, no fim do job, e so liga as partes que
+    tem corte no banco -- a que nao renderizou nao vira linha, e sem linha nao
+    ha como agenda-la: o buraco fica visivel no projeto, e nao escondido na
+    agenda. Idempotente: a serie e as partes ja gravadas ficam como estao.
+    """
+    if not isinstance(serie, dict) or not serie.get("id") or not shorts:
+        return 0
+    try:
+        async with db.tenant() as t:
+            if await t.get(db_models.Job, job_id) is None:
+                return 0
+            if await t.get(db_models.Series, serie["id"]) is None:
+                t.add(db_models.Series(
+                    id=serie["id"], job_id=job_id,
+                    name=(str(serie.get("nome") or "").strip() or "Série")[:200],
+                    language=serie.get("idioma") or None,
+                    part_seconds=float(serie.get("duracao_parte_s") or 60),
+                    total_parts=max(1, int(serie.get("partes") or len(shorts)))))
+                await t.flush()
+            cortes = await t.all(db_models.Clip, db_models.Clip.job_id == job_id)
+            por_indice = {int((c.rubric_json or {}).get("clip_index") or 0): c
+                          for c in cortes}
+            ja = {p.clip_id for p in await t.all(
+                db_models.SeriesPart, db_models.SeriesPart.series_id == serie["id"])}
+            gravadas = 0
+            for i, clip in enumerate(shorts):
+                if not isinstance(clip, dict):
+                    continue
+                parte = (clip.get("serie") or {}).get("parte")
+                corte = por_indice.get(indice_do_corte(clip, i))
+                if not parte or corte is None or corte.id in ja:
+                    continue
+                t.add(db_models.SeriesPart(series_id=serie["id"], clip_id=corte.id,
+                                           part=int(parte)))
+                gravadas += 1
+            await t.commit()
+            return gravadas
+    except Exception as e:
+        _avisar(e, f"registrar a serie de {job_id}")
         return 0
 
 

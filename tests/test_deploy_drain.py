@@ -215,14 +215,20 @@ class TestStatusFromDisk:
     def test_unknown_job_with_metadata_is_completed(self, out):
         d = out / "j1"
         d.mkdir()
-        (d / "vid_metadata.json").write_text(json.dumps({"shorts": [{"start": 0, "end": 1}]}))
+        (d / "vid_metadata.json").write_text(json.dumps(
+            {"shorts": [{"start": 0, "end": 1}, {"start": 1, "end": 2}]}))
+        (d / "vid_clip_2.mp4").write_bytes(b"\x00" * 16)
 
         async def go():
             async with self._client() as c:
                 return await c.get("/api/status/j1")
         r = asyncio.run(go())
         assert r.json()["status"] == "completed"
-        assert r.json()["result"]["clips"]
+        # So o corte que esta no disco (7.6): o metadata e a promessa, e o
+        # corte 1 nunca renderizou. O indice do que ficou continua sendo o dele.
+        [corte] = r.json()["result"]["clips"]
+        assert corte["clip_index"] == 1
+        assert corte["video_url"].endswith("/vid_clip_2.mp4")
 
     def test_truly_unknown_job_is_404(self, out):
         async def go():

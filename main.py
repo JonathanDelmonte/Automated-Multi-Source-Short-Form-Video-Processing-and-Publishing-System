@@ -34,6 +34,7 @@ import linhas_inteiras
 import audio_primeiro
 import aquecimento
 import sources
+import series
 import audio_probe
 import prefilter
 import face_tracker
@@ -1080,6 +1081,78 @@ def finalize_clip_passthrough(input_video, final_output_video):
     return True
 
 
+def parte_sem_reenquadrar(clip_temp_path, clip_final_path, output_format="auto"):
+    """A reserva de uma parte de serie que falhou duas vezes no render de
+    sempre (7.6): o quadro inteiro sobre o fundo desfocado, sem detector nem
+    TransNetV2 -- so ffmpeg.
+
+    Numa serie, um corte que falha e um BURACO: a Parte 4 sai e a 3 nao
+    existe. O reenquadramento inteligente depende de muita coisa (placa,
+    modelos, a sonda do NVENC), e a falha que sobra depois da segunda tentativa
+    quase sempre e dele. Uma parte sem enquadramento inteligente e melhor que
+    uma parte que falta.
+    """
+    if output_format == "horizontal":
+        return finalize_clip_passthrough(clip_temp_path, clip_final_path)
+    import ffmpeg_utils as _ff
+    out_w, out_h = (1080, 1080) if output_format == "square" else (1080, 1920)
+    grafo = (f"[0:v]split=2[a][b];[a]{_ff.fundo_desfocado(out_w, out_h, 12)}[fundo];"
+             f"[b]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+             f"scale=trunc(iw/2)*2:trunc(ih/2)*2[frente];"
+             f"[fundo][frente]overlay=(W-w)/2:(H-h)/2,setsar=1[v]")
+    cmd = ['ffmpeg', '-y', '-i', clip_temp_path, '-filter_complex', grafo,
+           '-map', '[v]', '-map', '0:a?', *video_encode_args(QUALITY),
+           *audio_encode_args(), *METADATA_SCRUB, '-movflags', '+faststart',
+           clip_final_path]
+    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            timeout=1800)
+    if result.returncode != 0 or not os.path.exists(clip_final_path):
+        err = (result.stderr or b"").decode(errors="ignore")[-400:]
+        raise RuntimeError(f"ffmpeg nao montou a parte sem reenquadrar: {err}")
+    return True
+
+
+def cortes_da_serie(spec, duration, transcript, titulo_do_video, output_dir=None):
+    """Os `shorts` de uma serie em partes (7.6), no lugar da deteccao.
+
+    **Numa retomada, as partes sao as que ja estavam no metadata**, e nao
+    recalculadas: a transcricao pode ter sido refeita (o checkpoint e apagado
+    no fim de um job, e nem todo reinicio acha um), e uma fronteira que se
+    mexe meio segundo entre as partes prontas e as refeitas daria um trecho
+    repetido ou um buraco na costura.
+    """
+    if output_dir:
+        import glob
+        for caminho in glob.glob(os.path.join(output_dir, "*_metadata.json")):
+            try:
+                with open(caminho, encoding="utf-8") as f:
+                    anterior = json.load(f)
+            except (OSError, ValueError):
+                continue
+            partes_de_antes = (anterior or {}).get("shorts") or []
+            if (((anterior or {}).get("serie") or {}).get("id") == spec.get("id")
+                    and partes_de_antes
+                    and all((c.get("serie") or {}).get("id") == spec.get("id")
+                            for c in partes_de_antes)):
+                print(f"♻️ Serie: as mesmas {len(partes_de_antes)} partes da primeira vez.")
+                return {"shorts": partes_de_antes, "serie": anterior["serie"]}
+    n = series.quantas_partes(duration, spec)
+    if n <= 0:
+        raise RuntimeError(
+            "O trecho escolhido para a serie fica fora do video: confira o comeco e o fim.")
+    if n > series.MAX_PARTES:
+        raise RuntimeError(
+            f"Esta serie teria {n} partes, e o limite e {series.MAX_PARTES}. "
+            f"Escolha partes mais longas ou um trecho menor do video.")
+    shorts = series.cortes(spec, duration, transcript, titulo_do_video)
+    if shorts:
+        tamanhos = [c["end"] - c["start"] for c in shorts]
+        print(f"🧩 Serie: {len(shorts)} partes de {min(tamanhos):.0f}s a "
+              f"{max(tamanhos):.0f}s, cortadas nas pausas da fala.")
+    job_metrics.fact("serie_partes", len(shorts))
+    return {"shorts": shorts, "serie": series.resumo(spec, shorts, titulo_do_video)}
+
+
 def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=None):
     """Burn the default caption style onto a finished clip.
 
@@ -1174,7 +1247,7 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=
         return None
 
 
-def auto_hook_clip(clip_path, clip):
+def auto_hook_clip(clip_path, clip, seconds=None, style=None):
     """Burn the clip's Gemini hook text as a DERIVED file (AUTO_HOOK=1).
 
     Writes ``hooked_<ts>_<clip filename>`` next to the canonical clip, exactly
@@ -1183,17 +1256,22 @@ def auto_hook_clip(clip_path, clip):
     (app.py `_strip_burned_hook`). Captions are then burned ON TOP of the
     hooked file, keeping the "captions are always the last layer" invariant.
 
+    ``seconds`` e ``style`` vem da serie em partes (7.6), cujo "Parte N" usa
+    este mesmo caminho: com eles, o documento da serie manda, e nao o ambiente
+    -- que nao sobrevive a retomada do job. ``seconds=0`` e o video inteiro.
+
     Returns (hooked_path, hook_config), or None when skipped or failed — a
     hook problem must never cost the user the clip itself (same fail-open
     contract as auto_caption_clip)."""
     text = (clip.get('viral_hook_text') or '').strip()
     if not text:
         return None
-    style = os.environ.get("AUTO_HOOK_STYLE", "classic")
-    try:
-        seconds = float(os.environ.get("AUTO_HOOK_SECONDS", "5"))
-    except ValueError:
-        seconds = 5.0
+    style = style or os.environ.get("AUTO_HOOK_STYLE", "classic")
+    if seconds is None:
+        try:
+            seconds = float(os.environ.get("AUTO_HOOK_SECONDS", "5"))
+        except ValueError:
+            seconds = 5.0
     try:
         from hooks import add_hook_to_video, HOOK_STYLES
         if style not in HOOK_STYLES:
@@ -1202,10 +1280,11 @@ def auto_hook_clip(clip_path, clip):
         out_path = os.path.join(
             output_dir, f"hooked_{int(time.time())}_{os.path.basename(clip_path)}")
         add_hook_to_video(clip_path, text, out_path, position="top",
-                          duration=seconds, style=style)
-        print(f"   🪝 Hook burned ({style}, {seconds:g}s): {text}")
+                          duration=seconds or None, style=style)
+        print(f"   🪝 Hook burned ({style}, "
+              f"{f'{seconds:g}s' if seconds else 'o video inteiro'}): {text}")
         return out_path, {"text": text, "style": style, "position": "top",
-                          "duration_seconds": seconds}
+                          "duration_seconds": seconds or None}
     except Exception as e:
         print(f"   ⚠️ Auto-hook failed ({type(e).__name__}: {e}) — "
               f"delivering the clip without it.")
@@ -2093,6 +2172,20 @@ if __name__ == '__main__':
             else:
                 output_dir = os.path.dirname(args.input)
 
+    # Serie em partes (7.6): o documento na pasta do job diz que este video
+    # vira Parte 1, 2, 3... em vez de passar pela deteccao de momentos. Lido
+    # da PASTA e nao do ambiente: um job retomado depois de um reinicio volta
+    # com o ambiente reconstruido do zero, e a serie viraria um job de cortes.
+    serie_spec = None if args.skip_analysis else series.ler_spec(output_dir)
+    if serie_spec:
+        print(f"🧩 Serie em partes: cerca de "
+              f"{float(serie_spec.get('duracao_parte_s') or series.ALVO_PADRAO_S):g}s "
+              f"cada, na ordem, sem buraco.")
+        # A live da Twitch no ar vira UM bloco gravado (bloco 1.5); numa serie,
+        # do tamanho que a pessoa escolheu -- uma hora por padrao.
+        if serie_spec.get("bloco_min"):
+            os.environ["TWITCH_LIVE_BLOCK_MINUTES"] = str(int(serie_spec["bloco_min"]))
+
     # O whisper NAO carrega durante o download NESTE processo, e isso ja foi
     # tentado (23-set-2026): carregado numa thread de fundo enquanto o yt-dlp
     # baixava, o modelo subiu inteiro e a transcricao travou na primeira chamada
@@ -2345,7 +2438,13 @@ if __name__ == '__main__':
         # de 165 s). A placa so sobe depois do download -- ver `aquecimento.py`.
         aquecimento.iniciar(baixando.esperar_terminar if baixando is not None else None)
         with job_metrics.stage("04_detect"):
-            if transcript is not None:
+            if serie_spec:
+                # Nenhuma IA escolhe nada: as partes sao o video inteiro, na
+                # ordem. A transcricao serve para cortar nas pausas e para a
+                # legenda.
+                clips_data = cortes_da_serie(serie_spec, duration, transcript,
+                                             video_title, output_dir)
+            elif transcript is not None:
                 clips_data = get_viral_clips(transcript, duration, audio_path=audio_path)
             else:
                 clips_data = get_visual_clips(_esperar_video(), duration)
@@ -2383,9 +2482,18 @@ if __name__ == '__main__':
             # 5. Process clips in parallel: each worker cuts + renders one
             # clip. Renders are mostly ffmpeg subprocesses (parallelize well);
             # detector inference is serialized internally via DETECT_LOCK.
-            def _process_one_clip(i, clip):
+            def _process_one_clip(i, clip, reserva=False):
                 start = clip['start']
                 end = clip['end']
+                if serie_spec and i in partes_prontas:
+                    # Retomada de uma serie (7.6): esta parte terminou a cadeia
+                    # inteira antes do reinicio, e o arquivo continua na pasta.
+                    pronta = partes_prontas[i]
+                    for chave in ("auto_hook", "layout_ranges"):
+                        if pronta.get(chave) is not None:
+                            clip[chave] = pronta[chave]
+                    print(f"CLIP_READY {i} {pronta['arquivo']}")
+                    return True
                 print(f"\n🎬 Processing Clip {i+1}: {start}s - {end}s")
                 print(f"   Title: {clip.get('video_title_for_youtube_short', 'No Title')}")
 
@@ -2412,7 +2520,12 @@ if __name__ == '__main__':
                             cut_clip(input_video, clip_temp_path, start, end, i + 1)
 
                         with job_metrics.substage("06_reenquadra"):
-                            success = render_clip(clip_temp_path, clip_final_path, output_format)
+                            if reserva:
+                                success = parte_sem_reenquadrar(
+                                    clip_temp_path, clip_final_path, output_format)
+                            else:
+                                success = render_clip(clip_temp_path, clip_final_path,
+                                                      output_format)
                         # Layer order: watermark burns into the canonical (so any
                         # later hook replacement, which re-derives from it, keeps
                         # the branding), the hook is a derived hooked_ file, and
@@ -2430,10 +2543,24 @@ if __name__ == '__main__':
                         # The hook was written from the transcript alone. When the
                         # render put this clip's meaning on the screen, rewrite hook
                         # and title from three of its frames BEFORE burning them.
-                        if success and hook_grounding.wanted(clip['layout_ranges'], end - start):
+                        # Numa serie o texto e "Parte N": nao ha gancho a
+                        # reescrever pela imagem.
+                        if success and not serie_spec and hook_grounding.wanted(
+                                clip['layout_ranges'], end - start):
                             with job_metrics.substage("06_hook_grounding"):
                                 hook_grounding.reground(clip_final_path, clip, transcript, start, end)
-                        if success and os.environ.get("AUTO_HOOK") == "1":
+                        if success and serie_spec:
+                            # O "Parte N" no video, pelo documento da serie: no
+                            # comeco, o tempo todo, ou nao.
+                            segundos = series.segundos_do_rotulo(serie_spec)
+                            if segundos is not None:
+                                with job_metrics.substage("06_gancho"):
+                                    hooked = auto_hook_clip(
+                                        clip_final_path, clip, seconds=segundos,
+                                        style=serie_spec.get("estilo_rotulo"))
+                                if hooked:
+                                    deliver_path, clip['auto_hook'] = hooked
+                        elif success and os.environ.get("AUTO_HOOK") == "1":
                             with job_metrics.substage("06_gancho"):
                                 hooked = auto_hook_clip(clip_final_path, clip)
                             if hooked:
@@ -2454,6 +2581,11 @@ if __name__ == '__main__':
                             # announced, never one that ffmpeg is still writing.
                             print(f"CLIP_READY {i} "
                                   f"{os.path.basename(captioned or deliver_path)}")
+                            if serie_spec:
+                                series.marcar_pronta(
+                                    output_dir, i, captioned or deliver_path, len(shorts),
+                                    extra={"auto_hook": clip.get("auto_hook"),
+                                           "layout_ranges": clip.get("layout_ranges")})
                     return success
                 finally:
                     if os.path.exists(clip_temp_path):
@@ -2461,19 +2593,59 @@ if __name__ == '__main__':
 
             clip_workers = max(int(os.environ.get("CLIP_WORKERS", "3")), 1)
             shorts = clips_data['shorts']
+            # As partes que um job anterior desta mesma serie ja deixou prontas
+            # (retomada depois de um reinicio): nao se renderiza de novo.
+            partes_prontas = series.prontas(output_dir) if serie_spec else {}
+            if partes_prontas:
+                print(f"♻️ Serie: {len(partes_prontas)} de {len(shorts)} partes ja "
+                      f"estavam prontas; seguindo das que faltam.")
+            falharam = []
             with ThreadPoolExecutor(max_workers=min(clip_workers, len(shorts))) as pool:
                 futures = {pool.submit(_process_one_clip, i, clip): i
                            for i, clip in enumerate(shorts)}
                 for future in as_completed(futures):
                     i = futures[future]
                     try:
-                        future.result()
+                        if not future.result():
+                            falharam.append(i)
                     except Exception as e:
                         print(f"   ❌ Clip {i+1} failed: {type(e).__name__}: {e}")
+                        falharam.append(i)
+
+            if serie_spec:
+                # Numa serie, um corte que falha e um BURACO: a Parte 4 sai e a
+                # 3 nao existe. Cada parte que falhou tem mais duas chances,
+                # uma de cada vez (sem os outros workers disputando a placa): a
+                # cadeia de sempre, e depois a reserva sem reenquadramento.
+                faltando = []
+                for i in sorted(falharam):
+                    print(f"\n🔁 Parte {i+1} falhou; tentando de novo, sozinha.")
+                    ok = False
+                    for reserva in (False, True):
+                        try:
+                            ok = _process_one_clip(i, shorts[i], reserva=reserva)
+                        except Exception as e:
+                            print(f"   ❌ Parte {i+1}: {type(e).__name__}: {e}")
+                            ok = False
+                        if ok:
+                            break
+                        if not reserva:
+                            print(f"   ↪️ Parte {i+1}: montando sem o enquadramento "
+                                  f"inteligente, para a serie nao ficar com buraco.")
+                    if not ok:
+                        faltando.append(i + 1)
+                clips_data['serie']['faltando'] = faltando
+                if faltando:
+                    print(f"⚠️ Serie: {len(shorts) - len(faltando)} de {len(shorts)} "
+                          f"partes prontas. Faltam: "
+                          f"{', '.join(str(n) for n in faltando)} -- nem a tentativa "
+                          f"sem o enquadramento saiu; o erro de cada uma esta acima.")
+                else:
+                    print(f"🧩 Serie pronta: {len(shorts)} partes, na ordem.")
 
             # Persist per-clip render results added by the workers (auto_hook)
             # so the editor can see what is already burned into each clip.
-            if any('auto_hook' in c or 'hook_grounding' in c for c in shorts):
+            if serie_spec or any('auto_hook' in c or 'hook_grounding' in c for c in shorts):
                 with open(metadata_file, 'w') as f:
                     json.dump(clips_data, f, indent=2)
 

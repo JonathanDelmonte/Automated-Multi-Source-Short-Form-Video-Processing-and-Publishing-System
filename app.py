@@ -23,6 +23,8 @@ import metricas_instagram
 import timings_report
 import calibracao
 import analises
+import series
+import playlists_youtube
 import template as template_doc
 import db
 import db_models
@@ -568,6 +570,10 @@ def _clips_actually_rendered(job_id, output_dir, base_name, clips):
     ready_files = (jobs.get(job_id) or {}).get('ready_files') or {}
     kept = []
     for i, clip in enumerate(clips):
+        # O indice do corte no metadata vai junto (7.6): a lista devolvida
+        # perde os que nao renderizaram, e a posicao nela deixa de ser o
+        # indice. Ver `_clip_em_memoria`.
+        clip['clip_index'] = i
         clip_filename = (ready_files.get(i)
                          or _canonical_clip_file(output_dir, base_name, i))
         clip_path = os.path.join(output_dir, clip_filename)
@@ -582,6 +588,26 @@ def _clips_actually_rendered(job_id, output_dir, base_name, clips):
         clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
         kept.append(clip)
     return kept, len(clips) - len(kept)
+
+
+def _clip_em_memoria(job, indice):
+    """O corte de indice `indice` (a posicao dele no metadata) no resultado em
+    memoria do job, ou None.
+
+    **A posicao na lista NAO e o indice.** O resultado so traz os cortes que
+    renderizaram (`_clips_actually_rendered`): com o terceiro de cinco
+    falhando, `result['clips'][2]` era o QUARTO corte -- e trocar a legenda do
+    corte 3 mexia no 4, e publicar o corte 3 subia o arquivo do 4. Numa serie
+    (7.6), e a Parte 4 indo ao ar com o titulo da 3. Cada corte carrega o
+    proprio `clip_index` (o fim do job e a recuperacao do disco anotam, e os
+    dois filtram); um resultado sem ele -- de antes da 7.6, que nunca filtrava
+    -- usa a posicao, que ali e o indice.
+    """
+    clips = ((job or {}).get('result') or {}).get('clips') or []
+    for posicao, clip in enumerate(clips):
+        if isinstance(clip, dict) and job_registry.indice_do_corte(clip, posicao) == indice:
+            return clip
+    return None
 
 
 def _strip_burned_captions(output_dir, filename):
@@ -732,16 +758,36 @@ def _recover_jobs_from_disk():
         json_files = glob.glob(os.path.join(job_path, "*_metadata.json"))
         if not json_files:
             continue
+        if (os.path.isfile(os.path.join(job_path, _RESUME_FILE))
+                and series.incompleta(job_path)):
+            # Uma serie que parou no meio do render (7.6): o metadata e escrito
+            # ANTES do render, entao ele existir nao quer dizer que o job
+            # acabou. Fica para a retomada, que continua das partes que faltam.
+            continue
         try:
             with open(json_files[0], 'r') as f:
                 data = json.load(f)
             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
-            clips = data.get('shorts', [])
-            for i, clip in enumerate(clips):
+            clips = []
+            for i, clip in enumerate(data.get('shorts', [])):
+                clip['clip_index'] = i
                 if not clip.get('video_url'):
                     clip['video_url'] = (
                         f"/videos/{job_id}/"
                         f"{_canonical_clip_file(job_path, base_name, i)}")
+                # So o que esta no disco (7.6), como no fim de um job
+                # (`_clips_actually_rendered`): o metadata e a promessa. Uma
+                # parte de serie que nao renderizou aparecia, depois de um
+                # reinicio, como um cartao sem video -- e o projeto contava
+                # 8 de 8 partes com a parte 5 faltando. O `clip_index` acima
+                # mantem o endereco de cada corte com o buraco na lista.
+                arquivo = os.path.basename(clip['video_url'].split('?', 1)[0])
+                try:
+                    presente = os.path.getsize(os.path.join(job_path, arquivo)) > 0
+                except OSError:
+                    presente = False
+                if presente:
+                    clips.append(clip)
             owner = None
             owner_path = os.path.join(job_path, ".owner")
             if os.path.exists(owner_path):
@@ -1016,7 +1062,7 @@ def _install_drain_signal_handler():
 
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
                            webhook_url=None, webhook_secret=None, base_url=None,
-                           tenant_id=None):
+                           tenant_id=None, env_do_job=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
@@ -1037,6 +1083,9 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 # cortes no tenant do self-host em vez do dono -- e a linha de
                 # `clips` no tenant errado nao volta sozinha.
                 "tenant_id": tenant_id,
+                # As escolhas de quem pediu (7.6): enquadramento, gancho,
+                # legenda, template. Lista fechada, sem segredo (`ENV_DO_JOB`).
+                "env": dict(env_do_job or {}),
             }, f)
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
@@ -1087,8 +1136,11 @@ def _resume_interrupted_jobs() -> set:
             # um job cancelado que volta a processar sozinho.
             _clear_resume_manifest(job_id)
             continue
-        if glob.glob(os.path.join(job_path, "*_metadata.json")):
-            # Finished after all — recovered as completed already.
+        if (glob.glob(os.path.join(job_path, "*_metadata.json"))
+                and not series.incompleta(job_path)):
+            # Finished after all — recovered as completed already. Uma serie
+            # parada no meio do render (7.6) tem metadata e NAO acabou: o
+            # `main.py` retoma das partes que faltam.
             _clear_resume_manifest(job_id)
             continue
         try:
@@ -1135,6 +1187,11 @@ def _resume_interrupted_jobs() -> set:
             env["WATERMARK"] = "1"
         else:
             env.pop("WATERMARK", None)
+        # As escolhas do job (7.6), so as da lista fechada: o manifesto e um
+        # arquivo em disco, e o que vem dele nao troca `PATH` nem chave.
+        for chave, valor in (m.get("env") or {}).items():
+            if chave in ENV_DO_JOB and isinstance(valor, str):
+                env[chave] = valor
 
         m["attempts"] = attempts
         try:
@@ -1456,6 +1513,8 @@ async def run_job_wrapper(job_id):
         # O corte que uma receita mandou fazer (7.5): os cortes vao para a
         # caixa de aprovacao do canal, ou direto para a agenda dele.
         await _automacao_depois_do_job(job_id)
+        # A serie que pediu "agendar quando ficar pronta" (7.6).
+        await _serie_depois_do_job(job_id)
         # Settle the minute reservation (managed jobs only): commit on success,
         # release otherwise so the minutes go back to the user.
         await _settle_reservation(job_id)
@@ -1512,6 +1571,21 @@ def _transcript_do_job(job_id):
         return None
 
 
+def _serie_do_job(job_id):
+    """O resumo da serie em partes (7.6) que o `main.py` gravou no metadata,
+    ou None -- projeto de cortes, ou metadata ilegivel."""
+    try:
+        metas = glob.glob(os.path.join(OUTPUT_DIR, job_id, "*_metadata.json"))
+        if not metas:
+            return None
+        with open(metas[0], 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    serie = data.get('serie') if isinstance(data, dict) else None
+    return serie if isinstance(serie, dict) and serie.get('id') else None
+
+
 async def _fechar_job_no_banco(job_id):
     """Grava o desfecho do job e os cortes que ele produziu.
 
@@ -1547,6 +1621,13 @@ async def _fechar_job_no_banco(job_id):
         job_id, clips, transcript=transcript, arquivos=arquivos)
     if gravados:
         print(f"🗃️  {gravados} corte(s) de {job_id} no banco")
+    # A serie em partes (7.6): qual corte e qual parte. E o que deixa a agenda
+    # postar na ordem e a playlist do YouTube montar a serie.
+    serie = _serie_do_job(job_id)
+    if serie:
+        partes = await job_registry.registrar_serie(job_id, serie, clips)
+        if partes:
+            print(f"🧩 Serie \"{serie.get('nome') or job_id}\": {partes} parte(s) no banco")
 
 
 async def _archive_managed_job(job_id):
@@ -2306,6 +2387,7 @@ async def run_job(job_id, job_data):
                         ready_files = (jobs.get(job_id) or {}).get('ready_files') or {}
                         ready_clips = []
                         for i, clip in enumerate(clips):
+                             clip['clip_index'] = i
                              clip_filename = ready_files.get(i)
                              if not clip_filename:
                                  continue
@@ -2715,6 +2797,26 @@ LAYOUT_IMPLIES = {
     "speaker_cut": ["SPEAKER_SIGNAL"],
 }
 
+#: As variaveis que o `/api/process` poe no ambiente de UM job -- as escolhas de
+#: quem pediu. O manifesto de resume as guarda e a retomada as devolve (7.6).
+#: Ate aqui a retomada reconstruia o ambiente do zero ("the manifest holds no
+#: secrets") e um job retomado depois de um reinicio perdia o enquadramento
+#: escolhido, o gancho, a legenda desligada e o template da receita (7.5). Lista
+#: fechada: o manifesto e um arquivo em disco, e o que vem dele nao escolhe
+#: `PATH` nem chave nenhuma.
+ENV_DO_JOB = frozenset(
+    set(LAYOUT_ENV.values())
+    | {v for extras in LAYOUT_IMPLIES.values() for v in extras}
+    | {"AUTO_LAYOUT", "AUTO_HOOK", "AUTO_HOOK_STYLE", "AUTO_CAPTIONS",
+       "CLIP_TARGET_MIN", "CLIP_TARGET_MAX", "CLIP_MIN_SECONDS", "CLIP_MAX_SECONDS",
+       template_doc.VARIAVEL_DO_JOB})
+
+
+def env_do_job(env: dict) -> dict:
+    """O que este job mudou no ambiente, dentro da lista fechada."""
+    return {k: str(v) for k, v in (env or {}).items()
+            if k in ENV_DO_JOB and isinstance(v, str) and os.environ.get(k) != v}
+
 
 # --------------------------------------------------------------------------- #
 # Agent uploads: a two-step path for callers that hold a video FILE, not a URL
@@ -2890,18 +2992,10 @@ async def process_endpoint(
     channel_id: Optional[str] = Form(None),
     origem: Optional[str] = Form(None),
     template_id: Optional[str] = Form(None),
+    serie: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
     text_llm_ok = (llm_backend.active() or llm_cascade.has_text_provider()) and not BILLING_ENABLED
-    if not api_key and not text_llm_ok:
-        # Self-host with an OpenAI-compatible server configured needs no
-        # Google key for the core pipeline: the moment picker runs there and
-        # the frame-based stages degrade on their own (layout_picker returns
-        # "none", silent videos fail with a message that says why).
-        # Vale igual para a cascata (llm_cascade): com qualquer chave de
-        # provedor de texto (GROQ_API_KEY, NVIDIA_API_KEY...) o detector roda
-        # sem chave do Google.
-        raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
     # May be lowered by the paid-proxy budget check in the metering block
@@ -2931,6 +3025,23 @@ async def process_endpoint(
         channel_id = body.get("channel_id")
         origem = body.get("origem")
         template_id = body.get("template_id")
+        serie = body.get("serie")
+
+    # Serie em partes (7.6): nada vazio ou "false" pede serie.
+    if serie is False or (isinstance(serie, str)
+                          and serie.strip().lower() in ("", "0", "false", "null", "no")):
+        serie = None
+
+    if not api_key and not text_llm_ok and serie is None:
+        # Self-host with an OpenAI-compatible server configured needs no
+        # Google key for the core pipeline: the moment picker runs there and
+        # the frame-based stages degrade on their own (layout_picker returns
+        # "none", silent videos fail with a message that says why).
+        # Vale igual para a cascata (llm_cascade): com qualquer chave de
+        # provedor de texto (GROQ_API_KEY, NVIDIA_API_KEY...) o detector roda
+        # sem chave do Google. E a serie em partes (7.6) nao precisa de IA
+        # nenhuma: as partes sao o video inteiro, na ordem, cortado nas pausas.
+        raise gemini_missing_error()
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -2989,6 +3100,21 @@ async def process_endpoint(
             raise HTTPException(status_code=400, detail="channel_id invalido.")
         if await canais.existe(channel_id) is False:
             raise HTTPException(status_code=400, detail="Canal nao encontrado.")
+
+    # A serie em partes (7.6): o documento e validado aqui, antes do probe e
+    # do upload, e vai para a pasta do job -- e dali que o `main.py` o le, e e
+    # la que ele sobrevive a retomada. O idioma do "Parte N" e o do canal.
+    spec_da_serie = None
+    if serie is not None:
+        try:
+            spec_da_serie = series.normalizar_pedido(
+                serie, idioma=await canais.idioma(channel_id) if channel_id else None)
+        except series.SerieInvalida as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if spec_da_serie["agendar"] and not channel_id:
+            raise HTTPException(status_code=400,
+                                detail="Para agendar a serie quando ficar pronta, "
+                                       "escolha o canal.")
 
     # O tenant desta requisicao, lido UMA vez e carregado junto do job. O worker
     # roda depois da resposta, numa tarefa que nao herda o contexto (bloco 4.2)
@@ -3166,6 +3292,11 @@ async def process_endpoint(
             json.dump(spec, f, ensure_ascii=False)
         env[template_doc.VARIAVEL_DO_JOB] = caminho_do_template
 
+    if spec_da_serie is not None:
+        series.gravar_spec(job_output_dir, spec_da_serie)
+        print(f"[serie] job={job_id} partes de ~{spec_da_serie['duracao_parte_s']:g}s "
+              f"rotulo={spec_da_serie['rotulo']}")
+
     input_path = None
     if url:
         # Keep the downloaded source inside the job dir: the clip editor's
@@ -3242,6 +3373,27 @@ async def process_endpoint(
             _reject_short_source(upload_duration)
 
         cmd.extend(["-i", input_path])
+
+    # Uma serie de partes demais e quase certamente engano (partes curtas num
+    # video de horas), e renderizar tudo levaria a tarde inteira: recusada
+    # aqui, quando a duracao ja e conhecida, e nao depois do download.
+    if spec_da_serie is not None and source_seconds_for_db:
+        partes_previstas = series.quantas_partes(source_seconds_for_db, spec_da_serie)
+        if partes_previstas <= 0 or partes_previstas > series.MAX_PARTES:
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            if input_path and os.path.dirname(os.path.abspath(input_path)) == \
+                    os.path.abspath(UPLOAD_DIR):
+                try:
+                    os.remove(input_path)
+                except OSError:
+                    pass
+            raise HTTPException(
+                status_code=400,
+                detail=("O trecho escolhido fica fora do video: confira o comeco e o fim."
+                        if partes_previstas <= 0 else
+                        f"Esta serie teria {partes_previstas} partes, e o limite e "
+                        f"{series.MAX_PARTES}. Escolha partes mais longas ou um "
+                        f"trecho menor do video."))
 
     cmd.extend(["-o", job_output_dir])
     if output_format and output_format != "auto":
@@ -3331,7 +3483,8 @@ async def process_endpoint(
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
                            watermark=jobs[job_id]['watermark'],
                            webhook_url=webhook_url, webhook_secret=webhook_secret,
-                           base_url=api_base, tenant_id=tenant_do_job)
+                           base_url=api_base, tenant_id=tenant_do_job,
+                           env_do_job=env_do_job(env))
 
     _enqueue_job(job_id, priority)
 
@@ -3568,6 +3721,31 @@ async def cancel_job(job_id: str, request: Request):
     return {"status": "cancelled", "cancelled": True}
 
 
+def _serie_do_projeto(job_id: str, job: dict) -> Optional[dict]:
+    """O que a tela mostra de uma serie em partes (7.6), ou None.
+
+    Do documento na pasta (pequeno, e existe desde o pedido) e do primeiro
+    corte pronto, que traz o nome ja resolvido -- nunca do metadata inteiro,
+    que carrega a transcricao de uma live de horas e seria lido a cada volta
+    da lista.
+    """
+    spec = series.ler_spec(os.path.join(OUTPUT_DIR, job_id)) if _JOB_ID_RE.match(job_id or "") else None
+    if spec is None:
+        return None
+    clipes = (job.get('result') or {}).get('clips') or []
+    da_parte = next((c.get('serie') for c in clipes
+                     if isinstance(c, dict) and isinstance(c.get('serie'), dict)), None) or {}
+    return {
+        "id": spec.get("id"),
+        "nome": da_parte.get("nome") or spec.get("nome"),
+        "partes": da_parte.get("partes"),
+        "prontas": len(clipes),
+        "duracao_parte_s": spec.get("duracao_parte_s"),
+        "rotulo": spec.get("rotulo"),
+        "agendar": bool(spec.get("agendar")),
+    }
+
+
 def _resumo_do_job(job_id: str, job: dict) -> dict:
     """Uma linha da lista de projetos. So o que a lista precisa desenhar --
     o log inteiro de um job de uma hora tem milhares de linhas e nao cabe aqui."""
@@ -3590,10 +3768,15 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
             criado = os.path.getmtime(os.path.join(OUTPUT_DIR, job_id))
         except OSError:
             criado = 0
+    # Uma serie (7.6) se chama pelo nome dela, e nao "Nome - Parte 1".
+    serie = _serie_do_projeto(job_id, job)
+    if serie and serie.get("nome"):
+        titulo = serie["nome"]
     return {
         "job_id": job_id,
         "status": _presented_status(job_id, job),
         "title": titulo,
+        "serie": serie,
         "source_url": _job_source_url(job),
         "clip_count": len(clipes),
         "first_clip_url": capa,
@@ -3736,8 +3919,20 @@ async def get_status(job_id: str, request: Request):
         # O canal do projeto (Fase 7): a tela do projeto mostra de qual canal
         # ele e, e o "novo" dela ja abre o Criar nesse canal.
         "channel_id": job.get('channel_id'),
+        # A serie em partes (7.6), quando o projeto e uma; e as partes que
+        # nao sairam, quando o job acabou com buraco.
+        "serie": _serie_com_faltas(job_id, job),
         **_stage_view(job),
     }
+
+
+def _serie_com_faltas(job_id: str, job: dict) -> Optional[dict]:
+    serie = _serie_do_projeto(job_id, job)
+    if serie is None or job.get('status') != 'completed':
+        return serie
+    resumo = _serie_do_job(job_id) or {}
+    return {**serie, "partes": resumo.get("partes") or serie.get("partes"),
+            "faltando": list(resumo.get("faltando") or [])}
 
 
 def _locate_source(job_id: str):
@@ -3877,13 +4072,10 @@ async def download_all_clips(job_id: str, request: Request):
     # record (it also tracks edits like subtitled_/hook_ renames) and fall back
     # to the canonical name a job/restore rebuilds, instead of finding nothing.
     base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
-    mem_clips = ((jobs.get(job_id) or {}).get('result') or {}).get('clips') or []
 
     files = []
     for i, clip in enumerate(data.get('shorts', [])):
-        url = None
-        if i < len(mem_clips):
-            url = (mem_clips[i] or {}).get('video_url')
+        url = (_clip_em_memoria(jobs.get(job_id), i) or {}).get('video_url')
         url = url or clip.get('video_url')
         filename = (os.path.basename(url.split('/')[-1]) if url
                     else _canonical_clip_file(output_dir, base_name, i))
@@ -3966,7 +4158,6 @@ def _itens_do_job(job_id: str):
         return []
 
     base_name = os.path.basename(metas[0]).replace('_metadata.json', '')
-    mem_clips = ((jobs.get(job_id) or {}).get('result') or {}).get('clips') or []
     # A origem e a licenca da fonte (7.5): o credito vai na descricao de todo
     # corte do projeto, no idioma do canal. Da pasta, e nao do banco: o pacote
     # do dia e a lista de projetos vem do disco.
@@ -3981,9 +4172,9 @@ def _itens_do_job(job_id: str):
         # memoria conhece as reedicoes (legenda, hook, recut), o metadata em
         # disco nunca carrega `video_url`, e o nome canonico e a ultima
         # reserva.
-        url = None
-        if i < len(mem_clips):
-            url = (mem_clips[i] or {}).get('video_url')
+        # Pelo indice do corte, nunca pela posicao no resultado em memoria:
+        # ali faltam os que nao renderizaram (`_clip_em_memoria`).
+        url = (_clip_em_memoria(jobs.get(job_id), i) or {}).get('video_url')
         url = url or clip.get('video_url')
         filename = (os.path.basename(url.split('/')[-1]) if url
                     else _canonical_clip_file(output_dir, base_name, i))
@@ -4351,7 +4542,9 @@ async def edit_clip(
             filename = safe_name
         else:
             # Fallback to original clip
-            clip = job['result']['clips'][req.clip_index]
+            clip = _clip_em_memoria(job, req.clip_index)
+            if clip is None or not clip.get('video_url'):
+                raise HTTPException(status_code=404, detail="Clip not found")
             filename = clip['video_url'].split('/')[-1]
             input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
         
@@ -4452,8 +4645,9 @@ async def edit_clip(
 
         # Persist the new current file like /api/subtitle does: in-memory job
         # result + metadata.json, so reload/recovery/re-archive see this version.
-        if req.clip_index < len(job['result']['clips']):
-            job['result']['clips'][req.clip_index]['video_url'] = new_video_url
+        mem_clip = _clip_em_memoria(job, req.clip_index)
+        if mem_clip is not None:
+            mem_clip['video_url'] = new_video_url
         try:
             meta_files = glob.glob(os.path.join(OUTPUT_DIR, req.job_id, "*_metadata.json"))
             if meta_files:
@@ -4875,9 +5069,9 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
         data['shorts'] = clips
         with open(json_files[0], 'w') as f:
             json.dump(data, f, indent=2)
-        mem_clips = (job.get('result') or {}).get('clips') or []
-        if req.clip_index < len(mem_clips):
-            mem_clips[req.clip_index].update(updates)
+        mem_clip = _clip_em_memoria(job, req.clip_index)
+        if mem_clip is not None:
+            mem_clip.update(updates)
 
         _archive_clip_edit_bg(req.job_id, req.clip_index, served_name)
         if reservation_id:
@@ -5224,9 +5418,9 @@ async def _reframe_locked(req: ReframeRequest, request: Request, job, overrides)
         data['shorts'] = clips
         with open(json_files[0], 'w') as f:
             json.dump(data, f, indent=2)
-        mem_clips = (job.get('result') or {}).get('clips') or []
-        if req.clip_index < len(mem_clips):
-            mem_clips[req.clip_index].update(updates)
+        mem_clip = _clip_em_memoria(job, req.clip_index)
+        if mem_clip is not None:
+            mem_clip.update(updates)
 
         _archive_clip_edit_bg(req.job_id, req.clip_index, served_name)
         if reservation_id:
@@ -5320,7 +5514,9 @@ async def generate_effects_config(
             safe_name = os.path.basename(req.input_filename)
             input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_name)
         else:
-            clip = job['result']['clips'][req.clip_index]
+            clip = _clip_em_memoria(job, req.clip_index)
+            if clip is None or not clip.get('video_url'):
+                raise HTTPException(status_code=404, detail="Clip not found")
             filename = clip['video_url'].split('/')[-1]
             input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
 
@@ -5625,8 +5821,9 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
 
     # 3. Update Result and Metadata
     # Update InMemory Jobs
-    if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+    mem_clip = _clip_em_memoria(job, req.clip_index)
+    if mem_clip is not None:
+        mem_clip['video_url'] = f"/videos/{req.job_id}/{output_filename}"
     
     # Update Metadata on Disk (Persistence)
     try:
@@ -6240,15 +6437,26 @@ async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
     -- e reespalha o resto nas janelas seguintes, com jitter. No dia normal
     nada muda: cada janela vence sozinha.
 
-    Devolve `{"publicadas": [...], "reagendadas": {...}}` para o teste e para o
-    log; nunca levanta.
+    **As partes de uma serie saem na ordem** (7.6). A serie numa conta e uma
+    fila: `series.planos` diz, por serie e conta, se o dia e normal (a parte
+    vencida e a primeira da fila, e segue pela trava de sempre), se a serie
+    esta parada atras de uma parte que falhou (nada sai, nada muda, ate a
+    pessoa tentar de novo ou pular) ou se a ordem se desfez -- e ai a fila
+    INTEIRA ganha horarios novos, na ordem das partes. Antes de tudo, a
+    publicacao presa "subindo" por um reinicio vira "falhou"
+    (`publish_queue.destravar_presas`), que e o estado que tem botao.
+
+    Devolve `{"publicadas": [...], "reagendadas": {...}, "seguradas": {...}}`
+    para o teste e para o log; nunca levanta.
     """
     agora = agora or datetime.now(timezone.utc)
-    feito = {"publicadas": [], "reagendadas": {}}
+    feito = {"publicadas": [], "reagendadas": {}, "seguradas": {}}
     try:
+        await publish_queue.destravar_presas(agora)
         pendentes = await publish_queue.devidas(agora)
         if not pendentes:
             return feito
+        linhas_de_serie = await publish_queue.linhas_das_series(pendentes)
         ocupados = await publish_queue.ocupados_das_contas(
             {p["account_id"] for p in pendentes}, agora)
     except Exception as e:
@@ -6260,25 +6468,83 @@ async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
     # As janelas do reagendamento sao as do canal de cada conta, no fuso de
     # quem usa (7.5): no Docker o processo esta em UTC.
     agendas = await _agendas_das_contas({p["account_id"] for p in pendentes})
-    triagem = scheduler.triar_vencidas(pendentes, agora, ocupados,
-                                       teto_por_dia=_teto_do_agendador(),
-                                       agendas=agendas)
-    for pub_id, quando in triagem.reagendar.items():
+
+    async def _mudar_hora(pub_id, quando):
         try:
             if await publish_queue.reagendar(pub_id, scheduler.para_utc(quando)):
                 feito["reagendadas"][pub_id] = quando
+                return True
         except Exception as e:
             print(f"⚠️  Agendador: nao consegui reagendar {pub_id} ({e})")
-    if feito["reagendadas"]:
+        return False
+
+    # 1. As series (7.6), antes da trava de sempre: o que uma serie decide
+    #    ocupa a conta para o resto.
+    sair_agora = []
+    fora_da_triagem = set()
+    por_id = {l["id"]: l for l in linhas_de_serie}
+    for (serie_id, conta), plano in series.planos(
+            [p["id"] for p in pendentes], linhas_de_serie).items():
+        if plano["acao"] == "normal":
+            continue
+        fora_da_triagem.update(plano["vencidas"])
+        if plano["acao"] == "segurar":
+            for pub_id in plano["vencidas"]:
+                feito["seguradas"][pub_id] = plano["parte_que_segura"]
+            continue
+        # A fila inteira ganha horarios novos, na ordem das partes. Os
+        # horarios dela mesma saem dos ocupados da conta: sao eles que estao
+        # sendo refeitos.
+        da_fila = [por_id[i]["scheduled_at"] for i in plano["fila"]
+                   if por_id[i]["scheduled_at"] and por_id[i]["scheduled_at"] > agora]
+        outros = list(ocupados.get(conta, []))
+        for quando in da_fila:
+            if quando in outros:
+                outros.remove(quando)
+        sai, horarios = scheduler.replanejar_fila(
+            len(plano["fila"]), agora, outros,
+            agenda=agendas.get(conta), teto_por_dia=_teto_do_agendador())
+        fila = list(plano["fila"])
+        if sai:
+            primeira = fila.pop(0)
+            if await _mudar_hora(primeira, agora):
+                feito["reagendadas"].pop(primeira, None)
+                sair_agora.append(por_id[primeira])
+            outros.append(agora)
+        for pub_id, quando in zip(fila, horarios):
+            if await _mudar_hora(pub_id, quando):
+                outros.append(scheduler.para_utc(quando))
+        ocupados[conta] = outros
+        print(f"🧩 Serie {serie_id[:8]}: {len(plano['fila'])} parte(s) de novo na "
+              f"ordem" + (" -- a proxima sai agora." if sai else "."))
+    if feito["seguradas"]:
+        novas = set(feito["seguradas"]) - _seguradas_ja_ditas
+        if novas:
+            partes = sorted(set(feito["seguradas"].values()))
+            print(f"⏸️  Serie parada: {len(feito['seguradas'])} parte(s) esperando a "
+                  f"parte {', '.join(str(p) for p in partes)}, que falhou ou ficou "
+                  "presa subindo. Tente de novo ou pule na fila.")
+        _seguradas_ja_ditas.clear()
+        _seguradas_ja_ditas.update(feito["seguradas"])
+
+    # 2. A trava de sempre para o resto.
+    restantes = [p for p in pendentes if p["id"] not in fora_da_triagem]
+    triagem = scheduler.triar_vencidas(restantes, agora, ocupados,
+                                       teto_por_dia=_teto_do_agendador(),
+                                       agendas=agendas)
+    atrasadas = 0
+    for pub_id, quando in triagem.reagendar.items():
+        atrasadas += await _mudar_hora(pub_id, quando)
+    if atrasadas:
         horas = ", ".join(q.strftime("%d/%m %H:%M")
-                          for q in sorted(feito["reagendadas"].values()))
-        print(f"⏰ Trava do post atrasado: {len(feito['reagendadas'])} "
+                          for i, q in sorted(feito["reagendadas"].items(),
+                                             key=lambda x: x[1])
+                          if i in triagem.reagendar)
+        print(f"⏰ Trava do post atrasado: {atrasadas} "
               f"publicacao(oes) vencida(s) ficaram para depois ({horas}), "
               "para nao sairem juntas.")
 
-    for pendente in pendentes:
-        if pendente["id"] not in triagem.agora:
-            continue
+    for pendente in sair_agora + [p for p in restantes if p["id"] in triagem.agora]:
         try:
             if not await publish_queue.reservar(pendente["id"], agora):
                 continue        # a outra instancia pegou primeiro
@@ -6286,6 +6552,99 @@ async def _uma_volta_do_agendador(agora: Optional[datetime] = None) -> dict:
             feito["publicadas"].append(pendente["id"])
         except Exception as e:
             print(f"⚠️  Agendador: {pendente['id']} explodiu ({e})")
+    return feito
+
+
+#: As partes seguradas que o log ja anunciou: uma serie parada fica parada
+#: por dias, e o laco roda a cada minuto.
+_seguradas_ja_ditas: set = set()
+
+
+#: De quanto em quanto tempo o laco arruma as playlists das series (7.6).
+#: Cinco minutos: a parte que acabou de sair entra logo, e o custo de uma volta
+#: sem nada a fazer e uma consulta.
+INTERVALO_DAS_PLAYLISTS = timedelta(minutes=int(os.environ.get("PLAYLIST_TICK_MINUTES", "5")))
+_ultima_arrumacao: dict = {"quando": None, "sem_cota": None}
+
+
+async def _arrumar_playlists(agora: Optional[datetime] = None, forcar: bool = False) -> dict:
+    """Uma playlist por serie no YouTube (7.6): cria a da serie quando a
+    primeira parte vai ao ar, e poe cada parte publicada nela, na ordem das
+    partes (`series.entram_na_playlist`). Nunca levanta.
+
+    So nas contas conectadas para "organizar" (`playlists_youtube`): sem essa
+    conexao a serie sai igual, sem playlist. A cota e debitada ANTES de cada
+    chamada, como no envio, e o que nao cabe hoje entra amanha -- a playlist se
+    completa sozinha. Uma playlist apagada no YouTube e esquecida, e a volta
+    seguinte cria outra com as partes que ja sairam.
+    """
+    agora = agora or datetime.now(timezone.utc)
+    feito = {"criadas": [], "itens": [], "sem_cota": False}
+    ultima = _ultima_arrumacao["quando"]
+    if not forcar and ultima and agora - ultima < INTERVALO_DAS_PLAYLISTS:
+        return feito
+    _ultima_arrumacao["quando"] = agora
+    try:
+        linhas = await publish_queue.partes_no_youtube()
+        if not linhas:
+            return feito
+        listas, ja = await publish_queue.playlists_e_itens()
+    except Exception as e:
+        print(f"⚠️  Playlists: nao consegui ler a fila ({e})")
+        return feito
+    grupos: dict = {}
+    for linha in linhas:
+        grupos.setdefault((linha["tenant_id"], linha["serie_id"], linha["account_id"]),
+                          []).append(linha)
+    cota = publishers.quota
+    for (tenant, serie_id, conta), grupo in grupos.items():
+        ids = series.entram_na_playlist(grupo, ja)
+        if not ids:
+            continue
+        segredo = playlists_youtube.credencial(grupo[0]["handle"])
+        if segredo is None:
+            continue
+        por_id = {l["id"]: l for l in grupo}
+        nome, destino = grupo[0]["nome"], f"youtube/{grupo[0]['handle']}"
+        lista = listas.get((tenant, serie_id, conta))
+        try:
+            token = await asyncio.to_thread(playlists_youtube.token_de_acesso, segredo)
+            if lista is None:
+                if not cota.cabe_unidades(playlists_youtube.CUSTO_PLAYLIST):
+                    feito["sem_cota"] = True
+                    break
+                cota.registrar_unidades(playlists_youtube.CUSTO_PLAYLIST)
+                playlist_id = await asyncio.to_thread(
+                    playlists_youtube.criar, token,
+                    playlists_youtube.corpo_da_playlist(nome, grupo[0]["idioma"]))
+                lista = (await publish_queue.gravar_playlist(tenant, serie_id, conta,
+                                                             playlist_id), playlist_id)
+                feito["criadas"].append(playlist_id)
+                print(f"📂 Playlist da serie \"{nome}\" criada em {destino}")
+            for pub_id in ids:
+                if not cota.cabe_unidades(playlists_youtube.CUSTO_ITEM):
+                    feito["sem_cota"] = True
+                    break
+                cota.registrar_unidades(playlists_youtube.CUSTO_ITEM)
+                item = await asyncio.to_thread(
+                    playlists_youtube.inserir, token,
+                    playlists_youtube.corpo_do_item(lista[1], por_id[pub_id]["remote_id"]))
+                await publish_queue.gravar_item_da_playlist(tenant, lista[0], pub_id, item)
+                feito["itens"].append(pub_id)
+        except playlists_youtube.PlaylistSumiu:
+            await publish_queue.esquecer_playlist(tenant, lista[0])
+            print(f"📂 A playlist da serie \"{nome}\" foi apagada em {destino}; "
+                  "a proxima volta cria outra.")
+        except Exception as e:
+            print(f"⚠️  Playlist da serie \"{nome}\" em {destino}: {e}")
+        if feito["sem_cota"]:
+            break
+    if feito["itens"]:
+        print(f"📂 {len(feito['itens'])} parte(s) entraram na playlist da serie.")
+    if feito["sem_cota"] and _ultima_arrumacao["sem_cota"] != cota.dia_do_youtube():
+        _ultima_arrumacao["sem_cota"] = cota.dia_do_youtube()
+        print("📂 A cota do YouTube de hoje acabou; o resto das partes entra na "
+              "playlist amanha, na ordem.")
     return feito
 
 
@@ -6303,6 +6662,9 @@ async def _laco_do_agendador():
         if _draining:
             continue
         await _uma_volta_do_agendador()
+        # A playlist de cada serie (7.6), depois dos posts: a parte que acabou
+        # de sair ja entra.
+        await _arrumar_playlists()
 
 
 class AgendarIn(BaseModel):
@@ -6418,6 +6780,16 @@ async def _agendar_itens(job_id: str, escolhidos: list, contas: list) -> tuple:
     fuso_do_tenant = fuso_de_quem_usa.tz_do_tenant(db.tenant_atual())
 
     resultados = []
+    # O corte que nao renderizou nao entra na agenda (7.6): numa serie, e o
+    # buraco que o projeto ja mostra, e agenda-lo so faria a publicacao falhar
+    # na hora marcada -- e parar as partes seguintes atras dela.
+    sem_arquivo = [i for i in escolhidos if not os.path.exists(i.clip.path)]
+    escolhidos = [i for i in escolhidos if i not in sem_arquivo]
+    for item in sem_arquivo:
+        for conta in contas:
+            resultados.append({"clip_index": item.clip.index, **_da_conta(conta), "ok": False,
+                               "detail": "este corte nao tem arquivo na pasta "
+                                         "(ele nao renderizou)"})
     for conta in contas:
         agenda = agendas.get(conta.id) or scheduler.AgendaDaConta(
             teto=_teto_do_agendador(), fuso=fuso_do_tenant)
@@ -6685,6 +7057,38 @@ async def _agendar_cortes_no_canal(canal_id: str, job_id: str, indices: list) ->
     return {"agendados": sum(1 for r in resultados if r.get("ok")),
             "falhas": [r.get("detail") for r in resultados if not r.get("ok")],
             "aviso": None}
+
+
+async def _serie_depois_do_job(job_id: str) -> None:
+    """A serie que pediu "agendar quando ficar pronta" (7.6) vai para a agenda
+    do canal quando o job termina: todas as partes, na ordem, um galho por
+    conta, nas janelas do canal.
+
+    E a escolha de quem pediu, entao nao passa pela caixa de aprovacao -- o
+    que se agenda a mao ja e a aprovacao (7.5). Uma vez so: o documento da
+    serie ganha `agendada_em`, e um job retomado nao agenda de novo. Nunca
+    levanta.
+    """
+    try:
+        pasta = os.path.join(OUTPUT_DIR, job_id)
+        spec = series.ler_spec(pasta)
+        job = jobs.get(job_id) or {}
+        if not spec or not spec.get("agendar") or spec.get("agendada_em") \
+                or job.get("status") != "completed":
+            return
+        canal_id = job.get("channel_id") or _canal_do_disco(pasta)
+        if not canal_id:
+            return
+        indices = [i.clip.index for i in _itens_do_job(job_id)]
+        feito = await _agendar_cortes_no_canal(canal_id, job_id, indices)
+        spec["agendada_em"] = datetime.now(timezone.utc).isoformat()
+        spec["agendamento"] = {"agendados": feito["agendados"], "aviso": feito["aviso"],
+                               "falhas": [f for f in feito["falhas"] if f][:10]}
+        series.gravar_spec(pasta, spec)
+        print(f"🧩 Serie {job_id}: " + (feito["aviso"] or
+              f"{feito['agendados']} post(s) na agenda do canal, na ordem das partes"))
+    except Exception as e:
+        print(f"⚠️  Serie {job_id}: nao consegui agendar ({e})")
 
 
 async def _automacao_depois_do_job(job_id: str) -> None:
@@ -8201,6 +8605,22 @@ async def marcar_publicado(pub_id: str, req: Optional[PublicadoIn] = None,
             "remote_id": post.id if post else remote_id, "aviso": aviso}
 
 
+@app.post("/api/publicacoes/{pub_id}/tentar")
+async def tentar_publicacao_de_novo(pub_id: str):
+    """"Tentar de novo" uma publicacao que falhou (7.6): volta para a fila com a
+    hora de agora, e o agendador a leva na proxima volta, pela trava de sempre
+    -- e, numa serie, na ordem das partes. O "pular" e o DELETE ao lado."""
+    try:
+        feito = await publish_queue.tentar_de_novo(pub_id, datetime.now(timezone.utc))
+    except publish_queue.FilaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if feito is None:
+        raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
+    return {"success": True, **feito}
+
+
 @app.delete("/api/publicacoes/{pub_id}")
 async def cancelar_publicacao(pub_id: str):
     try:
@@ -8345,8 +8765,9 @@ async def remove_subtitles(req: RemoveSubtitlesRequest, request: Request):
                             detail="The original clip is no longer available.")
 
     new_url = f"/videos/{req.job_id}/{filename}"
-    if req.clip_index < len(job.get('result', {}).get('clips', [])):
-        job['result']['clips'][req.clip_index]['video_url'] = new_url
+    mem_clip = _clip_em_memoria(job, req.clip_index)
+    if mem_clip is not None:
+        mem_clip['video_url'] = new_url
     try:
         clips[req.clip_index]['video_url'] = new_url
         data['shorts'] = clips
@@ -8476,8 +8897,8 @@ async def add_hook(req: HookRequest, request: Request):
 
     # Update Persistence (Same logic as subtitles)
     # Update InMemory Jobs
-    if req.clip_index < len(job['result']['clips']):
-        mem_clip = job['result']['clips'][req.clip_index]
+    mem_clip = _clip_em_memoria(job, req.clip_index)
+    if mem_clip is not None:
         mem_clip['video_url'] = f"/videos/{req.job_id}/{output_filename}"
         if req.remove:
             mem_clip.pop('auto_hook', None)

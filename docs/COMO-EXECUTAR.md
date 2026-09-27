@@ -1452,6 +1452,74 @@ Automação; aprovado, o corte entra na agenda do canal.
 aba Automação), o motivo de qualquer vídeo que ficou de fora e que você achou
 que devia ter entrado, e o log do projeto de qualquer corte que falhou.
 
+## Passo 14 — Série em partes: uma live vira Parte 1, 2, 3...
+
+Em **Criar → Série em partes**, cole o link de uma live gravada (o vídeo salvo da
+Twitch ou do YouTube) ou de um vídeo longo, ou envie o arquivo. O programa divide
+o vídeo **inteiro** em partes de cerca de 1 minuto (ou 30 s, 1 min 30 s, 2 min,
+3 min), na ordem, cortadas nas pausas da fala, com "Parte N" no título e nos 5
+primeiros segundos do vídeo (ou o tempo todo, ou nunca).
+
+- **Não precisa de chave de IA**: nenhuma IA escolhe trecho. A transcrição
+  continua — é ela que acha as pausas e faz a legenda.
+- **Com um arquivo**, o formulário já diz quantas partes vão sair (o navegador lê
+  a duração sem enviar nada).
+- **Só um trecho do vídeo** ("começar em" e "terminar em") serve para pular a
+  abertura da live, por exemplo.
+- **Uma live da Twitch no ar** (o link do canal, e não o de um vídeo salvo): o
+  programa grava um bloco de 30 min a 2 h e divide o bloco. Para a live inteira,
+  use o link do vídeo salvo depois que ela acabar.
+- **"Agendar no canal quando ficar pronta"** vem marcado quando você escolhe um
+  canal: ao terminar, as partes vão para a agenda do canal, na ordem, nas horas
+  dele — 3 por dia por padrão, então uma live de 1 hora (60 partes) vira 20 dias
+  de posts. Numa série não há "publicar agora", que soltaria todas de uma vez.
+
+**Na ordem, sempre.** Cada conta solta uma parte depois da outra. Se uma falhar
+(o YouTube recusou, a internet caiu), as seguintes daquela conta esperam — na
+Agenda aparece "a parte 3 falhou · 57 paradas atrás dela" — até você apertar
+**tentar de novo** (a seta em círculo) ou **pular esta parte** (a lixeira). Aí a
+próxima sai na hora, se a trava do Passo 10 deixar, e as outras ganham horários
+novos, na ordem. As outras contas do canal não esperam por ela.
+
+**A playlist no YouTube é opcional**: em **Configurações → Contas**, na conta do
+YouTube, **conectar para playlists**. O Google não tem uma permissão só para
+playlists: a tela dele vai pedir a de **gerenciar a sua conta do YouTube**. O
+programa só a usa para criar a playlist de cada série e pôr as partes nela, na
+ordem. Sem essa conexão, a série sai igual, sem playlist.
+
+### Roteiro de teste (7.6)
+
+1. **Uma live de mais ou menos 1 hora.** Criar → Série em partes, escolher um
+   canal com contas, colar o link do vídeo salvo de uma live (sua ou sem direitos
+   autorais), deixar "1 min", confirmar os direitos e **criar a série**. Quando
+   terminar, conferir na tela do projeto: cerca de 60 partes (a duração dividida
+   por 1 min), na ordem, com "Parte 1", "Parte 2"... no título de cada cartão e
+   nos primeiros segundos de cada vídeo.
+2. **Sem buraco e sem repetição.** Assistir ao fim da Parte 1 e ao começo da
+   Parte 2: a fala continua de onde parou, sem frase cortada no meio e sem trecho
+   repetido. Fazer o mesmo em mais duas ou três emendas.
+3. **Na Agenda**, a série aparece num item só, com uma linha por conta ("0 de 60
+   publicadas · próxima: parte 1 · <hora>"). **ver as 60 partes** abre a lista
+   em ordem, e o calendário mostra as partes nas horas do canal.
+4. **Postando.** Deixar o programa aberto: a Parte 1 sai na primeira janela, a 2
+   na seguinte, e assim por diante, em cada conta. Com a conta do YouTube
+   conectada para publicar, os títulos no YouTube Studio são "<nome> - Parte N".
+5. **A playlist.** Conectar a conta do YouTube para playlists. Em até 5 minutos
+   depois de a Parte 1 sair, aparece no canal uma playlist com o nome da série
+   (YouTube Studio → Conteúdo → Playlists), e cada parte entra nela, na ordem,
+   conforme vai ao ar. Na Agenda, o link **playlist** aparece ao lado da série.
+6. **Se uma parte falhar de verdade**, conferir que as seguintes daquela conta
+   dizem "parada" e que **tentar de novo** a faz sair e destrava as outras, na
+   ordem. Para ver o **pular** sem esperar uma falha: em "ver as partes", a
+   lixeira de uma parte agendada a tira da série, e as seguintes continuam.
+7. **Parar no meio.** Durante uma série longa, fechar o programa (ou reiniciar o
+   computador) e abrir de novo: o projeto continua de onde parou — o log diz "N
+   de 60 partes já estavam prontas" — sem refazer as prontas.
+
+**O que me mandar de volta**: a emenda que ficou esquisita (o número das duas
+partes e o que foi cortado ou repetido), o log do projeto se alguma parte não
+saiu, e a linha da série na Agenda se ela parou sem você entender por quê.
+
 ---
 
 ## Armadilhas, todas vindas do código (ou do Windows)

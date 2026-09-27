@@ -1233,6 +1233,7 @@ portrait clip cannot reproduce the shrink either.
 | POST | `/api/publicar` | Publica cortes de um projeto numa conta, ou no canal inteiro (um galho por conta) |
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
 | POST | `/api/publicacoes/{id}/publicado` | "Já publiquei", com o link do post |
+| POST | `/api/publicacoes/{id}/tentar` | A que falhou volta para a fila (7.6); pular e o DELETE |
 | GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
 | GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor (`?canal=` a de um canal), e agendar um projeto numa conta ou no canal |
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | As leituras coletadas (as três plataformas), e "medir agora" |
@@ -2866,6 +2867,90 @@ do codigo que ela mudou.
   o que a pessoa digita. O texto do "agendar" descreve a agenda do CANAL do
   destino (`lib/publicacoes.canalDoDestino`). Motor anterior a 7.5 responde
   404 nas rotas novas, e a aba diz para atualizar.
+
+**As series em partes** (`series.py`, `playlists_youtube.py` e o modo serie do
+`main.py`; etapa 7.6):
+
+- **`series.py` e stdlib pura e decide toda a regra**: quantas partes (o trecho
+  dividido pelo alvo, meio para cima), onde cortar (a maior pausa da fala a ate
+  `FOLGA` = 20% do ponto exato, com bonus para fim de frase), titulo
+  ("Nome - Parte N", ate 100), descricao ("Parte 3 de 60 — Nome") e a ordem na
+  hora de postar (`planos`, `seguradas`, `paradas`, `entram_na_playlist`). O CI
+  exercita tudo sem torch.
+- **As partes sao CONTIGUAS**: o fim de uma e o comeco da seguinte, e a parte
+  comeca `ANTECEDENCIA_S` antes da primeira palavra. Nao "melhorar" deixando
+  respiro entre elas: o pronto-quando e "sem buraco e sem repeticao", e o teste
+  soma as partes contra o trecho.
+- **O pedido mora na pasta do job** (`serie.json`, `series.gravar_spec`), e e
+  por ele que o `main.py` entra no modo serie -- nao por argumento: o manifesto
+  de resume roda o mesmo comando, e o arquivo sobrevive ao reinicio. O `id` da
+  serie nasce no pedido, e `main.cortes_da_serie` reaproveita as partes do
+  metadata quando o id bate: a retomada corta as MESMAS partes.
+- **Sem LLM**: a deteccao vira `cortes_da_serie`, o hook grounding nao roda, e o
+  `/api/process` com `serie` nao pede chave. O layout picker continua (com
+  chave), degradando como sempre sem ela.
+- **O "Parte N" no video e o gancho**: `auto_hook_clip(..., seconds=, style=)`,
+  com `seconds=0` para o clipe inteiro (`series.segundos_do_rotulo`).
+- **Parte que falhou tenta de novo, sozinha, e depois sem reenquadrar**
+  (`main.parte_sem_reenquadrar`: o quadro inteiro sobre o `fundo_desfocado`).
+  Um buraco na serie e pior que uma parte com enquadramento simples. Sem nenhuma
+  das tres, ela vai para `serie.faltando` no metadata, e a tela diz qual -- sem
+  inventar causa: o log tem o erro de cada tentativa.
+- **Retomada**: `serie_progresso.json` anota cada parte que terminou a cadeia
+  inteira (`series.marcar_pronta`, depois do `CLIP_READY`). O metadata e escrito
+  ANTES do render, entao `_recover_jobs_from_disk` NAO da por pronto um job com
+  manifesto e `series.incompleta`, e o scan de resume o retoma. O job que
+  terminou sem uma parte (a que falhou tres vezes) nao tem manifesto, e e
+  recuperado normalmente.
+- **As escolhas do job viajam no manifesto** (`app.ENV_DO_JOB`, lista fechada):
+  ate aqui um job retomado perdia layout, legenda e template e rodava com os
+  padroes. Lista fechada porque o `env` do manifesto vira ambiente do
+  subprocesso.
+- **O indice do corte e o `clip_index`, nunca a posicao na lista.** O resultado
+  so traz o que renderizou, entao com o 3 de 5 falhando `result['clips'][2]` era
+  o 4: publicar o corte 3 subia o arquivo do 4 (numa serie, a Parte 4 com o
+  titulo da 3). Todo acesso passa por `app._clip_em_memoria` /
+  `job_registry.indice_do_corte`, e no painel por `lib/cortes.js`. A recuperacao
+  do disco anota o indice E filtra o que nao esta la, como o fim do job.
+- **Quatro tabelas** (`series`, `series_parts`, `series_playlists`,
+  `series_playlist_items`; migracao `a7c3e9f1d502`), pela regra da Fase 7.
+  `job_registry.registrar_serie` grava no fim do job, idempotente, so as partes
+  com linha em `clips`.
+- **A ordem na hora de postar** (`app._uma_volta_do_agendador`, `series.planos`):
+  por (serie, conta), uma parte so sai depois da anterior -- publicada, pulada, ou
+  entregue a fila manual, que nao segura nada. A que falhou ou esta subindo
+  SEGURA as seguintes (`segurar`); destravada com partes vencidas, `replanejar`:
+  a primeira sai agora se a trava deixar (`scheduler.pode_sair_agora`) e as
+  outras ganham horarios nas janelas da conta (`scheduler.replanejar_fila`), na
+  ordem. O resto passa pela `triar_vencidas` de sempre. Outras contas nao
+  esperam.
+- **Presa subindo vira falhou** (`publish_queue.destravar_presas`, 30 min): so a
+  `publishing` que nenhum envio deste processo carrega (`EM_VOO`). Sem isso, um
+  PC desligado no meio do envio deixaria a serie daquela conta parada para
+  sempre. **Tentar de novo** (`POST /api/publicacoes/{id}/tentar`) so aceita
+  `failed`; **pular** e o DELETE de sempre.
+- **"Agendar quando ficar pronta"** (`app._serie_depois_do_job`, no
+  `run_job_wrapper`): so com canal, sem caixa de aprovacao (pedir a serie ja e a
+  aprovacao), uma vez so (`agendada_em` no `serie.json`). O painel nao oferece
+  "publicar agora" numa serie.
+- **A playlist e a terceira conexao do YouTube, `organizar`**, com o escopo
+  `youtube` inteiro -- o Google nao tem escopo so de playlist. Por isso separada e
+  opcional, e o `youtube_oauth.ESCOPO` de publicar continua so `youtube.upload`.
+  Credencial em `vault://local/youtube-playlists/<handle>`. `_arrumar_playlists`
+  roda depois de cada volta do agendador, no maximo a cada
+  `PLAYLIST_TICK_MINUTES` (5): cria a playlist quando a primeira parte sai e poe
+  as publicadas na ordem (`entram_na_playlist` para na primeira que ainda vai
+  sair). 50 unidades por chamada, debitadas ANTES; o que nao cabe hoje entra
+  amanha. Playlist apagada no YouTube e esquecida e refeita.
+  `YOUTUBE_PLAYLIST_PRIVACY` (padrao `public`; valor fora da lista vira
+  `private`).
+- **No painel**: `SerieInput.jsx` (`#/criar/serie`), `lib/serie.js` (a previsao
+  de partes e a conta do motor, e ha teste comparando), e na fila a serie e UM
+  item (`agruparNaFila`, `resumoDaSerie` em `lib/publicacoes.js`): uma linha por
+  conta com a contagem e a parte que pede atencao, com as acoes dela, e as
+  partes num clique. Aberta, uma live de 1 hora eram 60 grupos com a parte que
+  falhou no fim da pagina. A aba Agenda do canal lista tambem `failed` e
+  `publishing` (`Canal.NA_FILA`): e o que destrava as partes paradas.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

@@ -25,6 +25,8 @@ export async function enviarVideo(dados, { apiKey = '', forcarBaixaQualidade = f
     layouts: dados.layout && dados.layout !== 'auto' ? dados.layout : null,
     // O canal para o qual o projeto é feito (Fase 7). Sem canal, o de sempre.
     channel_id: canalId || null,
+    // A série em partes (7.6): o documento dela. Sem ele, os cortes de sempre.
+    serie: dados.serie || null,
   };
   const presentes = Object.fromEntries(Object.entries(avancado).filter(([, v]) => v != null));
 
@@ -53,7 +55,10 @@ export async function enviarVideo(dados, { apiKey = '', forcarBaixaQualidade = f
     formulario.append('file', dados.payload);
     formulario.append('acknowledged', dados.acknowledged ? 'true' : 'false');
     formulario.append('output_format', dados.outputFormat || 'auto');
-    for (const [k, v] of Object.entries(presentes)) formulario.append(k, v);
+    // O formulário só leva texto: a série vai como JSON, que o motor lê.
+    for (const [k, v] of Object.entries(presentes)) {
+      formulario.append(k, typeof v === 'object' ? JSON.stringify(v) : v);
+    }
     body = formulario;
   }
 

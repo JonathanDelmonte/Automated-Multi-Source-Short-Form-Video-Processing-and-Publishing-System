@@ -25,6 +25,12 @@ import { hrefDe, ir } from '../lib/rota';
 // dado, o dado: os projetos, as contas, a fila e o que já saiu. Onde ainda não
 // há, o "em breve" dizendo o que vai fazer e em que etapa chega.
 
+// A fila do canal é o que ainda não terminou: o agendado, o que está subindo
+// e o que falhou (7.6). O que falhou pede uma decisão -- tentar de novo ou
+// pular --, e numa série segura as partes seguintes: fora da lista, a aba
+// dizia "parada" sem o botão que a destrava.
+const NA_FILA = ['scheduled', 'publishing', 'failed'];
+
 const ABAS = [
   { id: 'visao', rotulo: 'Visão geral' },
   { id: 'criar', rotulo: 'Criar' },
@@ -247,7 +253,7 @@ function ConteudoDaAba({ aba, canal, subaba }) {
             secoes={['publicar', 'fila']}
             canal={canal.id}
             contasDoCanal={ids}
-            status="scheduled"
+            status={NA_FILA}
             tituloDaFila="na fila deste canal"
             vazioDaFila="Nada na fila deste canal."
           />

@@ -20,7 +20,7 @@ import { hrefDe } from '../lib/rota';
 // A publicação (Fase 3, bloco 3.5), em partes desde a 7.1: o pacote do dia, o
 // publicar e a fila moram na Agenda; as contas, nas Configurações; e a página
 // de cada canal usa a fila filtrada pelas contas dele (`contasDoCanal`) e pelo
-// estado (`status`). Quem desenha o cabeçalho é a página.
+// estado (`status`, um ou uma lista). Quem desenha o cabeçalho é a página.
 //
 // A ordem das partes é a ordem de importância do §6, não a de implementação: o
 // **pacote do dia** primeiro, porque o driver `manual` é o default e o que
@@ -37,6 +37,9 @@ export default function PublicacoesTab({
   // canal dele.
   projeto = null,
   canalDoProjeto = null,
+  // O projeto é uma série em partes (7.6)? Então só agenda: "publicar agora"
+  // soltaria todas as partes juntas, e a série sai na ordem, uma por janela.
+  serie = false,
 }) {
   const { canais } = usePainel();
   const mostra = (secao) => secoes.includes(secao);
@@ -152,7 +155,7 @@ export default function PublicacoesTab({
     : (contas || []);
   const filaVisivel = fila.filter((p) =>
     (!contasDoCanal || contasDoCanal.includes(p.account?.id))
-    && (!status || p.status === status));
+    && (!status || [].concat(status).includes(p.status)));
   // Os canais que servem de destino: os que têm conta ligada. Na página de um
   // canal, só ele.
   const contasPorCanal = {};
@@ -175,6 +178,8 @@ export default function PublicacoesTab({
   destinoAtual.current = destino;
   const podePublicar = corpoDoDestino(envio.job_id, destino) && !ocupado;
   const destinoEhCanal = destino.startsWith('canal:');
+  // Uma série (7.6): a da tela do projeto, ou a escolhida na lista da Agenda.
+  const ehSerie = serie || !!projetos.find((j) => j.job_id === envio.job_id)?.serie;
   // A agenda que o "agendar" vai seguir: a do canal do destino (7.5) -- o
   // canal inteiro, ou o canal da conta escolhida --, ou a da instalação para
   // uma conta solta. Pedida de novo a cada troca de destino: o texto não pode
@@ -388,7 +393,8 @@ export default function PublicacoesTab({
                     <option value="">escolha um projeto…</option>
                     {projetos.map((j) => (
                       <option key={j.job_id} value={j.job_id}>
-                        {j.title || j.job_id.slice(0, 8)} · {j.clip_count} corte
+                        {j.title || j.job_id.slice(0, 8)} ·{' '}
+                        {j.serie ? `série de ${j.clip_count} parte` : `${j.clip_count} corte`}
                         {j.clip_count === 1 ? '' : 's'}
                       </option>
                     ))}
@@ -418,18 +424,26 @@ export default function PublicacoesTab({
                     ))}
                   </optgroup>
                 </select>
-                <button className="btn-primary text-sm inline-flex items-center gap-1.5"
-                        disabled={!podePublicar} onClick={publicar}>
-                  {ocupado ? <Loader2 size={14} className="animate-spin" />
-                           : <Send size={14} />}
-                  publicar agora
-                </button>
-                <button className="btn-quiet text-sm inline-flex items-center gap-1.5"
+                {!ehSerie && (
+                  <button className="btn-primary text-sm inline-flex items-center gap-1.5"
+                          disabled={!podePublicar} onClick={publicar}>
+                    {ocupado ? <Loader2 size={14} className="animate-spin" />
+                             : <Send size={14} />}
+                    publicar agora
+                  </button>
+                )}
+                <button className={`${ehSerie ? 'btn-primary' : 'btn-quiet'} text-sm inline-flex items-center gap-1.5`}
                         disabled={!podePublicar} onClick={agendar}>
-                  <Clock size={14} />
-                  agendar
+                  {ehSerie && ocupado ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+                  {ehSerie ? 'agendar a série' : 'agendar'}
                 </button>
               </div>
+              {ehSerie && (
+                <p className="text-ink2 text-[12px] leading-snug" data-serie-na-agenda>
+                  Numa série, as partes vão para a agenda na ordem, uma por janela. Se uma falhar, as seguintes
+                  esperam por ela na mesma conta — tente de novo ou pule na fila.
+                </p>
+              )}
               <p className="text-muted text-[12px] leading-snug">
                 {destinoEhCanal
                   ? 'No canal, cada corte vira um galho por conta: o texto da plataforma de cada uma, e horário próprio ao agendar.'
@@ -469,7 +483,7 @@ export default function PublicacoesTab({
                     className={`flex items-center gap-1.5 ${r.ok ? 'text-muted' : 'text-danger'}`}>
                   {r.platform && <IconePlataforma platform={r.platform} size={13} />}
                   <span>
-                    corte {r.clip_index + 1}{r.handle ? ` · ${r.handle}` : ''}:{' '}
+                    {ehSerie ? 'parte' : 'corte'} {r.clip_index + 1}{r.handle ? ` · ${r.handle}` : ''}:{' '}
                     {r.scheduled_at && r.ok
                       ? `agendado para ${new Date(r.scheduled_at).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
                       : (r.detail || (r.ok ? 'ok' : 'falhou'))}
@@ -491,6 +505,7 @@ export default function PublicacoesTab({
             ocupado={ocupado}
             aoMudar={carregar}
             vazio={vazioDaFila}
+            filtrada={!!status}
           />
         </section>
         )}

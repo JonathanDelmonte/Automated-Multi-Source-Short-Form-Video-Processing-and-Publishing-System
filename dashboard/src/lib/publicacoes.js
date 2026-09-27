@@ -13,7 +13,15 @@ export function quando(iso) {
 
 // O estado de um galho, em palavras. `scheduled` cobre duas esperas: com data
 // é a agendada (esperando a hora); sem data é a fila manual (esperando você).
+//
+// Numa série (7.6), a parte parada atrás de uma anterior que falhou (ou que
+// ficou presa subindo) diz isso em vez da hora: a hora marcada já passou, e
+// ela só sai quando a pessoa tentar de novo ou pular a de antes.
 export function estadoDoGalho(p) {
+  if (p.status === 'scheduled' && p.parada) {
+    const motivo = p.parada.motivo === 'subindo' ? 'ficou presa subindo' : 'falhou';
+    return { texto: `parada: a parte ${p.parada.parte} ${motivo}`, cor: 'text-danger' };
+  }
   switch (p.status) {
     case 'scheduled':
       return p.scheduled_at
@@ -32,6 +40,11 @@ export function estadoDoGalho(p) {
   }
 }
 
+function posicaoDaPlataforma(p) {
+  const i = ORDEM_DAS_PLATAFORMAS.indexOf(p?.account?.platform);
+  return i < 0 ? ORDEM_DAS_PLATAFORMAS.length : i;
+}
+
 // Os galhos agrupados pelo corte, na ordem em que a fila chegou (a mais
 // recente primeiro); dentro do corte, na ordem das plataformas -- a mesma em
 // toda tela, para o olho achar o YouTube sempre no mesmo lugar.
@@ -41,17 +54,112 @@ export function agruparPorCorte(publicacoes) {
   for (const p of publicacoes) {
     const chave = p.clip?.id || p.id;
     if (!porCorte[chave]) {
-      porCorte[chave] = { chave, clip: p.clip || {}, galhos: [] };
+      porCorte[chave] = { chave, clip: p.clip || {}, serie: p.serie || null, galhos: [] };
       grupos.push(porCorte[chave]);
     }
     porCorte[chave].galhos.push(p);
   }
-  const posicao = (p) => {
-    const i = ORDEM_DAS_PLATAFORMAS.indexOf(p.account?.platform);
-    return i < 0 ? ORDEM_DAS_PLATAFORMAS.length : i;
-  };
-  for (const grupo of grupos) grupo.galhos.sort((a, b) => posicao(a) - posicao(b));
+  for (const grupo of grupos) grupo.galhos.sort((a, b) => posicaoDaPlataforma(a) - posicaoDaPlataforma(b));
   return grupos;
+}
+
+// A fila com cada série num item só (7.6). Uma série de 60 partes eram 60
+// grupos, e a parte que falhou -- a única que pede alguém -- ficava no fim da
+// página, depois de 57 linhas "parada: a parte 3 falhou". A série entra onde
+// apareceu a primeira parte dela, com as partes em ordem e um resumo por conta
+// (`resumoDaSerie`); os cortes soltos seguem como antes.
+export function agruparNaFila(publicacoes, { filtrada = false } = {}) {
+  const itens = [];
+  const series = {};
+  for (const grupo of agruparPorCorte(publicacoes)) {
+    const id = grupo.serie?.id;
+    if (!id) {
+      itens.push({ tipo: 'corte', chave: grupo.chave, grupo });
+      continue;
+    }
+    if (!series[id]) {
+      series[id] = { tipo: 'serie', chave: `serie:${id}`, serie: grupo.serie, grupos: [] };
+      itens.push(series[id]);
+    }
+    series[id].grupos.push(grupo);
+  }
+  for (const item of Object.values(series)) {
+    item.grupos.sort((a, b) => (a.serie?.parte || 0) - (b.serie?.parte || 0));
+    item.contas = resumoDaSerie(item.grupos, { filtrada });
+  }
+  return itens;
+}
+
+const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+
+// O que cada conta de uma série está fazendo, na ordem das plataformas, com a
+// parte que pede atenção (`foco`): a que falhou (tentar de novo ou pular), a
+// que ficou subindo, a que espera a pessoa postar à mão. Sem nenhuma dessas, a
+// próxima que sai, ou "todas publicadas".
+//
+// `filtrada`: a fila veio filtrada por estado (as abas Agenda e Publicados de
+// um canal), e ali "todas publicadas" e "2 de 60" seriam mentira -- as outras
+// partes só não estão na lista. Fica a contagem do que está nela. A "próxima"
+// continua valendo: um filtro por estado traz todas as agendadas ou nenhuma.
+export function resumoDaSerie(grupos, { filtrada = false } = {}) {
+  const porConta = {};
+  const contas = [];
+  for (const grupo of grupos) {
+    for (const p of grupo.galhos) {
+      const id = p.account?.id || p.account_id || p.id;
+      if (!porConta[id]) {
+        porConta[id] = { chave: id, conta: p.account || {}, galhos: [] };
+        contas.push(porConta[id]);
+      }
+      porConta[id].galhos.push(p);
+    }
+  }
+  contas.sort((a, b) => posicaoDaPlataforma(a.galhos[0]) - posicaoDaPlataforma(b.galhos[0]));
+  const parte = (p) => p.serie?.parte ?? 0;
+  for (const c of contas) {
+    const galhos = [...c.galhos].sort((a, b) => parte(a) - parte(b));
+    const publicadas = galhos.filter((p) => p.status === 'published').length;
+    const puladas = galhos.filter((p) => p.status === 'cancelled').length;
+    const paradas = galhos.filter((p) => p.status === 'scheduled' && p.parada).length;
+    const atras = paradas ? ` · ${plural(paradas, 'parada atrás dela', 'paradas atrás dela')}` : '';
+    c.contagem = filtrada
+      ? plural(galhos.length, 'parte', 'partes')
+      : `${publicadas} de ${galhos.length} publicada${galhos.length === 1 ? '' : 's'}`;
+    c.foco = null;
+    const falhou = galhos.find((p) => p.status === 'failed');
+    const subindo = galhos.find((p) => p.status === 'publishing');
+    const suaVez = galhos.filter((p) => p.status === 'scheduled' && !p.scheduled_at);
+    const parada = galhos.find((p) => p.status === 'scheduled' && p.parada);
+    const proxima = galhos.find((p) => p.status === 'scheduled' && p.scheduled_at && !p.parada);
+    if (falhou) {
+      c.foco = falhou;
+      c.texto = `a parte ${parte(falhou)} falhou${atras}`;
+      c.cor = 'text-danger';
+    } else if (subindo) {
+      c.foco = subindo;
+      c.texto = `a parte ${parte(subindo)} está subindo${atras}`;
+      c.cor = 'text-brass';
+    } else if (suaVez.length) {
+      c.foco = suaVez[0];
+      const mais = suaVez.length > 1 ? ` (e mais ${suaVez.length - 1})` : '';
+      c.texto = `a parte ${parte(suaVez[0])} espera você postar${mais}`;
+      c.cor = 'text-brass';
+    } else if (parada) {
+      // A que segura as outras não está nesta lista (filtrada por estado).
+      c.texto = estadoDoGalho(parada).texto;
+      c.cor = 'text-danger';
+    } else if (proxima) {
+      c.texto = `próxima: parte ${parte(proxima)} · ${quando(proxima.scheduled_at)}`;
+      c.cor = 'text-ink2';
+    } else if (filtrada) {
+      c.texto = '';
+      c.cor = 'text-muted';
+    } else {
+      c.texto = puladas ? `terminou · ${plural(puladas, 'pulada', 'puladas')}` : 'todas publicadas';
+      c.cor = 'text-ok';
+    }
+  }
+  return contas;
 }
 
 // O destino de uma publicação: um canal inteiro (um galho por conta ligada a

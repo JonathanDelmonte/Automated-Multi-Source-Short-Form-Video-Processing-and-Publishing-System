@@ -43,7 +43,7 @@ const EMPRESA = { youtube: 'Google', google: 'Google', tiktok: 'TikTok' };
 // usa. Espelho de `conexoes.TIPOS_DE` / `APLICATIVO_DE` do motor (há teste
 // comparando). O Instagram mede por token COLADO (`TokenDoInstagram`), e não
 // por botão: a Meta só devolve o login para endereço HTTPS.
-export const TIPOS_DE = { youtube: ['publicar', 'medir'], tiktok: ['publicar', 'medir'] };
+export const TIPOS_DE = { youtube: ['publicar', 'medir', 'organizar'], tiktok: ['publicar', 'medir'] };
 export const APLICATIVO_DE = { youtube: 'google', tiktok: 'tiktok' };
 
 // O que cada botão de conectar diz, por plataforma e tipo.
@@ -53,6 +53,11 @@ export const DESCRICAO_DOS_TIPOS = {
                 dica: 'O programa sobe os cortes sozinho, na hora marcada. Não lê nem apaga nada.' },
     medir: { ligado: 'mede as visualizações', botao: 'conectar para medir',
              dica: 'O programa lê as visualizações, a retenção, as curtidas e os comentários dos cortes. Não publica nada.' },
+    // A playlist de cada série (7.6). O Google não tem uma permissão só para
+    // playlists: é a de gerenciar a conta, a mais ampla do programa -- por
+    // isso separada das outras, e opcional.
+    organizar: { ligado: 'organiza as séries em playlists', botao: 'conectar para playlists',
+                 dica: 'O programa cria uma playlist por série e põe cada parte nela, na ordem. O Google não tem uma permissão só para playlists: esta é a de gerenciar a conta do YouTube, e o programa só a usa para as playlists.' },
   },
   tiktok: {
     publicar: { ligado: 'publica sozinho', botao: 'conectar para publicar',
@@ -135,6 +140,7 @@ export const MENSAGENS = {
   sem_refresh: 'O Google respondeu sem a autorização permanente. Tire o acesso do Virtu Clips em myaccount.google.com/permissions e conecte de novo.',
   escopo: 'A permissão de postar vídeos não veio. Conecte de novo e deixe marcada a opção de publicar.',
   escopo_medir: 'A permissão de ver os vídeos não veio. Conecte de novo e deixe marcada a opção de ler os seus vídeos.',
+  escopo_organizar: 'A permissão de gerenciar a conta do YouTube não veio, e é ela que cria as playlists. Conecte de novo e deixe-a marcada.',
   gravar: 'O programa não conseguiu guardar a conexão neste computador.',
   cliente: 'O Google não reconheceu esse ID do cliente ou essa chave secreta. Confira se copiou os dois do mesmo cliente.',
   formato: 'Isso não parece um ID do cliente do Google (termina em .apps.googleusercontent.com).',

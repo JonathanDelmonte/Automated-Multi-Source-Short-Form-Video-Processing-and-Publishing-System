@@ -17,7 +17,11 @@ function clipDurationSeconds(clip) {
     if (segments?.length) {
         return segments.reduce((acc, s) => acc + (s.end - s.start), 0);
     }
-    return clip.end && clip.start ? clip.end - clip.start : NaN;
+    // `start` 0 é um começo como outro: a Parte 1 de toda série (7.6) começa
+    // ali, e o teste de verdade escondia a duração dela.
+    const inicio = Number(clip.start);
+    const fim = Number(clip.end);
+    return Number.isFinite(inicio) && Number.isFinite(fim) && fim > inicio ? fim - inicio : NaN;
 }
 
 function formatDuration(clip) {
@@ -806,7 +810,7 @@ export default function ResultCard({ clip, index, jobId, durable, geminiApiKey, 
                 isProcessing={isHooking}
                 videoUrl={originalVideoUrl}
                 initialText={clip.viral_hook_text}
-                durationInSeconds={clip.end && clip.start ? clip.end - clip.start : 30}
+                durationInSeconds={Number.isFinite(clipDurationSeconds(clip)) ? clipDurationSeconds(clip) : 30}
                 existingSubtitles={activeLayers.subtitles}
                 hasCaptions={!!activeLayers.subtitles || /(^|_)subtitled_/.test(serverVideoFile || '')}
                 serverRender={hasServerBurns}

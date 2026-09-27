@@ -230,7 +230,9 @@ export default function ProjectsGrid({ onOpen, onNew, onApagado, refreshKey = 0,
                     {p.status === 'processing' && p.stage_label && (
                       <span>· {p.stage_index}/{p.stage_total} {p.stage_label}</span>
                     )}
-                    {p.clip_count > 0 && <span>· {p.clip_count} corte(s)</span>}
+                    {p.serie
+                      ? <span>· série{p.clip_count > 0 ? ` de ${p.clip_count} parte${p.clip_count === 1 ? '' : 's'}` : ''}</span>
+                      : p.clip_count > 0 && <span>· {p.clip_count} corte(s)</span>}
                     {quando(p.created_at) && <span>· {quando(p.created_at)}</span>}
                   </p>
                   <MoverParaCanal

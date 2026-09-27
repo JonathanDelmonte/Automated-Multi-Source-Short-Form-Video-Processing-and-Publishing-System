@@ -203,6 +203,50 @@ class TestRegras:
         assert conexoes.ESCOPOS[("youtube", "medir")] == youtube_oauth.ESCOPOS_DE_LEITURA
         assert conexoes.ESCOPOS[("youtube", "medir")] == metrics_collector.ESCOPOS_DE_LEITURA
 
+    def test_so_organizar_pede_o_escopo_inteiro(self):
+        """A playlist (7.6) e a unica credencial que apaga: `youtube` inteiro
+        so ali, e nunca junto do de publicar ou do de medir."""
+        amplo = "https://www.googleapis.com/auth/youtube"
+        assert conexoes.ESCOPOS[("youtube", "organizar")] == (amplo,)
+        for chave, escopos in conexoes.ESCOPOS.items():
+            if chave != ("youtube", "organizar"):
+                assert amplo not in escopos, chave
+        assert conexoes.ref_do_cofre("youtube", "organizar", "@c") == \
+            "vault://local/youtube-playlists/@c"
+        with pytest.raises(conexoes.ConexaoError):
+            conexoes.ref_do_cofre("tiktok", "organizar", "@c")
+
+    def test_organizar_sem_a_permissao_e_recusado(self):
+        """A tela do Google deixa desmarcar: a conexao que voltou sem o
+        escopo "funcionaria" e nenhuma playlist sairia."""
+        class Resposta:
+            status_code = 200
+            def __init__(self, escopo):
+                self.escopo = escopo
+            def json(self):
+                return {"refresh_token": "R", "scope": self.escopo}
+
+        def cliente(escopo):
+            class C:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+                def post(self, *a, **k):
+                    return Resposta(escopo)
+            return C
+
+        app = {"client_id": CLIENT_ID, "client_secret": SEGREDO}
+        pedido = conexoes.Pedido(tenant_id="t", account_id="a", handle="@c",
+                                 plataforma="youtube", tipo="organizar",
+                                 volta="http://localhost:8000/", verifier="v")
+        with pytest.raises(conexoes.ConexaoError) as e:
+            conexoes.trocar_codigo(app, "C", pedido,
+                                   cliente=cliente("https://www.googleapis.com/auth/youtube.readonly"))
+        assert e.value.codigo == "escopo_organizar"
+        assert conexoes.trocar_codigo(
+            app, "C", pedido, cliente=cliente("https://www.googleapis.com/auth/youtube")) == "R"
+
     @pytest.mark.parametrize("origem, volta", [
         ("http://localhost:8000", "http://localhost:8000/"),
         ("http://127.0.0.1:5175/", "http://127.0.0.1:5175/"),
@@ -363,8 +407,9 @@ class TestConectar:
         _com_aplicativo()
         conta = _conta()
         antes = _estado_da_conta(conta["id"])
-        assert antes["conexao"] == {"publicar": False, "medir": False,
-                                    "tipos": ["publicar", "medir"]}
+        # `organizar` (7.6): a playlist de cada serie, a terceira conexao.
+        assert antes["conexao"] == {"publicar": False, "medir": False, "organizar": False,
+                                    "tipos": ["publicar", "medir", "organizar"]}
         assert antes["driver_agora"] == "manual"
 
         r = self._conectar(conta["id"])
@@ -387,8 +432,8 @@ class TestConectar:
                            "refresh_token": "REFRESH-DO-CANAL"}
         depois = _estado_da_conta(conta["id"])
         assert depois["credentials_ref"] == "vault://local/youtube/@canalinfantil"
-        assert depois["conexao"] == {"publicar": True, "medir": False,
-                                     "tipos": ["publicar", "medir"]}
+        assert depois["conexao"] == {"publicar": True, "medir": False, "organizar": False,
+                                     "tipos": ["publicar", "medir", "organizar"]}
         # Com a credencial e a cota, a cascata passa a escolher a API.
         assert depois["driver_agora"] == "youtube-api"
         # O segredo nao aparece em lugar nenhum da resposta.
@@ -428,10 +473,32 @@ class TestConectar:
         assert _chama("GET", f"/?state={state}&code=C").status_code == 200
         assert metrics_collector.credencial_de_leitura("@canalinfantil")["refresh_token"] == "R-LEITURA"
         depois = _estado_da_conta(conta["id"])
-        assert depois["conexao"] == {"publicar": False, "medir": True,
-                                     "tipos": ["publicar", "medir"]}
+        assert depois["conexao"] == {"publicar": False, "medir": True, "organizar": False,
+                                     "tipos": ["publicar", "medir", "organizar"]}
         # A de medir nao vira a credencial de publicar da conta.
         assert depois["credentials_ref"].startswith("vault://env/")
+
+    def test_organizar_guarda_a_parte_e_nao_vira_a_de_publicar(self, ambiente, monkeypatch):
+        """A playlist de cada serie (7.6) pede o escopo `youtube` inteiro --
+        o Google nao tem um so de playlist. Por isso ela e um consentimento a
+        parte, num endereco proprio do cofre, e nunca a credencial da conta."""
+        _com_aplicativo()
+        conta = _conta()
+        r = self._conectar(conta["id"], "organizar")
+        assert r.status_code == 200, r.text
+        assert "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube&" in r.json()["url"]
+        state = _state_de(r.json()["url"])
+        monkeypatch.setattr(conexoes, "trocar_codigo", lambda *a, **kw: "R-PLAYLIST")
+        volta = _chama("GET", f"/?state={state}&code=C")
+        assert volta.status_code == 200 and "playlists" in volta.text
+        import playlists_youtube
+        assert playlists_youtube.credencial("@canalinfantil")["refresh_token"] == "R-PLAYLIST"
+        depois = _estado_da_conta(conta["id"])
+        assert depois["conexao"]["organizar"] is True and depois["conexao"]["publicar"] is False
+        assert depois["credentials_ref"].startswith("vault://env/")
+        # Desconectar apaga so ela.
+        assert _chama("DELETE", f"/api/contas/{conta['id']}/conexao?tipo=organizar").json()["havia"]
+        assert playlists_youtube.credencial("@canalinfantil") is None
 
     def test_a_volta_pelo_painel_do_docker(self, ambiente, monkeypatch):
         """No painel do Docker quem recebe a volta e o Vite (5175): o painel

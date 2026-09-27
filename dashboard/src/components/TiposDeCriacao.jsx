@@ -2,9 +2,10 @@ import React from 'react';
 import { ArrowRight, Film, ListVideo, Scissors, Wand2 } from 'lucide-react';
 import { hrefDe } from '../lib/rota';
 
-// O que dá para criar (etapa 7.1). Os cortes de vídeo real já funcionam; os
-// outros três têm o lugar marcado e dizem o que vão fazer, cada um com a etapa
-// do plano em que chega (`docs/PLANO-DA-PLATAFORMA.md`). Cortes de vídeo real e
+// O que dá para criar (etapa 7.1). Os cortes de vídeo real e a série em partes
+// (7.6) já funcionam; os outros dois têm o lugar marcado e dizem o que vão
+// fazer, cada um com a etapa do plano em que chega
+// (`docs/PLANO-DA-PLATAFORMA.md`). Cortes de vídeo real e
 // vídeo criado por IA são coisas separadas, e todo canal pode ter os dois
 // (o autor, 26-set-2026).
 const TIPOS = [
@@ -25,8 +26,7 @@ const TIPOS = [
     id: 'serie',
     icone: ListVideo,
     titulo: 'Série em partes',
-    texto: 'Um vídeo longo sem direitos autorais, como uma live ou um filme antigo, vira parte 1, 2, 3, publicadas em sequência.',
-    etapa: '7.6',
+    texto: 'Um vídeo longo sem direitos autorais, como uma live ou um filme antigo, vira parte 1, 2, 3, agendadas na ordem.',
   },
   {
     id: 'longo',

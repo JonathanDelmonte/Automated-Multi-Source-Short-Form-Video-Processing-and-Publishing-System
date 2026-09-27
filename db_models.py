@@ -860,6 +860,129 @@ class ClipApproval(Base, TenantScoped):
     )
 
 
+# --------------------------------------------------------------------------- #
+# 18-21. series em partes (Fase 7, etapa 7.6)
+# --------------------------------------------------------------------------- #
+#
+# "Um video longo vira Parte 1, 2, 3..., postadas em sequencia; no YouTube, uma
+# playlist por serie." A regra de sempre da Fase 7: tudo em tabela nova.
+
+class Series(Base, TenantScoped):
+    """Uma serie em partes: um video longo cortado em pedacos de cerca de um
+    minuto, na ordem. O `id` nasce no pedido (vai no `serie.json` da pasta do
+    job, que o `main.py` le) e a linha e gravada no fim do job, com as partes.
+
+    `job_id` e o projeto que a cortou. Hoje uma serie e um projeto; a tabela
+    separada existe para que a serie tenha identidade propria -- e dela que a
+    playlist do YouTube e as partes penduram.
+    """
+    __tablename__ = "series"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(ID, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    part_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    total_parts: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_series_tenant"),
+        ForeignKeyConstraint(["tenant_id", "job_id"], ["jobs.tenant_id", "jobs.id"],
+                             ondelete="CASCADE", name="fk_series_job"),
+        CheckConstraint("total_parts >= 1", name="ck_series_total_parts_positivo"),
+        CheckConstraint("part_seconds > 0", name="ck_series_part_seconds_positivo"),
+        Index("ix_series_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_series_tenant_job", "tenant_id", "job_id"),
+    )
+
+
+class SeriesPart(Base, TenantScoped):
+    """Qual corte e qual parte de qual serie. E daqui que a trava do agendador
+    sabe a ordem: a parte seguinte nao sai enquanto uma anterior, na mesma
+    conta, ainda vai sair, esta subindo ou falhou (`series.seguradas`).
+
+    **"Sem repeticao" tambem e regra do banco**: um numero de parte existe uma
+    vez por serie, e um corte e parte de uma serie so.
+    """
+    __tablename__ = "series_parts"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    series_id: Mapped[str] = mapped_column(ID, nullable=False)
+    clip_id: Mapped[str] = mapped_column(ID, nullable=False)
+    part: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_series_parts_tenant"),
+        ForeignKeyConstraint(["tenant_id", "series_id"], ["series.tenant_id", "series.id"],
+                             ondelete="CASCADE", name="fk_series_parts_series"),
+        ForeignKeyConstraint(["tenant_id", "clip_id"], ["clips.tenant_id", "clips.id"],
+                             ondelete="CASCADE", name="fk_series_parts_clip"),
+        UniqueConstraint("tenant_id", "clip_id", name="uq_series_parts_tenant_clip"),
+        UniqueConstraint("tenant_id", "series_id", "part", name="uq_series_parts_tenant_series_part"),
+        CheckConstraint("part >= 1", name="ck_series_parts_part_positiva"),
+        Index("ix_series_parts_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+class SeriesPlaylist(Base, TenantScoped):
+    """A playlist do YouTube de uma serie numa conta: uma por serie e conta,
+    criada quando a primeira parte vai ao ar e a conta esta conectada para
+    organizar (`conexoes`, tipo `organizar`)."""
+    __tablename__ = "series_playlists"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    series_id: Mapped[str] = mapped_column(ID, nullable=False)
+    account_id: Mapped[str] = mapped_column(ID, nullable=False)
+    playlist_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_series_playlists_tenant"),
+        ForeignKeyConstraint(["tenant_id", "series_id"], ["series.tenant_id", "series.id"],
+                             ondelete="CASCADE", name="fk_series_playlists_series"),
+        ForeignKeyConstraint(["tenant_id", "account_id"],
+                             ["accounts.tenant_id", "accounts.id"],
+                             ondelete="CASCADE", name="fk_series_playlists_account"),
+        UniqueConstraint("tenant_id", "series_id", "account_id",
+                         name="uq_series_playlists_tenant_series_account"),
+        Index("ix_series_playlists_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+class SeriesPlaylistItem(Base, TenantScoped):
+    """Uma parte publicada que ja entrou na playlist. Sem linha aqui, o laco
+    do agendador ainda vai coloca-la -- e a unicidade por publicacao e o que
+    impede a mesma parte de entrar duas vezes."""
+    __tablename__ = "series_playlist_items"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    series_playlist_id: Mapped[str] = mapped_column(ID, nullable=False)
+    publication_id: Mapped[str] = mapped_column(ID, nullable=False)
+    item_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_series_playlist_items_tenant"),
+        ForeignKeyConstraint(["tenant_id", "series_playlist_id"],
+                             ["series_playlists.tenant_id", "series_playlists.id"],
+                             ondelete="CASCADE", name="fk_series_playlist_items_playlist"),
+        ForeignKeyConstraint(["tenant_id", "publication_id"],
+                             ["publications.tenant_id", "publications.id"],
+                             ondelete="CASCADE", name="fk_series_playlist_items_publication"),
+        UniqueConstraint("tenant_id", "publication_id",
+                         name="uq_series_playlist_items_tenant_publication"),
+        Index("ix_series_playlist_items_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
 #: Toda tabela do schema menos `tenants`, que E o tenant. O teste de estrutura
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
@@ -867,4 +990,5 @@ TENANT_SCOPED_TABLES = (
     "publications", "publication_posts", "metrics", "metric_details",
     "channels", "channel_accounts", "channel_jobs",
     "channel_settings", "recipes", "candidates", "source_licenses", "clip_approvals",
+    "series", "series_parts", "series_playlists", "series_playlist_items",
 )

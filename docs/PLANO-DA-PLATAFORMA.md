@@ -128,13 +128,17 @@ caminho de produção.
 | `candidates` | — | **nova** (7.5): vídeos que a receita achou, com a licença, esperando a vez — a caixa de entrada de fontes |
 | `source_licenses` | — | **nova** (7.5): a origem e a licença de cada fonte processada (autor, licença, link), de onde sai o crédito |
 | `clip_approvals` | — | **nova** (7.5): os cortes da automação esperando a pessoa — a caixa de aprovação |
+| `series`, `series_parts` | — | **novas** (7.6): a série de um projeto (nome, idioma, duração de cada parte, quantas) e a parte de cada corte — é por ela que o agendador sabe a ordem |
+| `series_playlists`, `series_playlist_items` | — | **novas** (7.6): a playlist de cada série em cada conta do YouTube, e as partes que já entraram nela |
 | `creation_styles`, `creations` | — | **novas** (7.7): o estilo de criação salvo, e o roteiro, as cenas e os arquivos de cada vídeo de IA |
 | `devices` | — | **nova** (7.9): os aparelhos da frota |
 
 O projeto também guarda o canal na própria pasta (`.canal`, ao lado do `.tenant`):
 a lista de projetos vem do disco, e o banco falha aberto. Pelo mesmo motivo, a
 origem e a licença da fonte (7.5) moram também na pasta (`.origem.json`): é dali
-que o crédito sai na hora de publicar.
+que o crédito sai na hora de publicar. E a série (7.6) também: o pedido
+(`serie.json`) e as partes que já ficaram prontas (`serie_progresso.json`), que
+é o que deixa o motor retomar uma série parada no meio sem refazer nada.
 
 ## As fases
 
@@ -513,6 +517,100 @@ em blocos de cerca de um minuto, na ordem.
 **Pronto quando:** uma live de 1 hora vira uma série agendada, na ordem, sem
 buraco e sem repetição.
 
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.6a | motor: dividir em partes (`series.py`) — contíguas, cortadas nas pausas da fala, perto da duração pedida —; o modo série no pipeline, sem IA escolhendo trecho (nenhuma chave é pedida), com o "Parte N" no vídeo e no título, a segunda tentativa sem reenquadrar para a parte que falhou e a retomada que não refaz o que já ficou pronto; o pedido no `/api/process`; e as quatro tabelas | feita (27-set) |
+| 7.6b | motor: postar na ordem — cada conta só solta uma parte depois da anterior; a que falhou segura as seguintes até alguém tentar de novo ou pular; as que ficaram para trás ganham horários novos, na ordem —; a publicação presa "subindo" vira "falhou" em 30 minutos; e o "agendar no canal quando ficar pronta" | feita (27-set) |
+| 7.6c | motor: uma playlist por série no YouTube, pela terceira conexão da conta ("conectar para playlists"), que é opcional | feita (27-set) |
+| 7.6d | painel: "Série em partes" no Criar, a série na tela do projeto, a série num item só na fila (com a parte que pede atenção em cima) e o botão da playlist na conta | feita (27-set) |
+| 7.6e | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (27-set) |
+
+**Como a série ficou, e por quê:**
+
+- **As partes cobrem o trecho inteiro, sem buraco e sem repetir**: o fim de uma
+  é o começo da seguinte. Quantas partes: o tempo dividido pela duração pedida,
+  arredondado (uma live de 1 hora dá 60 partes de 1 min; 2 min 30 s com partes de
+  1 min dão três de 50 s). Cada fronteira cai na maior pausa da fala a até 20% do
+  ponto exato, de preferência num fim de frase, e a parte começa um instante antes
+  da primeira palavra — nunca no meio de uma. Sem fala (um filme mudo), corta no
+  tempo.
+- **Nenhuma IA escolhe trecho**, então a série não pede chave de IA e não gasta
+  cota. A transcrição continua: é ela que diz onde estão as pausas, e a legenda
+  sai dela.
+- **"Parte N" no vídeo** nos 5 primeiros segundos (ou o tempo todo, ou não), com
+  os estilos do gancho; **no título**, sempre ("Nome - Parte N"). A descrição do
+  TikTok e do Instagram diz "Parte 3 de 60 — Nome".
+- **Uma parte que falhou tenta de novo sem reenquadrar** (o quadro inteiro sobre o
+  fundo desfocado): uma série com buraco é pior que uma parte com enquadramento
+  simples. Se nem assim sair, a série segue sem ela, e a tela do projeto diz qual
+  faltou.
+- **Parou no meio (o PC desligou), recomeça de onde parou**: as partes prontas
+  ficam anotadas na pasta do projeto, e são as mesmas partes da primeira vez.
+- **Na agenda, cada conta solta uma parte por vez, na ordem.** A que falhou segura
+  as seguintes daquela conta — publicar a 4 sem a 3 quebraria a série —, e a fila
+  diz "parada". Tentar de novo ou pular a parte destrava: a primeira das que
+  ficaram para trás sai na hora, se a trava de sempre deixar, e as outras ganham
+  horários novos nas janelas do canal, na ordem. As outras contas não esperam.
+- **A publicação que ficou "subindo" por 30 minutos vira "falhou"**, com o aviso
+  de conferir na plataforma se ela subiu mesmo assim. Acontece quando o PC desliga
+  no meio de um envio; sem isto, a série daquela conta ficaria parada para sempre.
+- **"Agendar no canal quando ficar pronta"** vem marcado quando há canal: ao
+  terminar, as partes vão para a agenda do canal, nas janelas dele — 3 por dia por
+  padrão, então uma live de 1 hora é uma série de 20 dias. Não passa pela caixa de
+  aprovação: pedir a série já é a aprovação. E **numa série não há "publicar
+  agora"**: soltaria as 60 partes de uma vez.
+- **A playlist é opcional, porque é a permissão mais ampla do programa.** O Google
+  não tem uma permissão só para playlists: criar uma exige a de gerenciar a conta
+  do YouTube. Por isso ela é uma terceira conexão, separada das de publicar e de
+  medir, e a série funciona igual sem ela. Com ela, a playlist nasce quando a
+  primeira parte vai ao ar, e cada parte entra na ordem. Cada chamada gasta 50
+  unidades da cota diária (10.000), e o que não cabe hoje entra amanhã. Apagada no
+  YouTube, o programa cria outra.
+- **Na fila, a série é um item só**: uma linha por conta com a contagem ("2 de 60
+  publicadas") e o que pede atenção ("a parte 3 falhou · 57 paradas atrás dela",
+  com os botões de tentar de novo e pular ali mesmo), e as partes, em ordem, num
+  clique. Aberta por inteiro, uma live de 1 hora eram 60 grupos, e a parte que
+  falhou ficava no fim da página. A aba Agenda do canal passou a mostrar também o
+  que falhou e o que está subindo: é justamente o que destrava as partes paradas.
+
+**O que a série consertou de antes**, porque numa série os defeitos apareciam
+toda vez:
+
+- **O número do corte.** Com um corte que não renderizou, o seguinte passava a ser
+  tratado pelo número dele: publicar o corte 3 subia o arquivo do 4, e trocar a
+  legenda do 3 mexia no 4. Numa série, era a Parte 4 indo ao ar com o título da 3.
+  Consertado no motor inteiro e na tela.
+- **As escolhas do projeto na retomada.** Um job retomado depois de um reinício
+  perdia o que a pessoa escolheu na tela (enquadramento, legenda, template) e
+  rodava com os padrões. Agora as escolhas vão junto no arquivo de retomada.
+- **O projeto recuperado do disco** mostrava todo corte prometido, inclusive o que
+  não renderizou, como um cartão sem vídeo.
+- **A duração do corte que começa no segundo zero** não aparecia no cartão — a
+  Parte 1 de toda série.
+
+**Para o autor decidir:** a playlist pede a permissão de gerenciar a conta do
+YouTube (o Google não oferece uma menor). Ficou opcional, com a explicação na tela
+de conexão; se preferir não oferecê-la, é só dizer, e a série segue sem playlist.
+
+**Onde a 7.6 está (27-set-2026).** O "pronto quando" roda nos testes do motor
+(`tests/test_serie_no_motor.py`): uma live de 1 hora vira 60 partes agendadas em
+duas contas do canal, e o agendador, avançado no tempo, solta as 60 de cada conta
+na ordem, sem buraco e sem repetir; com a parte 3 falhando no YouTube, as
+seguintes esperam, e tentar de novo ou pular as destrava na ordem, sem o TikTok
+esperar. O pipeline em modo série roda o `__main__` do `main.py` como ele está,
+com as bibliotecas pesadas imitadas (`tests/test_main_serie.py`). As telas foram
+conferidas com o motor de verdade, um banco de demonstração (a live de 60 partes
+com a parte 3 falhando no YouTube e a playlist; um filme de 8 partes com a 5
+faltando) e um navegador, no computador e no celular. Na conferência saíram três
+acertos: a fila, que com uma série de 60 partes ocupava a página e deixava a parte
+que falhou no fim (virou um item só); a aba Agenda do canal, que escondia o que
+falhou; e o projeto recuperado do disco, com a parte que faltou como cartão sem
+vídeo. **O que falta ver no PC do autor**: uma live de verdade virando série, o
+"Parte N" no vídeo e a playlist no YouTube. O roteiro está no `COMO-EXECUTAR.md`,
+Passo 14.
+
 ### 7.7 — Vídeo curto criado por IA
 
 - **O que se monta:** roteiro (a cascata grátis já escreve), cenas, imagens ou
@@ -746,6 +844,12 @@ sessão bateu no limite de uso, e a mensagem seguinte foi "prossiga para fase 4"
 lido como seguir com a quarta parte da 7.5 (a 7.5d, o painel), que estava em
 andamento; a Fase 4 do plano original (auth e multiusuário) já estava pronta.
 Se era outra coisa, é só dizer.
+
+**27-set-2026, ao fechar a 7.5:** "ainda não vou testar, siga para o próximo
+passo" — a 7.6, as séries em partes. O pedido dela é o da primeira mensagem
+("pego uma live, colo, e ele divide em vários clipes de um minuto (...) parte 1,
+parte 2"), e o teste continua sendo o do final, pelo roteiro do
+`COMO-EXECUTAR.md`.
 
 ## Fontes
 

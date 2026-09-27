@@ -18,6 +18,12 @@ botao do site:
 credenciais pequenas em vez de uma grande: a que publica nao le, a que le nao
 publica, e nenhuma das duas apaga (ha teste congelando os escopos).
 
+**E um terceiro, opcional: `organizar`** (7.6), a playlist de cada serie. O
+Google nao tem escopo so de playlist, entao este e o `youtube` inteiro -- e
+por isso mora num endereco proprio do cofre, usado so pelo
+`playlists_youtube.py`, e nunca e pedido junto do de publicar. Sem ele a serie
+sai igual, sem playlist.
+
 - **A volta e sempre raiz, com barra** (`http://localhost:8000/`): e a forma
   que as bibliotecas do proprio Google usam para programa instalado, a mais
   garantida de o Google aceitar.
@@ -65,12 +71,16 @@ ESCOPOS = {
     # E medir (7.4): o perfil basico e a lista de videos (API de exibicao).
     # Outra credencial, como no YouTube: a que posta nao le, a que le nao posta.
     ("tiktok", "medir"): ("user.info.basic", "video.list"),
+    # A playlist de cada serie (7.6). `playlists.insert` e
+    # `playlistItems.insert` so aceitam o escopo inteiro: e a credencial mais
+    # ampla do programa, e por isso separada e opcional.
+    ("youtube", "organizar"): ("https://www.googleapis.com/auth/youtube",),
 }
-TIPOS = ("publicar", "medir")
+TIPOS = ("publicar", "medir", "organizar")
 #: O que cada plataforma conecta pelo botao, e qual cadastro de aplicativo ela
 #: usa. O Instagram mede por token COLADO (`metricas_instagram`), nao por botao:
 #: a Meta so devolve o login para endereco HTTPS.
-TIPOS_DE = {"youtube": ("publicar", "medir"), "tiktok": ("publicar", "medir")}
+TIPOS_DE = {"youtube": ("publicar", "medir", "organizar"), "tiktok": ("publicar", "medir")}
 
 #: A permissao sem a qual cada consentimento do TikTok nao serve para nada. A
 #: resposta dele lista o que a pessoa AUTORIZOU, que pode ser menos que o pedido.
@@ -87,7 +97,7 @@ _HOSTS_DO_TIKTOK = ("localhost", "127.0.0.1")
 
 class ConexaoError(ValueError):
     """`codigo`: plataforma | tipo | volta | sem_aplicativo | expirou |
-    recusada | troca | sem_refresh | escopo | escopo_medir."""
+    recusada | troca | sem_refresh | escopo | escopo_medir | escopo_organizar."""
 
     def __init__(self, codigo: str, detalhe: str = ""):
         super().__init__(detalhe or codigo)
@@ -226,7 +236,8 @@ def ref_do_cofre(plataforma: str, tipo: str, handle: str) -> str:
     medir, no que o coletor de metricas procura."""
     if tipo not in TIPOS_DE.get(plataforma, ()):
         raise ConexaoError("tipo")
-    pasta = plataforma if tipo == "publicar" else f"{plataforma}-metrics"
+    pasta = {"publicar": plataforma, "medir": f"{plataforma}-metrics",
+             "organizar": f"{plataforma}-playlists"}[tipo]
     return f"vault://local/{pasta}/{handle}"
 
 
@@ -258,9 +269,16 @@ def trocar_codigo(app: dict, codigo: str, pedido: Pedido,
         except ValueError:
             motivo = str(r.status_code)
         raise ConexaoError("troca", f"o Google recusou a troca ({motivo})")
-    refresh = (r.json() or {}).get("refresh_token")
+    dados = r.json() or {}
+    refresh = dados.get("refresh_token")
     if not refresh:
         raise ConexaoError("sem_refresh")
+    if pedido.tipo == "organizar":
+        # A tela do Google deixa desmarcar a permissao. Sem ela, a conexao
+        # "funcionaria" e nenhuma playlist sairia -- melhor dizer agora.
+        concedidos = set((dados.get("scope") or "").split())
+        if concedidos and not concedidos & set(ESCOPOS[("youtube", "organizar")]):
+            raise ConexaoError("escopo_organizar")
     return refresh
 
 
@@ -333,6 +351,7 @@ MENSAGENS = {
     "sem_aplicativo": "O cadastro do aplicativo sumiu das Configurações. Cole de novo e conecte outra vez.",
     "escopo": "A permissão de postar não veio. Conecte de novo e deixe marcada a opção de publicar vídeos.",
     "escopo_medir": "A permissão de ver os vídeos não veio. Conecte de novo e deixe marcada a opção de ler os seus vídeos.",
+    "escopo_organizar": "A permissão de gerenciar a conta do YouTube não veio, e é ela que cria as playlists. Conecte de novo e deixe-a marcada.",
 }
 #: O que muda no TikTok: a pagina de permissoes do Google nao serve para ele.
 MENSAGENS_DO_TIKTOK = {
@@ -350,6 +369,7 @@ def mensagem(codigo: str, plataforma: str = "youtube") -> Optional[str]:
 
 _NOMES = {("youtube", "publicar"): "publicar no YouTube",
           ("youtube", "medir"): "medir as visualizações do YouTube",
+          ("youtube", "organizar"): "organizar as séries em playlists do YouTube",
           ("tiktok", "publicar"): "publicar no TikTok",
           ("tiktok", "medir"): "medir as visualizações do TikTok"}
 

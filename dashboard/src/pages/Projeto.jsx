@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, Loader2, Plus, Send, Terminal } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, ListVideo, Loader2, Plus, Send, Terminal } from 'lucide-react';
 import ResultCard from '../components/ResultCard';
 import ProcessingAnimation from '../components/ProcessingAnimation';
 import ClipEditor from '../components/ClipEditor';
@@ -11,6 +11,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../lib/api';
 import { seloDaIA } from '../lib/seloDaIA';
 import { midiaDoProjeto } from '../lib/processar';
+import { comCorteTrocado, corteDoIndice, indiceDoCorte, naOrdemDaTela } from '../lib/cortes';
+import { textoDaSerie } from '../lib/serie';
 import { usePainel } from '../lib/painel';
 import { hrefDe } from '../lib/rota';
 
@@ -73,6 +75,9 @@ export default function Projeto({ jobId }) {
   // onde esta, nao quanto falta dentro do estagio. Ver `_stage_view` no app.py.
   const [stage, setStage] = useState(null);
   const [canalId, setCanalId] = useState(null);
+  // A série em partes (7.6), quando o projeto é uma: nome, partes, as que
+  // faltaram. Vem do `/api/status`; motor anterior não manda.
+  const [serie, setSerie] = useState(null);
   const [publicando, setPublicando] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -98,30 +103,21 @@ export default function Projeto({ jobId }) {
   const [isSyncedPlaying, setIsSyncedPlaying] = useState(false);
   const [syncTrigger, setSyncTrigger] = useState(0);
 
-  // Best clips first. The backend hands them back in transcript order, which
-  // buries the strongest one wherever it happens to fall in the video.
+  // Best clips first; numa série, na ordem das partes (7.6).
   //
-  // The ORIGINAL array position travels with each clip and is what gets passed
-  // down as `index`: it is the clip's identity everywhere else (clip_index on
-  // /api/subtitle, /api/edit and publishing, the clip-N.mp4 download name).
-  // Sorting the array itself would silently repoint all of that at the wrong
-  // clip.
-  const rankedClips = useMemo(() => {
-    const clips = results?.clips;
-    if (!Array.isArray(clips)) return [];
-    return clips
-      .map((clip, index) => ({ clip, index }))
-      .sort((a, b) => {
-        const sa = Number.isFinite(a.clip?.predicted_score) ? a.clip.predicted_score : -1;
-        const sb = Number.isFinite(b.clip?.predicted_score) ? b.clip.predicted_score : -1;
-        return sb - sa || a.index - b.index;
-      });
-  }, [results]);
+  // The clip's INDEX travels with it and is what gets passed down as `index`:
+  // it is the clip's identity everywhere else (clip_index on /api/subtitle,
+  // /api/edit and publishing, the clip-N.mp4 download name). It is the
+  // `clip_index` the motor hangs on each clip, and NOT the array position: the
+  // result only carries the clips that rendered, so with the third of five
+  // missing, position 2 is the fourth clip (`lib/cortes.js`).
+  const rankedClips = useMemo(() => naOrdemDaTela(results?.clips), [results]);
 
   const aplicar = useCallback((data) => {
     setLogs(linhasDoStatus(data));
     if (data.result) setResults(data.result);
     if ('channel_id' in data) setCanalId(data.channel_id || null);
+    if ('serie' in data) setSerie(data.serie || null);
     setStage(data.stage_index
       ? { label: data.stage_label, index: data.stage_index, total: data.stage_total }
       : null);
@@ -154,6 +150,7 @@ export default function Projeto({ jobId }) {
       try {
         const data = await pollJob(jobId);
         if (data.result) setResults(data.result);
+        if ('serie' in data) setSerie(data.serie || null);
         if (data.stage_index) {
           setStage({ label: data.stage_label, index: data.stage_index, total: data.stage_total });
         }
@@ -232,16 +229,17 @@ export default function Projeto({ jobId }) {
   // file.
   const handleClipRerendered = (index, data) => {
     setResults((prev) => {
-      if (!prev?.clips?.[index]) return prev;
-      const clips = prev.clips.slice();
-      clips[index] = {
-        ...clips[index],
-        video_url: data.new_video_url,
-        start: data.start,
-        end: data.end,
-        recipe: data.recipe,
+      if (!corteDoIndice(prev?.clips, index)) return prev;
+      return {
+        ...prev,
+        clips: comCorteTrocado(prev.clips, index, (clip) => ({
+          ...clip,
+          video_url: data.new_video_url,
+          start: data.start,
+          end: data.end,
+          recipe: data.recipe,
+        })),
       };
-      return { ...prev, clips };
     });
   };
 
@@ -260,7 +258,7 @@ export default function Projeto({ jobId }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             job_id: jobId,
-            clip_index: i,
+            clip_index: indiceDoCorte(clips[i], i),
             position: options.position,
             font_size: options.fontSize,
             font_name: options.fontName,
@@ -313,7 +311,10 @@ export default function Projeto({ jobId }) {
   };
 
   const doCanal = canalId ? canais.porId[canalId] : null;
-  const novoHref = hrefDe(`/criar/cortes${canalId ? `?canal=${canalId}` : ''}`);
+  const novoHref = hrefDe(`/criar/${serie ? 'serie' : 'cortes'}${canalId ? `?canal=${canalId}` : ''}`);
+  const editando = editingClip !== null ? corteDoIndice(results?.clips, editingClip) : null;
+  const reenquadrando = reframingClip !== null ? corteDoIndice(results?.clips, reframingClip) : null;
+  const faltando = serie?.faltando || [];
 
   // A barra de cima: voltar, o canal do projeto (e trocar), e criar outro.
   // Dentro de um projeto, o que falta e VOLTAR -- o painel herdado so tinha
@@ -498,10 +499,13 @@ export default function Projeto({ jobId }) {
         <div className={`${status === 'complete' ? 'w-full md:w-[70%] lg:w-[75%]' : 'w-full md:w-[45%] lg:w-[40%]'} md:h-full flex flex-col shrink-0 md:shrink card p-3.5 sm:p-6 transition-all duration-700 ease-in-out`}>
           <div className="mb-4 sm:mb-6 shrink-0 space-y-3">
             <h2 className="font-display uppercase tracking-wide text-lg sm:text-xl text-ink flex flex-wrap items-center gap-2">
-              <span className="mr-auto">cortes</span>
+              <span className="mr-auto">{serie ? 'partes' : 'cortes'}</span>
               {results?.clips?.length > 0 && (
                 <span className="readout bg-paper3 px-2.5 py-1 rounded-full">
-                  {results.clips.length} corte{results.clips.length === 1 ? '' : 's'}
+                  {serie && serie.partes && serie.partes !== results.clips.length
+                    ? `${results.clips.length} de ${serie.partes}`
+                    : results.clips.length}{' '}
+                  {serie ? 'parte' : 'corte'}{results.clips.length === 1 ? '' : 's'}
                 </span>
               )}
               {/* Tokens, e nao dolares (25-set-2026): o selo dizia "GEMINI · $0.012"
@@ -513,6 +517,27 @@ export default function Projeto({ jobId }) {
                 </span>
               )}
             </h2>
+            {serie && (
+              // A série em partes (7.6): o nome, e as partes na ordem. A que
+              // não renderizou não entra na agenda, e a tela diz qual.
+              <div className="text-[13px] space-y-1" data-serie={serie.id || ''}>
+                <p className="flex items-center gap-2 text-ink2 min-w-0">
+                  <ListVideo size={15} className="text-brass shrink-0" />
+                  <span className="truncate">{serie.nome || 'série em partes'}</span>
+                  <span className="readout normal-case shrink-0">{textoDaSerie(serie)}</span>
+                </p>
+                {faltando.length > 0 && (
+                  <p className="flex items-start gap-1.5 text-danger">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                      {faltando.length === 1 ? 'A parte' : 'As partes'} {faltando.join(', ')}{' '}
+                      {faltando.length === 1 ? 'não saiu' : 'não saíram'}, nem na tentativa sem o enquadramento
+                      (o log do projeto diz o erro). A série vai para a agenda sem {faltando.length === 1 ? 'ela' : 'elas'}.
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
             {results?.clips?.length > 0 && status === 'complete' && (
               <div className="flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-2">
                 <button
@@ -546,6 +571,7 @@ export default function Projeto({ jobId }) {
                 secoes={['publicar']}
                 projeto={jobId}
                 canalDoProjeto={canalId}
+                serie={!!serie}
               />
             </div>
           )}
@@ -602,20 +628,20 @@ export default function Projeto({ jobId }) {
         </div>
       </div>
 
-      {editingClip !== null && results?.clips?.[editingClip] && (
+      {editando && (
         <ClipEditor
           jobId={jobId}
           clipIndex={editingClip}
-          clipTitle={results.clips[editingClip].video_title_for_youtube_short || ''}
+          clipTitle={editando.video_title_for_youtube_short || ''}
           onClose={() => setEditingClip(null)}
           onRerendered={handleClipRerendered}
         />
       )}
-      {reframingClip !== null && results?.clips?.[reframingClip] && (
+      {reenquadrando && (
         <ReframeEditor
           jobId={jobId}
           clipIndex={reframingClip}
-          clipTitle={results.clips[reframingClip].video_title_for_youtube_short || ''}
+          clipTitle={reenquadrando.video_title_for_youtube_short || ''}
           onClose={() => setReframingClip(null)}
           onReframed={handleClipRerendered}
         />

@@ -192,6 +192,21 @@ export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
           </a>.
         </p>
       )}
+      {tipos.some((t) => t.id === 'organizar' && !conexao.organizar) && aplicativoPronto && podeVoltar && (
+        // A permissão mais ampla do programa (7.6): dita ANTES do clique, e
+        // não só no `title` do botão, que no celular ninguém vê.
+        <p className="text-muted leading-snug" data-aviso-organizar>
+          “Conectar para playlists” põe cada série numa playlist, na ordem. É opcional: o Google só tem a
+          permissão de gerenciar a conta inteira para isso, então ela fica separada da de publicar. Sem ela,
+          as séries saem igual, sem playlist.
+        </p>
+      )}
+      {faltamNoPrograma.includes('organizar') && aplicativo !== 'motor-antigo' && (
+        <p className="text-muted">
+          Para organizar as séries em playlists, atualize o programa deste computador. O aviso no topo
+          do site tem o botão.
+        </p>
+      )}
       {faltamNoPrograma.includes('medir') && aplicativo !== 'motor-antigo' && (
         <p className="text-muted">
           Para medir o {PLATAFORMAS[plataforma]?.nome}, atualize o programa deste computador. O aviso no topo

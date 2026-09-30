@@ -154,7 +154,8 @@ export default function CriarEpisodio({ canalId, aoCriar }) {
         {enviando ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} criar o episódio
       </button>
       <p className="text-[12px] text-muted leading-snug">
-        Horizontal, com capítulos na descrição: ele vai só para o YouTube. A narração sai em blocos de uns
+        Horizontal, com capítulos na descrição: ele vai para o YouTube (e para o Bilibili, se o canal tiver
+        conta lá). A narração sai em blocos de uns
         dois minutos e meio, cada um uma chamada da cota de voz do dia. Um episódio de 5 minutos leva uns
         15 a 30 minutos neste computador.
       </p>

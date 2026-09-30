@@ -52,6 +52,7 @@ import time
 from typing import List, Optional
 
 import capitulos
+import chamar_llm
 import estilos
 import job_metrics
 import midia_ia
@@ -138,32 +139,9 @@ def episodio_do_pedido(pedido: Optional[dict]) -> Optional[dict]:
     return {"duracao_s": duracao, "cenas": cenas, "historia": historia}
 
 
-def _chamar_provedor(prompt, schema, provider):
-    """Uma tentativa num provedor da cascata (o mesmo desenho do
-    `main._run_gemini_stage`, sem o resto do `main.py`, que so importa com
-    torch)."""
-    import llm_backend
-    import llm_cascade
-    if provider.base_url is not None:
-        return llm_backend.generate_json(
-            prompt, schema, model=provider.model, base_url_override=provider.base_url,
-            api_key=provider.api_key(), timeout=llm_cascade.timeout_para(provider),
-            extra_body=dict(provider.extra) or None)
-    import gemini_worker
-    from google import genai
-    from google.genai import types as genai_types
-    cliente = genai.Client(api_key=provider.api_key())
-    resposta = cliente.models.generate_content(
-        model=provider.model, contents=prompt,
-        config=genai_types.GenerateContentConfig(response_mime_type="application/json",
-                                                 response_schema=schema))
-    gemini_worker.raise_if_blocked(resposta)
-    objeto = getattr(resposta, "parsed", None)
-    if objeto is not None:
-        dados = objeto.model_dump() if hasattr(objeto, "model_dump") else objeto
-    else:
-        dados = gemini_worker._parse_json_response_text(gemini_worker._get_response_text(resposta))
-    return dados, gemini_worker._calculate_cost_analysis(resposta, provider.model)
+# A tentativa num provedor mora no `chamar_llm`, que a traducao do texto do
+# post (7.10) tambem usa.
+_chamar_provedor = chamar_llm.chamar_provedor
 
 
 def escrever_roteiro(doc: dict, ideia: str, idioma: str, ja_feitos: list,

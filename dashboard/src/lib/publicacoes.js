@@ -1,7 +1,7 @@
 // As regras da fila de publicações que a tela usa (etapa 7.3). Sem React, de
 // propósito: o teste do painel roda este arquivo no `node` de verdade (e por
 // isso o import leva a extensão, que o `node` exige e o Vite aceita).
-import { ORDEM_DAS_PLATAFORMAS } from './plataformas.js';
+import { ORDEM_DAS_PLATAFORMAS, PRINCIPAIS } from './plataformas.js';
 
 const HORA = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
 
@@ -190,12 +190,13 @@ export function caminhoDaAgenda(canalId) {
 }
 
 // As plataformas que o pacote do dia oferece: as das contas, na ordem de
-// sempre -- ou as três, quando ainda não há conta (o pacote serve até sem
-// conta nenhuma).
+// sempre -- ou as três de sempre, quando ainda não há conta (o pacote serve
+// até sem conta nenhuma). As chinesas (7.10) só aparecem com conta: sem ela,
+// um pacote em chinês não é o que alguém procura.
 export function plataformasDoPacote(contas) {
   const tem = new Set((contas || []).map((c) => c.platform));
   const delas = ORDEM_DAS_PLATAFORMAS.filter((p) => tem.has(p));
-  return delas.length ? delas : [...ORDEM_DAS_PLATAFORMAS];
+  return delas.length ? delas : [...PRINCIPAIS];
 }
 
 // O endereço do pacote de um dia para uma plataforma. A legenda de cada corte
@@ -221,10 +222,10 @@ export function diasDoPacote(dias, plataforma) {
   return (dias || []).filter((d) => cortesNoPacote(d, plataforma) > 0);
 }
 
-// O vídeo longo (7.8) vai só para o YouTube: ele é horizontal, e o motor pula
-// os galhos do TikTok e do Instagram (`app._fora_do_destino`, com a mesma lista
-// em `app.PLATAFORMAS_DO_VIDEO_LONGO`; o teste compara as duas).
-export const PLATAFORMAS_DO_VIDEO_LONGO = ['youtube'];
+// O vídeo longo (7.8) vai só para o YouTube e, desde a 7.10, para o Bilibili:
+// ele é horizontal, e o motor pula os galhos das outras (`app._fora_do_destino`,
+// com a mesma lista em `app.PLATAFORMAS_DO_VIDEO_LONGO`; o teste compara as duas).
+export const PLATAFORMAS_DO_VIDEO_LONGO = ['youtube', 'bilibili'];
 
 export function aceitaVideoLongo(conta) {
   return PLATAFORMAS_DO_VIDEO_LONGO.includes(conta?.platform);

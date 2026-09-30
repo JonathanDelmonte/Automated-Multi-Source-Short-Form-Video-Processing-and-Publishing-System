@@ -918,3 +918,102 @@ reusa tudo o que está acima, deitado, e três coisas mudam porque o tamanho obr
 
 A compilação dos cortes, o outro caminho da 7.8, não usa IA nenhuma: é o ffmpeg
 juntando trechos que já existem, e fica fora desta decisão.
+
+## ADR-014 — O canal é o centro, e entra pelo banco sem mexer no que já existe
+
+**Data:** 2026-09-30 · **Status:** **implementada** (etapas 7.1 a 7.8)
+
+**Contexto.** Até a Fase 6 a unidade do programa era o projeto: um vídeo entrava,
+cortes saíam, e as contas de plataforma eram uma lista solta. O pedido do autor
+para a Fase 7 foi outro: "o canal é o centro, não o vídeo" — a marca num nicho,
+com identidade e com as contas dela em cada plataforma. O plano
+(`PLANO-DA-PLATAFORMA.md`) deixou este registro para quando a estrutura estivesse
+de pé; com a 7.1 a 7.8 prontas, ela está.
+
+**Decisão.**
+
+1. **O canal junta o que antes era solto**: identidade (nome, nicho, avatar, cor,
+   idioma), as contas (uma conta pertence a um canal só), os projetos, a agenda
+   (janelas e posts por dia, no fuso de quem usa), a aprovação antes de postar, a
+   receita da automação, o estilo do vídeo de IA e as análises.
+2. **Entra pelo banco sem tocar nas tabelas que existem.** O boot cria o banco
+   com `create_all`, que nunca faz `ALTER`: coluna nova numa tabela antiga não
+   chegaria à máquina de quem usa. O canal entrou por tabelas de ligação
+   (`channel_accounts`, `channel_jobs`) e por documentos (`channel_settings`,
+   `recipes`, `creation_styles`); regra que muda numa tabela que existe chega pelo
+   `db_acerto`.
+3. **O canal de um projeto mora na pasta dele** (`.canal`), e o banco acompanha
+   falhando aberto: a lista de projetos vem do disco, e o projeto não pode sumir
+   do canal porque o banco ficou fora do ar.
+4. **Publicar no canal é um galho por conta.** Cada conta ganha a sua publicação,
+   com o texto da plataforma dela e horário próprio; o mesmo corte não vai duas
+   vezes na mesma plataforma, nem em canais diferentes.
+5. **O que o canal decide, quem usa escolhe.** A aprovação é obrigatória ao criar
+   e o estilo de IA nunca sai do nicho. A exceção declarada é o "feito para
+   crianças": sem escolha, o nome do nicho decide, porque marcar a menos é o erro
+   que a lei pune.
+
+**Consequências.** Projeto sem canal continua valendo: é o programa de antes da
+Fase 7, e tudo o que existia antes dela seguiu funcionando sem migração de dados.
+Apagar um canal solta as contas e os projetos, não os apaga. O site é publicado
+antes de o programa de quem usa ser atualizado, então cada tela nova pergunta ao
+motor se ele já a conhece.
+
+**Revisão se:** uma conta precisar servir a dois canais (hoje ela muda de canal),
+ou o programa ganhar equipes, com canais de pessoas diferentes na mesma
+instalação.
+
+## ADR-015 — As plataformas chinesas publicam pelo pacote do dia, com o texto em chinês
+
+**Data:** 2026-09-30 · **Status:** aceita (etapa 7.10)
+
+**Contexto.** O plano pôs Douyin, Kuaishou, Bilibili e Xiaohongshu na 7.10: "área
+inexplorada, com possibilidade de ganho", pela mesma interface das outras, e
+"toda plataforma nova é uma migração e um driver". Antes de escolher o driver,
+o que cada uma exige de quem cadastra e o que oferece para publicar e medir.
+
+**Levantamento (30-set-2026).** Os sites chineses não abrem da rede desta
+sessão; o que está abaixo vem das páginas de ajuda e dos guias achados por busca,
+e os formatos de link, do código do yt-dlp (que lê as quatro). O código trata os
+limites como regra do app, mas o que não tem número publicado fica sem limite.
+
+| | Cadastro de quem é de fora | API de publicação para uma pessoa | Números | Texto do post |
+|---|---|---|---|---|
+| **Douyin** | telefone chinês e verificação de nome real; passaporte estrangeiro em geral não passa (a de residência permanente passa) | não: publicar em nome de alguém é para site de governo e de imprensa | sem API para uma pessoa | título 30, descrição 1.000 |
+| **Kuaishou** | telefone e nome real; passaporte pela leitura do chip (NFC) | não: empresa e MCN | sem API para uma pessoa | sem número publicado |
+| **Bilibili** | nome real obrigatório para publicar desde 2017; aceita passaporte | só com identidade de desenvolvedor e revisão na China | contagens públicas na página | título 80, 简介 250 (2.000 em algumas categorias), até 10 tags num campo próprio |
+| **Xiaohongshu** | telefone de fora da China; conta pessoal não pede documento | não há | sem API | título 20, texto 1.000; vídeo de até 5 min |
+
+**Decisão.**
+
+1. **As quatro entram como plataformas de conta** (o CHECK de `accounts.platform`,
+   migração `e2c7a5d9f184`, e o `db_acerto` para o banco que já existe), com um
+   lugar só para o que é de cada plataforma (`plataformas.py`).
+2. **O driver é o `manual`**: o pacote do dia com a legenda pronta e o "já
+   publiquei" com o link — o caminho do Instagram na 7.3d. Nenhuma oferece
+   publicação a uma pessoa de fora, e automatizar o navegador é o que o ADR-010
+   mantém fora (a conta é o ativo).
+3. **O texto do post vai em chinês simplificado**, traduzido pela cascata grátis
+   de texto (ADR-011): uma chamada por pacote, guardada por texto na pasta do
+   projeto (`traducoes.json`), num subprocesso. Sem tradução, vai o original, e o
+   LEIA-ME diz qual corte ficou assim. O crédito da fonte (7.5) fica como é.
+4. **A legenda segue as regras de cada app**: a primeira linha é o título, no
+   limite do campo; as tags do Bilibili vão num campo próprio, sem `#`; o
+   Kuaishou tem um campo só.
+5. **O "já publiquei" lê o que o app copia**: o endereço do navegador, o link
+   curto (`v.douyin.com`, `v.kuaishou.com`, `b23.tv`, `xhslink.com`, seguido por
+   até dois redirecionamentos) e o texto inteiro do "compartilhar", com o link no
+   meio. O Kwai e o bilibili.tv são outras plataformas e são recusados.
+6. **O vídeo longo e deitado (7.8) também vai ao Bilibili**, que é o do vídeo
+   longo na China.
+7. **Nenhuma é medida**: as análises e a calibração contam só as plataformas
+   medidas, e o aviso "conecte para medir" não aparece para elas.
+
+**O que fica de fora.** O vídeo continua como foi feito: a fala e a legenda
+queimada no idioma original. Legenda em chinês é a função "Idiomas" do plano, e
+pede uma fonte com os caracteres chineses dentro da imagem do programa — mudar o
+Dockerfile é reconstruir a imagem (40 minutos), então é decisão do autor.
+
+**Revisão se:** uma dessas plataformas abrir publicação a uma pessoa de fora da
+China; o autor tiver contas lá e quiser números (as contagens públicas do
+Bilibili dá para ler pelo yt-dlp); ou os limites de texto mudarem.

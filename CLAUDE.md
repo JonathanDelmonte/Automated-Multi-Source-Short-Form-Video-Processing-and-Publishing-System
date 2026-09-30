@@ -98,7 +98,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante (aprovado em 26-set-2026): a plataforma organizada por canal -- mapa das telas, modelo de dados, etapas 7.1 a 7.10, as decisoes do autor e o registro das conversas com as palavras dele |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 012 |
+| `docs/DECISOES.md` | ADR-001 a 015 |
 | `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
@@ -3124,6 +3124,63 @@ formato `longo` do `criar_video.py`; etapa 7.8):
   origem e do corte em pe; `tests/test_criar_video.py` faz um episodio em
   blocos; `tests/test_painel_do_video_longo.py` roda as regras da tela no
   `node` contra as do motor.
+
+**As plataformas chinesas** (`plataformas.py`, `traducao.py`, `chamar_llm.py`;
+etapa 7.10, ADR-015): Douyin, Kuaishou, Bilibili e Xiaohongshu.
+
+- **`plataformas.py` e o lugar do que e da plataforma**: ids, nomes, idioma do
+  post, limites de titulo, texto e hashtags, tags em campo proprio, video longo,
+  medida. Quem repete a lista e comparado com ele por teste: `db_models.PLATFORMS`
+  (o CHECK), `publish_queue.PLATAFORMAS`, `analises`/`calibracao.PLATAFORMAS` (as
+  `MEDIDAS`), `links_de_post._LEITORES` e, no painel, `lib/plataformas.js`.
+  Plataforma nova e: o registro, o CHECK (migracao; o `db_acerto` leva ao banco
+  que existe), o leitor de link e o icone.
+- **Sem API de publicacao para uma pessoa de fora da China**, o driver e o
+  `manual`: pacote do dia e "ja publiquei", o caminho do Instagram na 7.3d. Nada
+  de navegador (ADR-010).
+- **O texto do post vai em chines** (`traducao.py`), e roda num SUBPROCESSO
+  (`python traducao.py`, o pedido pela entrada padrao): o `llm_cascade` guarda por
+  processo o que recusou (chave recusada, modelo inexistente), e no servidor isso
+  duraria ate o reinicio -- uma chave corrigida nas Configuracoes continuaria
+  recusada. E o prazo (`TRADUCAO_TIMEOUT_SECONDS`, 120) mata o provedor travado.
+  - Uma chamada por pacote (lotes de `LOTE`), guardada pelo TEXTO de origem em
+    `traducoes.json` na pasta do projeto: um titulo que mudou e traduzido de
+    novo, o mesmo texto nunca.
+  - Falha aberto: vai o original, o LEIA-ME marca o corte e a publicacao diz no
+    `detail` (`SEM_TRADUCAO`). Quem chama e `app._na_lingua_da_plataforma`, no
+    pacote, no `/api/publicar` e no agendador, uma traducao por vez
+    (`_TRAVA_DA_TRADUCAO`).
+  - O credito da fonte (7.5) fica como veio: e o que a licenca exige.
+- **`chamar_llm.chamar_provedor` e a tentativa num provedor fora do `main.py`**:
+  era do `criar_video`, e saiu de la quando a traducao virou o segundo chamador.
+- **A legenda nas regras de cada app** (`publishers/manual.py`): onde o app tem
+  campo de titulo (Douyin 30, Bilibili 80, Xiaohongshu 20), a primeira linha e o
+  titulo no limite e o `texto_max` vale para o resto; as tags do Bilibili saem na
+  ultima linha, sem `#` (`tags_do_campo`). **Sem numero publicado (Kuaishou), sem
+  limite**: cortar por palpite e pior que o app avisar.
+  - O nome do arquivo no ZIP sai do titulo ORIGINAL quando o texto foi traduzido:
+    do chines o `slug` so guardaria os numeros ("小猫1" viraria "1").
+- **Os links como o app os copia** (`links_de_post.py`): `extrair_link` tira o
+  link do texto do "compartilhar" -- so quando ha espaco ou letra fora do ASCII,
+  entao o link puro (ate sem `https://`) segue como era. O link curto e guardado
+  como o app o escreveu, sem barra a mais, e seguido por ate dois
+  redirecionamentos (`SALTOS_DO_LINK_CURTO`). O Kwai e o bilibili.tv sao outras
+  plataformas, e recusados. O `xsec_token` do Xiaohongshu FICA no link: sem ele a
+  nota nao abre fora do app.
+- **O video longo vai tambem ao Bilibili** (`plataformas.VIDEO_LONGO`; o
+  `lib/publicacoes.js` repete, e o teste compara).
+- **Nenhuma e medida.** A coleta ja pulava plataforma sem coleta; o aviso
+  "conecte para medir" (`_contas_para_medir`, `contasSemMedir`) e a calibracao
+  contam so as `MEDIDAS` -- o post do Bilibili contaria para sempre como "sem
+  numeros". O "ja publiquei" com link curto sem rede nao fala em medir.
+- **O site novo com o programa antigo**: `/api/contas` e `/api/canais` mandam
+  `plataformas`, e o painel so oferece essas (`plataformasDoMotor`); sem a lista,
+  as tres de sempre. Um programa de antes da 7.10 recusaria a conta ao salvar.
+- **As contas saem na ordem das plataformas** (`listar_contas`), nao na do banco:
+  com sete, a lista vinha embaralhada.
+- **O video em si fica no idioma original.** Legenda queimada em chines pede uma
+  fonte com os caracteres na imagem do programa (rebuild de 40 minutos): e a
+  funcao "Idiomas" do plano, decisao do autor.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

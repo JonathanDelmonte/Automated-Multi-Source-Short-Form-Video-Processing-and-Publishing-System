@@ -199,7 +199,8 @@ export default function CompilarCortes({ canalId, projetoInicial = null, aoCriar
         {enviando ? <Loader2 size={15} className="animate-spin" /> : <Film size={15} />} montar a compilação
       </button>
       <p className="text-[12px] text-muted leading-snug">
-        Horizontal (1920x1080), com meio segundo de escuro entre um corte e outro: ela vai só para o YouTube.
+        Horizontal (1920x1080), com meio segundo de escuro entre um corte e outro: ela vai para o YouTube
+        (e para o Bilibili, se o canal tiver conta lá).
         O crédito das fontes Creative Commons entra na descrição sozinho.
       </p>
     </div>

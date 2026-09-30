@@ -228,6 +228,9 @@ class TestBancoAntigo:
                   f"VALUES ('s2', 'direct', 'https://x/y.mp4', '{T}')")
         c.execute("INSERT INTO accounts (id, platform, handle, driver_pref, tenant_id) "
                   f"VALUES ('a2', 'tiktok', 'outro', 'auto', '{T}')")
+        # As plataformas chinesas (7.10) chegam ao banco que ja existe pelo boot.
+        c.execute("INSERT INTO accounts (id, platform, handle, driver_pref, tenant_id) "
+                  f"VALUES ('a3', 'bilibili', 'canal-cn', 'auto', '{T}')")
         c.execute("INSERT INTO clips (id, job_id, start_word_idx, end_word_idx, tenant_id) "
                   f"VALUES ('c2', 'j1', NULL, NULL, '{T}')")
         c.execute("INSERT INTO publications (id, clip_id, account_id, driver, status, tenant_id) "

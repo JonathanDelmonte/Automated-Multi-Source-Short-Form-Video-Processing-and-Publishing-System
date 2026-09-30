@@ -4,9 +4,8 @@ O "ja publiquei" da fila manual passou a pedir o link do post. Sem ele, o que
 se posta a mao nunca e medido: o coletor de metricas precisa do id do video, e
 o id so existe do lado da plataforma.
 
-Tres plataformas, cada uma com os jeitos de copiar um link que existem de
-verdade -- o botao "copiar link" do app nao da o mesmo endereco da barra do
-navegador:
+Cada plataforma com os jeitos de copiar um link que existem de verdade -- o
+botao "copiar link" do app nao da o mesmo endereco da barra do navegador:
 
 - **YouTube**: `youtube.com/shorts/<id>`, `watch?v=<id>`, `youtu.be/<id>`,
   `/live/<id>`. O id tem 11 caracteres, e e o que a API de metricas le.
@@ -17,6 +16,11 @@ navegador:
 - **Instagram**: `instagram.com/reel/<codigo>/` (e `/p/`, `/tv/`, e o formato
   com a conta na frente). O codigo nao e o id da API -- a Fase 7.4 acha o id
   pela lista de posts da conta, casando pelo link.
+- **As chinesas** (etapa 7.10): `douyin.com/video/<id>`, `kuaishou.com/short-video/<id>`,
+  `bilibili.com/video/BV...` e `xiaohongshu.com/explore/<id>`, e o link curto
+  de cada app (`v.douyin.com`, `v.kuaishou.com`, `b23.tv`, `xhslink.com`). O
+  "compartilhar" desses apps copia um TEXTO com o link no meio ("7.94 复制打开抖音，
+  看看... https://v.douyin.com/abc/ :9pm"): o link e tirado de dentro dele.
 
 **O que decide e funcao pura** (`ler`), e o CI a exercita com os links como
 eles chegam: com `?si=`, `?igsh=`, `m.`, barra no fim. A unica parte com rede e
@@ -30,23 +34,52 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
-PLATAFORMAS = ("youtube", "tiktok", "instagram")
-NOMES = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+import plataformas
+
+PLATAFORMAS = plataformas.IDS
+NOMES = plataformas.NOMES
 
 _HOSTS = {
     "youtube": ("youtube.com", "youtu.be", "youtube-nocookie.com"),
     "tiktok": ("tiktok.com",),
     "instagram": ("instagram.com", "instagr.am"),
+    # A pagina de compartilhar do Douyin mora no iesdouyin.com.
+    "douyin": ("douyin.com", "iesdouyin.com"),
+    # O link do app do Kuaishou abre uma pagina no chenzhongtech.com ou no
+    # gifshow.com (o nome antigo do app). O Kwai (kwai.com) e o app de fora da
+    # China, outra plataforma: nao entra.
+    "kuaishou": ("kuaishou.com", "chenzhongtech.com", "gifshow.com"),
+    # O bilibili.tv e o Bilibili de fora da China, outra plataforma: nao entra.
+    "bilibili": ("bilibili.com", "b23.tv", "bili2233.cn"),
+    "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
 }
 
 _ID_YOUTUBE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _ID_TIKTOK = re.compile(r"^\d{8,25}$")
 _CODIGO_INSTAGRAM = re.compile(r"^[A-Za-z0-9_-]{5,64}$")
+_ID_DOUYIN = _ID_TIKTOK
+_ID_KUAISHOU = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
+_BV = re.compile(r"^[Bb][Vv]([0-9A-Za-z]{10})$")
+_AV = re.compile(r"^[Aa][Vv](\d{1,20})$")
+_ID_XIAOHONGSHU = re.compile(r"^[0-9a-f]{24}$")
+_CODIGO_CURTO = re.compile(r"^[A-Za-z0-9_-]{3,40}$")
 
-#: Os hosts do link curto do app do TikTok: nao carregam o id.
-_TIKTOK_CURTOS = ("vm.tiktok.com", "vt.tiktok.com")
+#: Os hosts de link curto de cada app: nao carregam o id, so redirecionam para
+#: o endereco completo (`resolver_link_curto`).
+_CURTOS = {
+    "tiktok": ("vm.tiktok.com", "vt.tiktok.com"),
+    "douyin": ("v.douyin.com",),
+    "kuaishou": ("v.kuaishou.com",),
+    "bilibili": ("b23.tv", "bili2233.cn"),
+    "xiaohongshu": ("xhslink.com",),
+}
+_TIKTOK_CURTOS = _CURTOS["tiktok"]
+
+#: Um link dentro de um texto: so os caracteres de URL em ASCII, para parar na
+#: pontuacao chinesa que os apps poem colada nele ("...abc/，复制本条信息").
+_LINK_NO_TEXTO = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
 
 
 class LinkInvalido(ValueError):
@@ -64,8 +97,27 @@ class Post:
     curto: bool = False
 
 
+def extrair_link(texto: str) -> str:
+    """O link de dentro do que a pessoa colou.
+
+    Os apps chineses copiam um texto com o link no meio ("【标题-哔哩哔哩】
+    https://b23.tv/abc", "...复制打开抖音 https://v.douyin.com/xyz/ :9pm"). Um
+    texto sem espaco e sem letra fora do ASCII e o proprio link, como sempre foi
+    -- inclusive sem `https://`. Com espaco ou com letra de fora, vale o primeiro
+    `http(s)://` de dentro dele.
+    """
+    bruto = (texto or "").strip()
+    if not bruto or (not re.search(r"\s", bruto) and bruto.isascii()):
+        return bruto
+    achado = _LINK_NO_TEXTO.search(bruto)
+    if not achado:
+        return bruto
+    # Pontuacao ASCII colada no fim ("...abc/." ou "...abc/,") nao e do link.
+    return achado.group(0).rstrip(".,;:!?)]'\"")
+
+
 def _host(url: str) -> tuple:
-    bruto = (url or "").strip()
+    bruto = extrair_link(url)
     if not bruto:
         raise LinkInvalido("cole o link do post")
     esquema = re.match(r"^([a-z][a-z0-9+.-]*):", bruto, re.IGNORECASE)
@@ -79,20 +131,35 @@ def _host(url: str) -> tuple:
     return partes, partes.hostname.lower()
 
 
+def _do_host(host: str, hosts) -> bool:
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
 def plataforma_de(url: str) -> Optional[str]:
-    """A plataforma do link, ou None se nao for de nenhuma das tres."""
+    """A plataforma do link, ou None se nao for de nenhuma que o programa conhece."""
     try:
         _, host = _host(url)
     except LinkInvalido:
         return None
     for plataforma, hosts in _HOSTS.items():
-        if any(host == h or host.endswith("." + h) for h in hosts):
+        if _do_host(host, hosts):
             return plataforma
     return None
 
 
 def _segmentos(caminho: str) -> list:
     return [s for s in caminho.split("/") if s]
+
+
+def _curto(plataforma: str, partes, host: str, nome: str) -> Post:
+    """O link curto de um app, guardado como veio: o id so vem seguindo-o. O
+    caminho fica exatamente como o app o escreveu (com ou sem barra no fim):
+    e o servidor dele que o le, e nem todo aceita a barra a mais."""
+    segs = _segmentos(partes.path)
+    codigo = segs[-1] if segs else ""
+    if not _CODIGO_CURTO.match(codigo or ""):
+        raise LinkInvalido(f"esse link curto do {nome} esta incompleto")
+    return Post(plataforma, None, f"https://{host}{partes.path}", curto=True)
 
 
 def _youtube(partes, host) -> Post:
@@ -148,17 +215,117 @@ def _instagram(partes, host) -> Post:
                        "copie o link dele")
 
 
+def _douyin(partes, host) -> Post:
+    """`douyin.com/video/<id>` (e `/note/` para foto), a pagina de compartilhar
+    do app (`iesdouyin.com/share/video/<id>/`) e o video aberto por cima de
+    outra pagina no navegador (`?modal_id=<id>`)."""
+    segs = _segmentos(partes.path)
+    if host in _CURTOS["douyin"]:
+        return _curto("douyin", partes, host, "Douyin")
+    tipo = video = None
+    for i, seg in enumerate(segs[:-1]):
+        if seg in ("video", "note"):
+            tipo, video = seg, segs[i + 1]
+            break
+    if not video:
+        tipo, video = "video", (parse_qs(partes.query).get("modal_id") or [None])[0]
+    if video and _ID_DOUYIN.match(video):
+        return Post("douyin", video, f"https://www.douyin.com/{tipo}/{video}")
+    raise LinkInvalido("esse link do Douyin nao e de um video; abra o video e "
+                       "copie o link dele")
+
+
+def _kuaishou(partes, host) -> Post:
+    """`kuaishou.com/short-video/<id>`, a pagina que o link do app abre
+    (`.../fw/photo/<id>`) e o endereco antigo com a conta (`/u/<conta>/<id>`).
+    O `kuaishou.com/f/<codigo>` e link curto, como o `v.kuaishou.com`."""
+    segs = _segmentos(partes.path)
+    if host in _CURTOS["kuaishou"] or (segs and segs[0] == "f" and len(segs) > 1):
+        return _curto("kuaishou", partes, host, "Kuaishou")
+    video = None
+    for i, seg in enumerate(segs[:-1]):
+        if seg in ("short-video", "photo"):
+            video = segs[i + 1]
+            break
+    if not video and len(segs) == 3 and segs[0] == "u":
+        video = segs[2]
+    if video and _ID_KUAISHOU.match(video):
+        return Post("kuaishou", video, f"https://www.kuaishou.com/short-video/{video}")
+    raise LinkInvalido("esse link do Kuaishou nao e de um video; abra o video e "
+                       "copie o link dele")
+
+
+def _bilibili(partes, host) -> Post:
+    """`bilibili.com/video/BV.../` (e `m.bilibili.com`, e o numero antigo
+    `av...`), o `?bvid=` das paginas de evento e o link curto do app (`b23.tv`)
+    -- que as vezes ja traz o BV (`b23.tv/BV...`): ai o id sai sem rede."""
+    segs = _segmentos(partes.path)
+    video = None
+    if host in _CURTOS["bilibili"]:
+        if segs and _BV.match(segs[0]):
+            video = segs[0]
+        else:
+            return _curto("bilibili", partes, host, "Bilibili")
+    if not video:
+        for i, seg in enumerate(segs[:-1]):
+            if seg == "video":
+                video = segs[i + 1]
+                break
+    if not video:
+        video = (parse_qs(partes.query).get("bvid") or [None])[0]
+    bv = _BV.match(video or "")
+    if bv:
+        video = "BV" + bv.group(1)
+    else:
+        av = _AV.match(video or "")
+        video = f"av{av.group(1)}" if av else None
+    if video:
+        return Post("bilibili", video, f"https://www.bilibili.com/video/{video}/")
+    raise LinkInvalido("esse link do Bilibili nao e de um video; abra o video e "
+                       "copie o link dele")
+
+
+def _xiaohongshu(partes, host) -> Post:
+    """`xiaohongshu.com/explore/<id>` (e `/discovery/item/<id>` e a nota aberta
+    no perfil, `/user/profile/<conta>/<id>`), e o link curto do app
+    (`xhslink.com`). O `xsec_token` fica no link: sem ele a pagina da nota nao
+    abre fora do app, entao ele nao e rastreador -- e a chave da porta."""
+    segs = _segmentos(partes.path)
+    if host in _CURTOS["xiaohongshu"]:
+        return _curto("xiaohongshu", partes, host, "Xiaohongshu")
+    nota = None
+    if len(segs) >= 2 and segs[0] == "explore":
+        nota = segs[1]
+    elif len(segs) >= 3 and segs[:2] == ["discovery", "item"]:
+        nota = segs[2]
+    elif len(segs) >= 4 and segs[:2] == ["user", "profile"]:
+        nota = segs[3]
+    if nota and _ID_XIAOHONGSHU.match(nota):
+        url = f"https://www.xiaohongshu.com/explore/{nota}"
+        token = (parse_qs(partes.query).get("xsec_token") or [None])[0]
+        if token:
+            url += "?" + urlencode({"xsec_token": token})
+        return Post("xiaohongshu", nota, url)
+    raise LinkInvalido("esse link do Xiaohongshu nao e de uma nota; abra o video "
+                       "e copie o link dele")
+
+
+_LEITORES = {
+    "youtube": _youtube, "tiktok": _tiktok, "instagram": _instagram,
+    "douyin": _douyin, "kuaishou": _kuaishou, "bilibili": _bilibili,
+    "xiaohongshu": _xiaohongshu,
+}
+
+
 def ler(url: str) -> Post:
     """O post que o link aponta. Levanta `LinkInvalido` com a frase da tela."""
     partes, host = _host(url)
     plataforma = plataforma_de(url)
-    if plataforma == "youtube":
-        return _youtube(partes, host)
-    if plataforma == "tiktok":
-        return _tiktok(partes, host)
-    if plataforma == "instagram":
-        return _instagram(partes, host)
-    raise LinkInvalido("esse link nao e do YouTube, do TikTok nem do Instagram")
+    if plataforma in _LEITORES:
+        return _LEITORES[plataforma](partes, host)
+    raise LinkInvalido("esse link nao e de uma plataforma que o programa conhece ("
+                       + ", ".join(NOMES[p] for p in PLATAFORMAS[:-1])
+                       + f" ou {NOMES[PLATAFORMAS[-1]]})")
 
 
 def ler_para(plataforma: str, url: str) -> Post:
@@ -172,7 +339,7 @@ def ler_para(plataforma: str, url: str) -> Post:
 
 
 def resolver_link_curto(url: str, timeout: float = 8.0) -> Optional[str]:
-    """O endereco completo por tras de um link curto do TikTok, ou None.
+    """O endereco completo por tras de um link curto, ou None.
 
     Segue UM redirecionamento, sem abrir a pagina de destino: o link curto
     responde 301 com o endereco completo, e e so isso que se quer dele. Nunca
@@ -190,20 +357,27 @@ def resolver_link_curto(url: str, timeout: float = 8.0) -> Optional[str]:
     return None
 
 
+#: Quantos redirecionamentos um link curto pode dar ate o endereco do video.
+#: Um e o normal; o segundo cobre o app que passa por uma pagina intermediaria.
+SALTOS_DO_LINK_CURTO = 2
+
+
 def ler_com_rede(plataforma: str, url: str) -> Post:
-    """`ler_para`, seguindo o link curto do TikTok quando ele vier.
+    """`ler_para`, seguindo o link curto quando ele vier.
 
     Fica com o link curto se a volta pela rede nao der um endereco de video:
     o que a pessoa colou nunca se perde por causa da rede.
     """
     post = ler_para(plataforma, url)
-    if not post.curto:
-        return post
-    completo = resolver_link_curto(post.url)
-    if not completo:
-        return post
-    try:
-        resolvido = ler_para(plataforma, completo)
-    except LinkInvalido:
-        return post
-    return resolvido if resolvido.id else post
+    atual = post
+    for _ in range(SALTOS_DO_LINK_CURTO):
+        if not atual.curto:
+            break
+        completo = resolver_link_curto(atual.url)
+        if not completo:
+            return post
+        try:
+            atual = ler_para(plataforma, completo)
+        except LinkInvalido:
+            return post
+    return atual if atual.id else post

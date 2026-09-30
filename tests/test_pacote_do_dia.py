@@ -335,7 +335,10 @@ class TestVideoLongoSoNoPacoteDoYouTube:
         self._longo(saida)
         dia = _chama("GET", "/api/publicacoes/dias").json()["dias"][0]
         assert dia["cortes"] == 3
-        assert dia["por_plataforma"] == {"youtube": 3, "tiktok": 2, "instagram": 2}
+        # O video longo vai no pacote do YouTube e, desde a 7.10, no do Bilibili.
+        assert dia["por_plataforma"] == {"youtube": 3, "tiktok": 2, "instagram": 2,
+                                         "douyin": 2, "kuaishou": 2, "bilibili": 3,
+                                         "xiaohongshu": 2}
 
     def test_o_pacote_do_tiktok_nao_leva_o_video_longo(self, saida):
         _job_com_cortes(saida, 1, titulos=["Curto"])

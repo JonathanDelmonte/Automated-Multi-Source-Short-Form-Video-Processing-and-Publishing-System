@@ -88,7 +88,8 @@ class TestRecusas:
     @pytest.mark.parametrize("link, frase", [
         ("", "cole o link"),
         ("   ", "cole o link"),
-        ("https://www.kwai.com/@x/video/123", "nao e do YouTube"),
+        # O Kwai e o app do Kuaishou de fora da China: outra plataforma (7.10).
+        ("https://www.kwai.com/@x/video/123", "nao e de uma plataforma que o programa conhece"),
         ("javascript:alert(1)", "nao parece um link"),
         ("ftp://youtube.com/shorts/" + ID_YT, "nao parece um link"),
     ])

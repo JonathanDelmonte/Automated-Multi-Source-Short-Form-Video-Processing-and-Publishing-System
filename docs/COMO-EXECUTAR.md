@@ -1603,9 +1603,10 @@ que ela fazia.
 ## Passo 16 — Vídeo longo: o episódio e a compilação para o YouTube
 
 Criar → **Vídeo longo** tem dois caminhos. Os dois saem **horizontais**
-(1920x1080), com **capítulos** na descrição, e **vão só para o YouTube**: TikTok e
-Instagram são a tela em pé. Publicado no canal inteiro, o vídeo longo abre só o
-galho do YouTube, e o pacote do dia do TikTok e do Instagram não o leva.
+(1920x1080), com **capítulos** na descrição, e **vão só para o YouTube** (e,
+desde a 7.10, para o Bilibili, o do vídeo longo na China): TikTok e Instagram são
+a tela em pé. Publicado no canal inteiro, o vídeo longo abre só esses galhos, e o
+pacote do dia do TikTok e do Instagram não o leva.
 
 **O episódio criado por IA** é o vídeo do Passo 15, deitado e mais longo — as
 mesmas chaves (Cloudflare e Gemini) e o mesmo estilo salvo no canal:
@@ -1666,6 +1667,57 @@ no meio o programa pergunta ao YouTube até onde chegou e continua dali.
 o 2 continuou o 1, se a voz teve emenda perceptível entre os blocos, o link da
 compilação no YouTube (ou um print dos capítulos na barra), e o log de qualquer
 vídeo que não saiu.
+
+---
+
+## Passo 17 — Plataformas chinesas: Douyin, Kuaishou, Bilibili e Xiaohongshu
+
+As quatro entram como o **Instagram** do Passo 8: **pelo pacote do dia**. Nenhuma
+deixa uma pessoa de fora da China publicar pela API, então o programa entrega o
+corte e o texto prontos, e quem aperta publicar é você. Duas coisas mudam:
+
+- **o texto vai em chinês**: título, descrição e tags de cada corte são traduzidos
+  pelas IAs grátis das Configurações (as mesmas do Passo 2), e a tradução fica
+  guardada na pasta do projeto — o segundo pacote do dia não gasta cota de novo.
+  Se nenhuma IA responder, vai o texto original, e o LEIA-ME do pacote diz qual
+  corte ficou assim;
+- **cada app tem as regras dele**: no Douyin, no Bilibili e no Xiaohongshu a
+  primeira linha do `.txt` é o **título**, já no tamanho do campo (30, 80 e 20
+  caracteres), e o resto é o texto; as **tags do Bilibili** vêm na última linha,
+  sem `#`, para colar uma de cada vez no campo 标签; o Kuaishou tem um campo só.
+
+O **vídeo em si continua como foi feito**, com a fala e a legenda no idioma
+original. O vídeo longo (Passo 16) vai também para o Bilibili.
+
+Para ter conta lá (o cartão de cada conta diz o mesmo): o **Douyin** pede telefone
+chinês e a verificação de nome real, que em geral recusa passaporte; o
+**Kuaishou** aceita passaporte pela leitura do chip (NFC); o **Bilibili** pede a
+verificação de nome real para publicar, e aceita passaporte; o **Xiaohongshu**
+aceita telefone de fora da China, sem documento. Os números dos posts ficam só
+dentro do app: o programa não os mede.
+
+### Roteiro de teste (7.10)
+
+1. **A conta.** Nos ajustes de um canal, em "contas do canal", escolher o ícone do
+   **Xiaohongshu** (ou de outra das quatro): aparece a frase do que o cadastro
+   pede. Pôr um @ qualquer e salvar. A visão geral do canal mostra a conta com o
+   caminho dela (pacote do dia, texto em chinês).
+2. **Publicar no canal.** Num projeto do canal, **publicar** no canal inteiro: na
+   fila (Agenda), o galho da conta chinesa aparece ao lado dos outros. Abrir a
+   pasta dos cortes (`atalhos\abrir-pasta-dos-cortes.bat`): ao lado do corte há um
+   `.xiaohongshu.txt` com o título em chinês na primeira linha.
+3. **O pacote do dia.** Na Agenda, o pacote agora tem o botão da plataforma
+   chinesa. Baixar e abrir o ZIP: o LEIA-ME diz em que campo vai cada linha, e os
+   `.txt` estão em chinês. (Sem nenhuma chave de IA, eles saem em português e o
+   LEIA-ME marca quais.)
+4. **O "já publiquei".** Se você tiver conta numa delas: postar um corte, tocar em
+   **compartilhar → copiar link** no app e colar no "já publiquei" **do jeito que
+   veio** — o app copia um texto inteiro com o link no meio, e o programa tira o
+   link de lá.
+
+**O que me mandar de volta**: um `.txt` de cada plataforma que você testou (ou um
+print), se o título coube no campo do app sem cortar no meio de uma palavra
+estranha, e — se chegou a postar — o texto que o "copiar link" do app colou.
 
 ---
 

@@ -8,7 +8,8 @@ import CriarEpisodio from './CriarEpisodio';
 // Criar → Vídeo longo (etapa 7.8): "um vídeo horizontal longo, montado a partir
 // dos cortes ou de um roteiro". Dois caminhos na mesma tela: o episódio criado
 // por IA (a máquina da 7.7, deitada e mais longa, com a história que continua)
-// e a compilação dos cortes que já existem. Os dois vão só para o YouTube.
+// e a compilação dos cortes que já existem. Os dois vão só para o YouTube e,
+// desde a 7.10, para o Bilibili.
 
 const MODOS = [
   { id: 'episodio', icone: Wand2, rotulo: 'episódio criado por IA' },

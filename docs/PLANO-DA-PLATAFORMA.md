@@ -23,8 +23,9 @@ Um **sistema com um painel** — os dois:
   enquanto o PC estiver ligado.
 - **O painel**, o site no Cloudflare: onde se cria, acompanha e decide. Ele não
   processa nada; conversa com o motor da própria máquina.
-- **As integrações**: YouTube, TikTok e Instagram; outras plataformas depois. É
-  por elas que o conteúdo sai e as métricas voltam.
+- **As integrações**: YouTube, TikTok e Instagram; e, desde a 7.10, Douyin,
+  Kuaishou, Bilibili e Xiaohongshu, pelo pacote do dia. É por elas que o
+  conteúdo sai e as métricas voltam.
 
 No mercado, o nome disso é *plataforma de automação de conteúdo*: estúdio de
 criação e central de publicação no mesmo lugar. O pedido do autor é que ela
@@ -848,6 +849,79 @@ separada, porque é a parte de maior risco (ver Limites).
 - Toda plataforma nova é uma migração (`accounts.platform` tem CHECK) e um
   driver.
 
+**Pronto quando:** um canal ganha conta no Douyin, no Kuaishou, no Bilibili ou no
+Xiaohongshu como ganha no TikTok; o corte vai para a fila dela como um galho do
+canal; o pacote do dia dela traz o corte com o texto pronto para colar, em
+chinês e nas regras do app; e o "já publiquei" aceita o link como o app o copia.
+
+**Andamento:**
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.10a | pesquisa: o que cada uma exige de quem é de fora e o que oferece para publicar e medir (ADR-015) | feita (30-set) |
+| 7.10b | motor: as quatro no banco, nos links, na legenda de cada app, no pacote do dia e na tradução do texto | feita (30-set) |
+| 7.10c | painel: contas, ícones, o cartão de cada uma, o pacote e o "já publiquei" | feita (30-set) |
+| 7.10d | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (30-set) |
+
+**Como as chinesas ficaram, e por quê (o ADR-015 tem o levantamento):**
+
+- **Publicam pelo pacote do dia, como o Instagram da 7.3d.** Nenhuma das quatro
+  deixa uma pessoa de fora da China publicar pela API: no Douyin isso é para site
+  de governo e de imprensa, no Kuaishou para empresa, no Bilibili pede
+  identidade de desenvolvedor e revisão lá, e o Xiaohongshu não tem. E robô no
+  navegador é o que custa a conta (ADR-010). Então o programa entrega o corte e
+  o texto prontos, e quem aperta publicar é a pessoa.
+- **O texto do post vai em chinês.** É em chinês que esses apps buscam e
+  recomendam: um título em português no Douyin não é achado por ninguém. O
+  título, a descrição e as tags de cada corte são traduzidos pelas IAs grátis do
+  programa, uma vez só (a tradução fica guardada na pasta do projeto). Se nenhuma
+  IA responder, vai o texto original, e o LEIA-ME do pacote diz qual corte ficou
+  assim.
+- **Cada app com as regras dele.** No Douyin, no Bilibili e no Xiaohongshu o
+  título tem campo próprio: a primeira linha do arquivo é o título, já no tamanho
+  do campo (30, 80 e 20 caracteres), e o resto é o texto. As tags do Bilibili têm
+  campo próprio também, e saem na última linha, sem `#`. O Kuaishou tem um campo
+  só, como o TikTok. O LEIA-ME diz em que campo vai cada parte.
+- **O vídeo em si continua como foi feito**: a fala e a legenda no idioma
+  original. Legenda em chinês é a função "Idiomas" desta lista, e pede uma
+  fonte com os caracteres chineses dentro do programa — é reconstruir a imagem
+  (uns 40 minutos), então fica para o autor decidir.
+- **O "já publiquei" aceita o que o app copia.** O botão "compartilhar" dos apps
+  chineses copia um texto com o link no meio ("复制打开抖音... https://v.douyin.com/...");
+  o programa tira o link de dentro, segue o link curto até o endereço do vídeo e
+  guarda. O Kwai (o Kuaishou de fora da China, grande no Brasil) e o bilibili.tv
+  são outras plataformas: o link deles é recusado, para não guardar o post
+  errado.
+- **O vídeo longo vai também ao Bilibili**, que é o do vídeo longo e deitado na
+  China. Nas outras três ele não vai, como no TikTok.
+- **Nenhuma é medida.** Os números do post ficam dentro do app: as análises e o
+  "a IA acertou?" contam só as plataformas medidas, e a conta chinesa não aparece
+  no aviso de "conecte para medir".
+- **O site novo com o programa antigo não oferece as chinesas.** O motor diz as
+  plataformas que conhece (`/api/contas`), e um programa de antes da 7.10
+  recusaria a conta do Douyin ao salvar.
+
+**Onde a 7.10 está (30-set-2026).** O "pronto quando" roda nos testes: a conta
+de cada uma aceita pelo banco (inclusive o banco antigo, pelo acerto do boot), os
+links de cada app como eles chegam (o endereço, o link curto, o texto do
+"compartilhar"), a legenda nas regras de cada campo, a tradução em lotes e
+guardada, o subprocesso de verdade sem nenhuma IA, e o pacote e a publicação
+pela API do motor (`tests/test_plataformas_chinesas.py`); e as regras do painel
+no `node` contra as do motor (`tests/test_painel_das_plataformas.py`). As telas
+foram conferidas com o motor de verdade e um banco de demonstração (o canal
+"Gatos da Neve" com YouTube, TikTok, Douyin, Bilibili e Xiaohongshu, e uma conta
+solta do Kuaishou), no computador e no celular; os cortes foram publicados no
+canal inteiro pela porta do painel, e o pacote do Bilibili saiu com dois cortes em
+chinês e o terceiro marcado no LEIA-ME, porque a IA de mentira da demonstração
+não respondeu. Na conferência saíram três acertos: a lista de contas vinha na
+ordem do banco (com sete plataformas, embaralhada); o "a IA acertou?" contava o
+post do Bilibili como um corte que ainda não tinha números; e o LEIA-ME do
+Bilibili chamava as tags de hashtags. Na revisão do código, um quarto: o painel
+de análises pediria para "conectar para medir" as contas chinesas, e não há o
+que conectar. **O que falta ver no PC do autor**: a tradução com
+as chaves de IA dele, e — se ele tiver conta em alguma delas — um post de verdade
+com o texto colado do pacote. O roteiro está no `COMO-EXECUTAR.md`, Passo 17.
+
 ## Funções essenciais que ainda não estavam na lista
 
 | Função | Por quê | Onde entra |
@@ -861,7 +935,7 @@ separada, porque é a parte de maior risco (ver Limites).
 | Não repetir | mesma fonte ou corte, nem entre canais | 7.5 |
 | Primeiros passos | quem instala pela primeira vez: chaves, conta, primeiro canal | 7.1 |
 | Calendário | todos os canais num calendário | lugar na 7.1; completo na 7.5 |
-| Idiomas | o mesmo canal em outro idioma, com legenda traduzida ou voz | depois da 7.7 |
+| Idiomas | o mesmo canal em outro idioma, com legenda traduzida ou voz | depois da 7.7; o texto do post já sai em chinês para as plataformas chinesas (7.10) |
 | Ideias por nicho | tendências e temas, para a busca e para a IA | 7.5 e 7.7 |
 | Música e efeitos sem direitos | biblioteca para os vídeos | 7.2 e 7.7 |
 | Modelos de canal | receitas prontas por nicho, para começar um canal rápido | 7.5 |
@@ -920,8 +994,9 @@ tem pressa: "a gente vai fazendo aos poucos".
 | Prazo das auditorias? | Sem pressa; "quando eu quiser dividir o trabalho, a gente divide" |
 | Quando testar no PC dele? | **No final**, tudo junto: as etapas seguem sem esperar o teste de cada uma (26-set-2026, ao fechar a 7.3) |
 
-Quando a estrutura estiver de pé, o "canal como centro" vira o ADR-014 (o 013 foi
-para a pesquisa de mídia grátis da 7.7).
+O "canal como centro" virou o ADR-014 em 30-set-2026, com a estrutura de pé (7.1 a
+7.8); o 013 foi para a pesquisa de mídia grátis da 7.7, e o 015 para as
+plataformas chinesas da 7.10.
 
 ## Ordem e dependências
 
@@ -1051,6 +1126,18 @@ pelo que o cartão do Criar já prometia: "montado a partir dos cortes ou de um
 roteiro". Os dois caminhos entraram. Depois, de novo só "continue": nenhuma
 decisão nova do autor nesta etapa, e o teste continua sendo o do final, pelo
 Passo 16 do `COMO-EXECUTAR.md`.
+
+**30-set-2026, ao fechar a 7.8:** "siga o proximo passo" — a 7.10, as
+plataformas chinesas, pela ordem do plano: a 7.9 (a frota) é a última entre as
+grandes, e a 7.2 espera a lista do autor. Nenhuma decisão nova do autor nesta
+etapa; duas perguntas ficam para ele, e nenhuma trava o que foi feito:
+
+- **Legenda em chinês no vídeo** (a função "Idiomas"): pede uma fonte com os
+  caracteres chineses dentro do programa, e isso é reconstruir a imagem (uns 40
+  minutos). Sem ela, o texto do post vai em chinês e o vídeo, como foi feito.
+- **O Kwai**, o Kuaishou de fora da China, é grande no Brasil e não pede
+  telefone chinês. Ele não entrou (não estava no pedido), mas entraria como as
+  plataformas de fora, se o autor quiser.
 
 ## Fontes
 

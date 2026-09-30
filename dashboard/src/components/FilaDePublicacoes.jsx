@@ -60,7 +60,12 @@ function FormularioDoLink({ publicacao, aoTerminar, cancelar }) {
       onSubmit={(e) => { e.preventDefault(); if (link.trim()) enviar(true); }}
     >
       <label className="block text-[12px] text-muted" htmlFor={`link-${publicacao.id}`}>
-        Cole o link do post no {nome}. É com ele que o programa mede as visualizações.
+        {PLATAFORMAS[publicacao.account?.platform]?.chinesa
+          // As chinesas (7.10): o "compartilhar" do app copia um texto com o
+          // link no meio, e o motor o tira de lá. Números, só no app.
+          ? `Cole o link do post no ${nome} (ou o texto inteiro que o "compartilhar" do app copia). `
+            + 'Ele fica guardado com a publicação; os números do post ficam só no app.'
+          : `Cole o link do post no ${nome}. É com ele que o programa mede as visualizações.`}
       </label>
       <div className="flex flex-wrap gap-2">
         <input

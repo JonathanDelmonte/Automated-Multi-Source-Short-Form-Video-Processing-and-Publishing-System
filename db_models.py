@@ -157,6 +157,12 @@ class User(Base, TenantScoped):
 # parece significar: "esta conta eu publico a mao, nao automatize".
 DRIVER_PREFS = ("auto", "manual", "youtube-api", "aggregator", "browser", "tiktok-api")
 
+# As plataformas de uma conta. A mesma lista de `plataformas.IDS`, repetida aqui
+# para que o schema nao dependa do resto do programa -- um teste compara as
+# duas. As quatro chinesas entraram na etapa 7.10 (migracao `e2c7a5d9f184`).
+PLATFORMS = ("youtube", "tiktok", "instagram",
+             "douyin", "kuaishou", "bilibili", "xiaohongshu")
+
 
 class Account(Base, TenantScoped):
     __tablename__ = "accounts"
@@ -179,8 +185,11 @@ class Account(Base, TenantScoped):
                              name="fk_accounts_tenant"),
         UniqueConstraint("tenant_id", "platform", "handle",
                          name="uq_accounts_tenant_platform_handle"),
-        CheckConstraint("platform in ('youtube','tiktok','instagram')",
-                        name="ck_accounts_platform"),
+        # Derivado da tupla pelo mesmo motivo do `driver_pref` abaixo: a
+        # migracao escreve sem espaco depois da virgula, e o teste compara.
+        CheckConstraint(
+            "platform in (%s)" % ",".join(f"'{p}'" for p in PLATFORMS),
+            name="ck_accounts_platform"),
         # A grafia importa: `test_alembic_upgrade_produz_o_mesmo_schema_que_o
         # _metadata` compara o TEXTO do CHECK entre a migracao e o metadata, e
         # `f"... in {tupla}"` sairia com espaco depois da virgula enquanto a

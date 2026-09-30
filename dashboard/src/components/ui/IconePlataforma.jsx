@@ -6,6 +6,11 @@ import React, { useId } from 'react';
 // inteiro é preto e branco, são o que diz de relance em que galho um corte vai
 // sair. `mono` desenha na cor do texto, para os lugares onde a cor gritaria.
 //
+// As chinesas (7.10) são uma lembrança da marca, não a logo: a nota do TikTok
+// num quadrado escuro é o Douyin (é a mesma nota, na mesma empresa), a câmera
+// num quadrado laranja é o Kuaishou, a TV com antenas é o Bilibili, e o
+// quadrado vermelho com o nome é o Xiaohongshu -- a logo dele é o próprio nome.
+//
 // O gradiente do Instagram tem id por instância (`useId`): com um id só, o
 // navegador usa a primeira definição da página, e se ela estiver num trecho
 // escondido (`display: none`) o Chrome deixa todas as outras sem cor.
@@ -57,7 +62,87 @@ function Instagram({ mono, id }) {
   );
 }
 
-const DESENHOS = { youtube: YouTube, tiktok: TikTok, instagram: Instagram };
+// A nota do TikTok encolhida para caber no quadrado do app.
+const NOTA_NO_QUADRADO = 'translate(4.9 4.9) scale(0.59)';
+
+function Douyin({ mono }) {
+  if (mono) {
+    return (
+      <>
+        <rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d={NOTA} fill="currentColor" transform={NOTA_NO_QUADRADO} />
+      </>
+    );
+  }
+  return (
+    <>
+      <rect x="1.5" y="1.5" width="21" height="21" rx="5.2" fill="#161823" stroke="#3a3d4a" strokeWidth="0.8" />
+      <g transform={NOTA_NO_QUADRADO}>
+        <path d={NOTA} fill="#25f4ee" transform="translate(-0.9 -0.9)" />
+        <path d={NOTA} fill="#fe2c55" transform="translate(0.9 0.9)" />
+        <path d={NOTA} fill="#fff" />
+      </g>
+    </>
+  );
+}
+
+function Kuaishou({ mono }) {
+  const traco = mono ? 'currentColor' : '#fff';
+  return (
+    <>
+      {mono
+        ? <rect x="2" y="2" width="20" height="20" rx="5.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        : <rect x="1.5" y="1.5" width="21" height="21" rx="5.5" fill="#ff4906" />}
+      <circle cx="8.7" cy="8.3" r="2.5" fill={traco} />
+      <circle cx="14.3" cy="8.7" r="1.9" fill={traco} />
+      <rect x="5.8" y="11.6" width="9.8" height="6.6" rx="1.8" fill={traco} />
+      <path d="M15.3 13.5 18.7 11.8v6.2l-3.4-1.7Z" fill={traco} />
+    </>
+  );
+}
+
+function Bilibili({ mono }) {
+  const cor = mono ? 'currentColor' : '#00aeec';
+  return (
+    <g fill="none" stroke={cor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="6.5" width="19" height="14" rx="3.6" />
+      <path d="M7.6 2.8 10 6.3M16.4 2.8 14 6.3" />
+      <path d="M7.8 11.7l2 .9M16.2 11.7l-2 .9" />
+      <path d="M10 15.8c.7.8 1.3.8 2 0 .7.8 1.3.8 2 0" strokeWidth="1.5" />
+    </g>
+  );
+}
+
+function Xiaohongshu({ mono }) {
+  return (
+    <>
+      {mono
+        ? <rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        : <rect x="1.5" y="1.5" width="21" height="21" rx="5.2" fill="#ff2442" />}
+      <text
+        x="12"
+        y="14.6"
+        textAnchor="middle"
+        fontSize="6.6"
+        fontWeight="700"
+        fill={mono ? 'currentColor' : '#fff'}
+        fontFamily="'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Noto Sans SC',sans-serif"
+      >
+        小红书
+      </text>
+    </>
+  );
+}
+
+const DESENHOS = {
+  youtube: YouTube,
+  tiktok: TikTok,
+  instagram: Instagram,
+  douyin: Douyin,
+  kuaishou: Kuaishou,
+  bilibili: Bilibili,
+  xiaohongshu: Xiaohongshu,
+};
 
 export default function IconePlataforma({ platform, size = 16, mono = false, className = '', title }) {
   const id = `ig-${useId().replace(/:/g, '')}`;

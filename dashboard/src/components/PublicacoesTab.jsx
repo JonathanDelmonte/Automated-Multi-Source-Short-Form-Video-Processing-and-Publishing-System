@@ -7,7 +7,7 @@ import IconePlataforma from './ui/IconePlataforma';
 import AvatarDoCanal from './ui/AvatarDoCanal';
 import FilaDePublicacoes from './FilaDePublicacoes';
 import ConexaoDaConta from './ConexaoDaConta';
-import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
+import { DRIVERS, PLATAFORMAS, PRINCIPAIS, plataformasDoMotor } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 import {
   aceitaVideoLongo, caminhoDaAgenda, caminhoDoPacote, canalDoDestino, corpoDoDestino,
@@ -42,13 +42,17 @@ export default function PublicacoesTab({
   // soltaria todas as partes juntas, e a série sai na ordem, uma por janela.
   serie = false,
   // O projeto é um vídeo longo (7.8: o episódio de IA ou a compilação)? Ele vai
-  // só para o YouTube: a tela diz, e a conta avulsa só pode ser do YouTube.
+  // só para o YouTube e o Bilibili: a tela diz, e a conta avulsa só pode ser
+  // de um dos dois.
   longo = false,
 }) {
   const { canais } = usePainel();
   const mostra = (secao) => secoes.includes(secao);
   const [dias, setDias] = useState([]);
   const [contas, setContas] = useState(null);
+  // As plataformas que o programa deste computador conhece (7.10): o site
+  // novo com o programa de antes só oferece as três de sempre.
+  const [doMotor, setDoMotor] = useState(PRINCIPAIS);
   const [quota, setQuota] = useState(null);
   const [fila, setFila] = useState([]);
   const [erro, setErro] = useState(null);
@@ -82,6 +86,7 @@ export default function PublicacoesTab({
       if (rContas.ok) {
         const data = await rContas.json();
         setContas(data.contas || []);
+        setDoMotor(plataformasDoMotor(data.plataformas));
         setQuota(data.quota_youtube || null);
       } else {
         // 503 é o banco fora do ar, e a mensagem dele já diz o que rodar.
@@ -228,6 +233,10 @@ export default function PublicacoesTab({
             plataforma escolhida e pronto para selecionar tudo e colar: título,
             descrição e hashtags.
             {pacotePara === 'instagram' && ' No Instagram, com no máximo 5 hashtags: é o limite do app.'}
+            {PLATAFORMAS[pacotePara]?.chinesa && (
+              ` No ${PLATAFORMAS[pacotePara].nome}, o texto vai em chinês, traduzido pelas IAs grátis, e o título`
+              + ' no tamanho do app; o vídeo continua com a fala e a legenda do jeito que foi feito.'
+            )}
           </p>
           {opcoesDoPacote.length > 1 && (
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="plataforma do pacote">
@@ -269,7 +278,7 @@ export default function PublicacoesTab({
           ) : (
             <p className="text-muted text-[13px]">
               {dias.length
-                ? `Nenhum corte para o ${PLATAFORMAS[pacotePara]?.nome || pacotePara} em disco: os vídeos longos vão só para o YouTube.`
+                ? `Nenhum corte para o ${PLATAFORMAS[pacotePara]?.nome || pacotePara} em disco: os vídeos longos vão só para o YouTube e o Bilibili.`
                 : 'Nenhum corte em disco ainda.'}
             </p>
           )}
@@ -346,7 +355,8 @@ export default function PublicacoesTab({
                         <Trash2 size={14} />
                       </button>
                     )}
-                    {c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram') && (
+                    {c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram'
+                                   || PLATAFORMAS[c.platform]?.chinesa) && (
                       <div className="basis-full pl-7">
                         <ConexaoDaConta conta={c} aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}
                                         aoMudar={carregar} />
@@ -363,8 +373,9 @@ export default function PublicacoesTab({
               className="input-field text-sm py-1.5 w-auto"
               value={nova.platform}
               onChange={(e) => setNova({ ...nova, platform: e.target.value })}
+              aria-label="plataforma da conta"
             >
-              {ORDEM_DAS_PLATAFORMAS.map((id) => (
+              {doMotor.map((id) => (
                 <option key={id} value={id}>{PLATAFORMAS[id].nome}</option>
               ))}
             </select>
@@ -461,10 +472,10 @@ export default function PublicacoesTab({
               </div>
               {ehLongo && (
                 <p className="text-ink2 text-[12px] leading-snug" data-longo-so-youtube>
-                  Vídeo longo e horizontal: ele vai só para o YouTube.{' '}
+                  Vídeo longo e horizontal: ele vai só para o YouTube e o Bilibili.{' '}
                   {canaisDestino.length || contasDestino.length
-                    ? 'No canal inteiro, abre só o galho do YouTube — o TikTok e o Instagram ficam de fora.'
-                    : 'Não há conta do YouTube aqui: cadastre uma nas Configurações (ou ligue uma ao canal).'}
+                    ? 'No canal inteiro, abre só esses galhos — as contas de vídeo em pé ficam de fora.'
+                    : 'Não há conta do YouTube nem do Bilibili aqui: cadastre uma nas Configurações (ou ligue uma ao canal).'}
                 </p>
               )}
               {ehSerie && (

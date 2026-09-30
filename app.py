@@ -30,6 +30,8 @@ import midia_ia
 import criacoes
 import capitulos
 import compilacao
+import plataformas
+import traducao
 import template as template_doc
 import db
 import db_models
@@ -4338,15 +4340,112 @@ async def _cortes_por_dia(request) -> dict:
     return por_dia
 
 
-#: As plataformas que tem pacote do dia, e o nome de cada uma nas frases.
-PLATAFORMAS_DO_PACOTE = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+#: As plataformas que tem pacote do dia, e o nome de cada uma nas frases: todas
+#: as do cadastro (`plataformas.py`), as chinesas inclusive (7.10).
+PLATAFORMAS_DO_PACOTE = dict(plataformas.NOMES)
 
 
 def _vai_no_pacote(item, plataforma: str) -> bool:
-    """O video longo (7.8) e horizontal e vai so para o YouTube: o pacote do
-    TikTok e o do Instagram nao o levam -- postado a mao ali, ele sairia
+    """O video longo (7.8) e horizontal e vai so para o YouTube e o Bilibili:
+    os pacotes das outras nao o levam -- postado a mao ali, ele sairia
     espremido numa tela em pe."""
     return not getattr(item.clip, "longo", False) or plataforma in PLATAFORMAS_DO_VIDEO_LONGO
+
+
+# --- O texto do post no idioma da plataforma (7.10) ---------------------------
+# As chinesas buscam e recomendam pelo texto do post, em chines. A traducao e
+# do `traducao.py`, num subprocesso (ver o docstring de la), e fica guardada na
+# pasta de cada projeto: o pacote e a publicacao so esperam por ela da primeira
+# vez que um texto aparece.
+
+#: Quanto o pacote e a publicacao esperam a traducao antes de seguir com o texto
+#: original. Um provedor travado nao pode prender o download do pacote.
+TRADUCAO_TIMEOUT = float(os.environ.get("TRADUCAO_TIMEOUT_SECONDS", "120"))
+
+#: Uma traducao por vez: dois pedidos do mesmo pacote ao mesmo tempo gastariam a
+#: cota duas vezes pelo mesmo texto. O segundo espera e acha a do primeiro.
+_TRAVA_DA_TRADUCAO = asyncio.Lock()
+
+
+def _com_traducao_guardada(itens: list, plataforma: str, idioma: str) -> tuple:
+    """Os itens com a traducao que ja esta nas pastas, e `[(pasta, origem)]`
+    dos que faltam. Le disco: roda fora do loop."""
+    import dataclasses
+    prontos, faltam = [], []
+    for item in itens:
+        pasta = os.path.join(OUTPUT_DIR, item.clip.job_id)
+        origem = traducao.origem_de(item.meta, plataforma)
+        if traducao.ja_esta_no_idioma(origem, idioma):
+            prontos.append(dataclasses.replace(
+                item, meta=dataclasses.replace(item.meta, language=idioma)))
+            continue
+        feita = traducao.guardada(pasta, idioma, origem)
+        if feita:
+            prontos.append(dataclasses.replace(
+                item, meta=traducao.aplicar(item.meta, plataforma, feita, idioma)))
+            continue
+        prontos.append(item)
+        faltam.append((pasta, origem))
+    return prontos, faltam
+
+
+def _traduzir_no_subprocesso(pedido: dict) -> None:
+    """`python traducao.py` com o pedido na entrada. Nunca levanta: o que nao
+    sair traduzido segue no texto original."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "traducao.py")
+    env = os.environ.copy()
+    # O log do subprocesso tem emoji e chines; num cano, o Python do Windows
+    # escreveria na pagina de codigo antiga e morreria no primeiro print.
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        feito = subprocess.run(
+            [sys.executable, "-u", script], input=json.dumps(pedido).encode("utf-8"),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+            cwd=os.path.dirname(script), timeout=TRADUCAO_TIMEOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        print(f"🈶 Traducao: sem resposta em {TRADUCAO_TIMEOUT:.0f}s; o texto vai no original.")
+        return
+    except Exception as e:
+        print(f"🈶 Traducao: nao consegui rodar ({type(e).__name__}: {e}); o texto vai no original.")
+        return
+    for linha in (feito.stdout or b"").decode("utf-8", "replace").splitlines():
+        if linha.strip():
+            print(linha)
+
+
+async def _na_lingua_da_plataforma(itens: list, plataforma: str) -> tuple:
+    """Os itens com o texto no idioma da plataforma, e o conjunto
+    `{(job_id, indice)}` dos que ficaram no original.
+
+    Plataforma sem idioma proprio (YouTube, TikTok, Instagram) devolve os itens
+    como vieram, sem tocar em disco. Falha aberto em tudo."""
+    regra = plataformas.de(plataforma)
+    if regra is None or not regra.idioma or not itens:
+        return itens, set()
+    idioma = regra.idioma
+    try:
+        prontos, faltam = await asyncio.to_thread(_com_traducao_guardada, itens, plataforma, idioma)
+        if faltam:
+            async with _TRAVA_DA_TRADUCAO:
+                # Quem esperou a vez pode achar tudo pronto pelo pedido anterior.
+                prontos, faltam = await asyncio.to_thread(
+                    _com_traducao_guardada, itens, plataforma, idioma)
+                if faltam:
+                    await asyncio.to_thread(_traduzir_no_subprocesso,
+                                            traducao.pedido(idioma, faltam))
+                    prontos, faltam = await asyncio.to_thread(
+                        _com_traducao_guardada, itens, plataforma, idioma)
+    except Exception as e:
+        print(f"🈶 Traducao: {type(e).__name__}: {e}; o texto vai no original.")
+        return itens, {(i.clip.job_id, i.clip.index) for i in itens}
+    sem = {(i.clip.job_id, i.clip.index) for i in prontos if i.meta.language != idioma}
+    return prontos, sem
+
+
+#: O que a publicacao diz quando o texto de uma plataforma chinesa foi no original.
+SEM_TRADUCAO = ("o texto ficou no idioma original, porque a tradução para o chinês não "
+                "saiu: nenhuma IA de texto respondeu a tempo")
 
 
 @app.get("/api/publicacoes/dias")
@@ -4394,17 +4493,18 @@ async def baixar_pacote_do_dia(request: Request,
                for d, itens in todos.items()}
     por_dia = {d: itens for d, itens in por_dia.items() if itens}
     nome_da_plataforma = PLATAFORMAS_DO_PACOTE[plataforma]
+    so_longo = plataformas.lista_de_nomes(PLATAFORMAS_DO_VIDEO_LONGO)
     if not por_dia:
         raise HTTPException(status_code=404, detail=(
             f"Nenhum corte para o {nome_da_plataforma} em disco: os vídeos longos vão "
-            "só para o YouTube."))
+            f"só para {so_longo}."))
     escolhido = dia or max(por_dia)
     itens = por_dia.get(escolhido)
     if not itens:
         raise HTTPException(
             status_code=404,
             detail=(f"Nenhum corte para o {nome_da_plataforma} em {escolhido}"
-                    + (" (os vídeos longos vão só para o YouTube)" if escolhido in todos else "")
+                    + (f" (os vídeos longos vão só para {so_longo})" if escolhido in todos else "")
                     + f". Dias com corte: {', '.join(sorted(por_dia, reverse=True)[:5])}"))
 
     if plataforma == "youtube":
@@ -4423,6 +4523,10 @@ async def baixar_pacote_do_dia(request: Request,
                 item, meta=dataclasses.replace(item.meta,
                                                made_for_kids=criancas[item.clip.job_id])))
         itens = marcados
+
+    # O texto no idioma da plataforma (7.10): as chinesas recebem o post em
+    # chines. O que nao sair traduzido vai no original, e o LEIA-ME diz qual.
+    itens, _sem_traducao = await _na_lingua_da_plataforma(itens, plataforma)
 
     nome = publishers.pacote.nome_do_pacote(escolhido, plataforma)
     destino = os.path.join(OUTPUT_DIR, f"pacote_{uuid.uuid4().hex[:8]}_{nome}")
@@ -6126,8 +6230,11 @@ async def ver_calibracao(canal: Optional[str] = None, plataforma: Optional[str] 
         itens = await publish_queue.cruzamento()
     except Exception as e:
         raise _erro_da_fila(e)
+    # So as plataformas que o programa mede: o post do Bilibili ou do Douyin
+    # (7.10) nunca vai ter numero, e contaria para sempre como "sem numeros".
     itens = [i for i in itens
-             if (not plataforma or i.get("platform") == plataforma)
+             if i.get("platform") in plataformas.MEDIDAS
+             and (not plataforma or i.get("platform") == plataforma)
              and (not canal or (canal == "sem" and not i.get("channel_id"))
                   or i.get("channel_id") == canal)]
     return {**calibracao.relatorio(itens), "clipes": itens}
@@ -6152,9 +6259,12 @@ def _dias(valor: int, padrao: int) -> int:
 
 def _contas_para_medir(contas: list, canal: Optional[str], plataforma: Optional[str]) -> list:
     """As contas do recorte e se cada uma esta conectada para medir -- para a
-    tela dizer "conecte para medir" em vez de mostrar zero."""
+    tela dizer "conecte para medir" em vez de mostrar zero. So as plataformas
+    que o programa mede: numa chinesa (7.10) nao ha o que conectar."""
     saida = []
     for c in contas:
+        if c["platform"] not in plataformas.MEDIDAS:
+            continue
         if plataforma and c["platform"] != plataforma:
             continue
         if canal == "sem" and c.get("channel_id"):
@@ -6408,7 +6518,7 @@ async def coletar_metricas() -> dict:
         rotulo = f"{plataforma}/{handle}"
         falta = _falta_para_medir(plataforma, handle)
         if falta:
-            if plataforma in ("youtube", "tiktok", "instagram"):
+            if plataforma in plataformas.MEDIDAS:
                 sem_conexao.append(rotulo)
                 if rotulo not in _avisou_sem_credencial:
                     print(f"📊 {rotulo}: {falta}.")
@@ -6525,8 +6635,12 @@ async def _publicar_uma_agendada(pendente: dict) -> None:
               "mais (limpeza por idade?).")
         return
 
+    # O texto no idioma da plataforma (7.10); sem traducao, vai o original.
+    traduzidos, sem_traducao = await _na_lingua_da_plataforma([item], conta.platform)
+    if sem_traducao:
+        print(f"⏰ Agendada {pendente['id']}: {SEM_TRADUCAO}.")
     try:
-        meta = await _meta_para_publicar(corte.job_id, item.meta, conta.id)
+        meta = await _meta_para_publicar(corte.job_id, traduzidos[0].meta, conta.id)
     except Exception as e:
         # Sem saber se o canal e infantil, o envio nao sai: marcado errado
         # seria pior (COPPA) que atrasado.
@@ -6813,7 +6927,7 @@ class AgendarIn(BaseModel):
     clips: Optional[List[int]] = None
 
 
-_ORDEM_DAS_PLATAFORMAS = {"youtube": 0, "tiktok": 1, "instagram": 2}
+_ORDEM_DAS_PLATAFORMAS = {p: i for i, p in enumerate(plataformas.IDS)}
 
 
 async def _contas_do_pedido(account_id: Optional[str],
@@ -6859,18 +6973,19 @@ def _da_conta(conta) -> dict:
     return {"account_id": conta.id, "platform": conta.platform, "handle": conta.handle}
 
 
-#: Para onde o video longo (7.8) vai: so o YouTube. O painel tem a mesma lista
+#: Para onde o video longo (7.8) vai: o YouTube e, desde a 7.10, o Bilibili --
+#: o do video longo e deitado na China. O painel tem a mesma lista
 #: (`lib/publicacoes.js`, `PLATAFORMAS_DO_VIDEO_LONGO`), e o teste compara.
-PLATAFORMAS_DO_VIDEO_LONGO = ("youtube",)
+PLATAFORMAS_DO_VIDEO_LONGO = plataformas.VIDEO_LONGO
 #: O que a fila responde ao galho que o video longo nao faz.
-SO_NO_YOUTUBE = ("vídeo longo vai só para o YouTube: é para lá que ele foi feito "
-                 "(horizontal, com capítulos)")
+SO_NO_YOUTUBE = (f"vídeo longo vai só para {plataformas.lista_de_nomes(PLATAFORMAS_DO_VIDEO_LONGO)}: "
+                 "é para lá que ele foi feito (horizontal, com capítulos)")
 
 
 def _fora_do_destino(item, conta) -> Optional[str]:
     """Por que este corte nao vai para esta conta, ou None. O video longo e
-    horizontal (7.8) vai so para o YouTube: TikTok e Instagram sao a tela em
-    pe, e no canal com as tres contas ele sai so no galho do YouTube."""
+    horizontal (7.8) vai so para o YouTube e o Bilibili: as outras sao a tela
+    em pe, e no canal com todas as contas ele sai so nesses dois galhos."""
     if getattr(item.clip, "longo", False) and conta.platform not in PLATAFORMAS_DO_VIDEO_LONGO:
         return SO_NO_YOUTUBE
     return None
@@ -9505,7 +9620,9 @@ async def listar_contas():
     """
     try:
         return {"contas": await publish_queue.listar_contas(),
-                "plataformas": ["youtube", "tiktok", "instagram"],
+                # As que ESTE motor conhece: o site e publicado antes de o
+                # programa de quem usa ser atualizado, e so oferece estas.
+                "plataformas": list(plataformas.IDS),
                 "preferencias": list(db_models.DRIVER_PREFS),
                 "quota_youtube": publishers.quota.estado()}
     except Exception as e:
@@ -9838,11 +9955,14 @@ async def marcar_publicado(pub_id: str, req: Optional[PublicadoIn] = None,
         raise HTTPException(status_code=404, detail="Publicacao nao encontrada")
     if url:
         try:
-            # Numa thread: o link curto do TikTok e seguido pela rede.
+            # Numa thread: o link curto (TikTok, e os dos apps chineses) e
+            # seguido pela rede.
             post = await asyncio.to_thread(links_de_post.ler_com_rede, plataforma, url)
         except links_de_post.LinkInvalido as e:
             raise HTTPException(status_code=400, detail=str(e))
-        if post.id is None:
+        # Numa plataforma que nao e medida (as chinesas, 7.10) o numero do video
+        # nao serve a nada: o link guardado ja e o que a tela abre.
+        if post.id is None and plataforma in plataformas.MEDIDAS:
             aviso = ("guardei o link, mas nao deu para ler o numero do video "
                      "(link curto, sem internet agora?). Para medir, cole o "
                      "link completo, aberto no navegador.")
@@ -9928,6 +10048,14 @@ async def publicar_cortes(req: PublicarIn, request: Request):
         para_criancas = {c.id: await _para_criancas(req.job_id, c.id) for c in contas}
     except Exception as e:
         raise _erro_da_fila(e)
+    # O texto no idioma de cada plataforma (7.10): uma traducao por plataforma,
+    # com os cortes que vao para ela juntos -- o video longo que o galho do
+    # Douyin pula nao gasta cota traduzindo.
+    texto_de = {}
+    for plataforma in dict.fromkeys(c.platform for c in contas):
+        vao = [i for i in escolhidos if _vai_no_pacote(i, plataforma)]
+        traduzidos, sem = await _na_lingua_da_plataforma(vao, plataforma)
+        texto_de[plataforma] = ({i.clip.index: i.meta for i in traduzidos}, sem)
     resultados = []
     for item in escolhidos:
         corte = await job_registry.clipe_do_job(req.job_id, item.clip.index)
@@ -9951,11 +10079,13 @@ async def publicar_cortes(req: PublicarIn, request: Request):
             if fora:
                 resultados.append({**base, "ok": False, "pulado": True, "detail": fora})
                 continue
+            metas, sem_traducao = texto_de[conta.platform]
             try:
                 import dataclasses as _dc
                 resultado = await publish_queue.publicar(
                     corte, conta, item.clip.path,
-                    _dc.replace(item.meta, made_for_kids=para_criancas[conta.id]), opts)
+                    _dc.replace(metas.get(item.clip.index, item.meta),
+                                made_for_kids=para_criancas[conta.id]), opts)
             except publish_queue.FilaError as e:
                 resultados.append({**base, "ok": False, "detail": str(e)})
                 continue
@@ -9963,6 +10093,9 @@ async def publicar_cortes(req: PublicarIn, request: Request):
                 resultados.append({**base, "ok": False,
                                    "detail": f"{type(e).__name__}: {e}"})
                 continue
+            if (req.job_id, item.clip.index) in sem_traducao:
+                resultado = {**resultado,
+                             "detail": f"{resultado.get('detail') or ''} — {SEM_TRADUCAO}".strip(" —")}
             resultados.append({**base, **resultado})
 
     publicados = sum(1 for r in resultados if r.get("ok"))

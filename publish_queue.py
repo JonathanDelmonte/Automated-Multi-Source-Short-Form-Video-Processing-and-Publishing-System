@@ -29,6 +29,7 @@ from typing import Iterable, Optional
 
 import db
 import db_models
+import plataformas
 import publishers
 import series
 
@@ -112,14 +113,20 @@ def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
 
 
 async def listar_contas() -> list:
+    """As contas na ordem da tela: por plataforma (a de `plataformas.py`) e,
+    dentro dela, pelo nome. Na ordem do banco, com sete plataformas (7.10), a
+    lista saia embaralhada."""
     async with db.tenant() as t:
         linhas = await t.all(db_models.Account)
         canal_de = {l.account_id: l.channel_id
                     for l in await t.all(db_models.ChannelAccount)}
+    linhas = sorted(linhas, key=lambda l: (plataformas.ordem(l.platform), l.handle.lower()))
     return [_conta_json(l, canal_de.get(l.id)) for l in linhas]
 
 
-PLATAFORMAS = ("youtube", "tiktok", "instagram")
+#: As plataformas de uma conta: as de `plataformas.py`, que o CHECK do banco
+#: repete (`db_models.PLATFORMS`). As chinesas entraram na 7.10.
+PLATAFORMAS = plataformas.IDS
 
 
 def validar_conta(platform: str, handle: str, driver_pref: str = "auto",

@@ -59,6 +59,23 @@ export default function ConexaoDaConta({ conta, aplicativo, aoMudar }) {
   // Motor de antes da 7.3 não diz o estado da conexão.
   const plataforma = conta?.platform;
   if (!conexao) return null;
+  // As chinesas (7.10) não têm API de publicação para uma pessoa: publicam pelo
+  // pacote do dia, com o texto em chinês, e o programa não mede os números lá.
+  // O cartão diz o caminho e o que o cadastro da conta pede.
+  if (PLATAFORMAS[plataforma]?.chinesa) {
+    const { nome, exigencia } = PLATAFORMAS[plataforma];
+    return (
+      <div className="space-y-1.5" data-conta-chinesa={plataforma}>
+        <p className="text-muted text-[12px] leading-snug">
+          No {nome}, o programa publica pelo{' '}
+          <a href={hrefDe('/agenda')} className="text-ink2 underline underline-offset-2">pacote do dia</a>:
+          o corte e o texto prontos para colar, em chinês, com o título no tamanho do app. Depois de postar,
+          cole o link em &ldquo;já publiquei&rdquo;. Os números do post ficam só no app: o programa não os lê.
+        </p>
+        <p className="text-muted text-[12px] leading-snug">{exigencia}</p>
+      </div>
+    );
+  }
   // O Instagram, na versão simples (7.3d), publica pelo pacote do dia: a API
   // dele que não pede o vídeo num endereço público não é confiável, e ele não
   // tem post privado para testar (ver o plano). O cartão diz o caminho.

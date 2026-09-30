@@ -5,7 +5,7 @@ import IconePlataforma from './ui/IconePlataforma';
 import { Secao } from './ui/Pagina';
 import { apiFetch } from '../lib/api';
 import { CORES_DO_CANAL, IDIOMAS, NICHOS_SUGERIDOS, reduzirImagem, salvarCanal } from '../lib/canais';
-import { ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
+import { PLATAFORMAS, PRINCIPAIS, plataformasDoMotor } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 
 // Criar e editar um canal (etapa 7.1): a identidade, as contas de cada
@@ -52,6 +52,9 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
   const [idioma, setIdioma] = useState(canal?.language || 'pt-BR');
   const [aprovacao, setAprovacao] = useState(editando ? !!canal.requires_approval : null);
   const [contas, setContas] = useState(null);
+  // As plataformas que o programa deste computador conhece (7.10): o site novo
+  // com o programa de antes só oferece as três de sempre.
+  const [doMotor, setDoMotor] = useState(PRINCIPAIS);
   const [selecionadas, setSelecionadas] = useState(() => new Set((canal?.contas || []).map((c) => c.id)));
   const [novas, setNovas] = useState([]);
   const [novaPlataforma, setNovaPlataforma] = useState('youtube');
@@ -68,7 +71,10 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
       try {
         const res = await apiFetch('/api/contas');
         const data = res.ok ? await res.json() : {};
-        if (vivo) setContas(data.contas || []);
+        if (vivo) {
+          setContas(data.contas || []);
+          setDoMotor(plataformasDoMotor(data.plataformas));
+        }
       } catch {
         if (vivo) setContas([]);
       }
@@ -249,8 +255,8 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
 
       <Secao titulo="contas do canal">
         <p className="text-muted text-[13px] leading-snug">
-          O mesmo canal no YouTube, no TikTok e no Instagram: cada conta ligada é um galho por onde os
-          cortes saem. Uma conta pertence a um canal só.
+          O mesmo canal no YouTube, no TikTok, no Instagram e, se quiser, nas plataformas chinesas: cada
+          conta ligada é um galho por onde os cortes saem. Uma conta pertence a um canal só.
         </p>
         {contas === null ? (
           <Loader2 size={16} className="animate-spin text-muted" />
@@ -308,7 +314,7 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
 
         <div className="flex flex-wrap items-center gap-2">
           <div role="radiogroup" aria-label="plataforma da conta nova" className="flex rounded-full border border-rule2 p-0.5">
-            {ORDEM_DAS_PLATAFORMAS.map((p) => (
+            {doMotor.map((p) => (
               <button
                 key={p}
                 type="button"
@@ -339,6 +345,11 @@ export default function FormularioDoCanal({ canal = null, aoSalvar, aoCancelar }
             <Plus size={14} /> adicionar
           </button>
         </div>
+        {PLATAFORMAS[novaPlataforma]?.chinesa && (
+          <p className="text-muted text-[12px] leading-snug" data-exigencia={novaPlataforma}>
+            {PLATAFORMAS[novaPlataforma].exigencia} Ela publica pelo pacote do dia, com o texto em chinês.
+          </p>
+        )}
         {aviso && <p className="text-muted text-[12px]">{aviso}</p>}
         <p className="text-muted text-[12px] leading-snug">
           Ligar a conta aqui diz ao Virtu Clips que ela é deste canal. Para a conta do YouTube postar

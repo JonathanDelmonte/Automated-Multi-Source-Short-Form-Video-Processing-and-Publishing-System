@@ -210,9 +210,10 @@ export function fraseDoHorario(porHorario) {
 }
 
 // As contas do recorte que ainda não medem -- a tela diz o que fazer em vez
-// de mostrar zero.
+// de mostrar zero. Só as das plataformas que o programa mede (`ORDEM`): numa
+// chinesa (7.10) não há o que conectar.
 export function contasSemMedir(contas) {
-  return (contas || []).filter((c) => !c.medir);
+  return (contas || []).filter((c) => !c.medir && ORDEM.includes(c.platform));
 }
 
 // Quando a análise é de uma plataforma, o título dela; senão, "todas".

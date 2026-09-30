@@ -23,6 +23,8 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import plataformas
+
 from .base import PostMeta, RenderedClip
 from .manual import render_caption
 
@@ -96,10 +98,50 @@ def nome_no_zip(ordem: int, item: Item) -> str:
     A numeracao vem na frente porque a ordem importa: o passo de deteccao ja
     entrega os cortes do melhor para o pior, e essa e a ordem de publicar.
     """
-    titulo = slug(item.meta.title or item.clip.title)
+    # O titulo traduzido (7.10) e para o app; o nome do arquivo e para quem
+    # abre o ZIP, e sai do titulo original do corte -- do chines o `slug` so
+    # guardaria os numeros ("小猫1" viraria "1").
+    fontes = ((item.clip.title, item.meta.title) if item.meta.language
+              else (item.meta.title, item.clip.title))
+    titulo = next((s for s in map(slug, fontes) if s), "")
     if not titulo:
         titulo = f"corte_{item.clip.index + 1}"
     return f"{ordem:02d}_{titulo}"
+
+
+#: Como colar o .txt, por plataforma (7.10): onde o app tem um campo para o
+#: titulo e outro para o texto, a primeira linha vai num e o resto no outro. Os
+#: nomes dos campos em chines sao os que a tela do app mostra.
+COMO_COLAR = {
+    "douyin": [
+        "A primeira linha é o título (o Douyin aceita até 30 caracteres); o",
+        "resto é a descrição, com as hashtags. Não há rótulo nem cabeçalho a apagar.",
+    ],
+    "kuaishou": [
+        "O .txt é para selecionar tudo e colar no texto do post: o Kuaishou",
+        "tem um campo só. Não há rótulo nem cabeçalho a apagar.",
+    ],
+    "bilibili": [
+        "A primeira linha é o título (标题). Depois vem a descrição (简介), e a",
+        "última linha são as tags (标签): cole uma de cada vez e aperte Enter",
+        "depois de cada uma.",
+    ],
+    "xiaohongshu": [
+        "A primeira linha é o título (标题, até 20 caracteres); o resto é o",
+        "texto (正文), com as hashtags.",
+    ],
+}
+
+_COMO_COLAR_DE_SEMPRE = [
+    "O .txt é para selecionar tudo e colar. A primeira linha é o título;",
+    "o resto é a descrição. Não há rótulo nem cabeçalho a apagar.",
+]
+
+
+def sem_traducao(item: "Item", plataforma: str) -> bool:
+    """O corte cujo texto devia ir traduzido (7.10) e foi no idioma original."""
+    regra = plataformas.de(plataforma)
+    return bool(regra and regra.idioma and item.meta.language != regra.idioma)
 
 
 def leia_me(itens: list, dia: str, plataforma: str,
@@ -109,6 +151,9 @@ def leia_me(itens: list, dia: str, plataforma: str,
     exemplo_video = "  NN_titulo.mp4"
     exemplo_texto = f"  NN_titulo.{plataforma}.txt"
     coluna = max(len(exemplo_video), len(exemplo_texto)) + 4
+    regra = plataformas.de(plataforma)
+    # O Bilibili (7.10) tem tags num campo proprio, sem `#`.
+    marcas = "tags" if regra and regra.tags_no_campo else "hashtags"
     linhas = [
         f"CORTES DE {dia} — {plataforma}",
         "",
@@ -118,14 +163,26 @@ def leia_me(itens: list, dia: str, plataforma: str,
         "Para cada corte há dois arquivos com o mesmo nome:",
         "",
         f"{exemplo_video:<{coluna}}o vídeo, pronto para subir",
-        f"{exemplo_texto:<{coluna}}título, descrição e hashtags",
+        f"{exemplo_texto:<{coluna}}título, descrição e {marcas}",
         "",
-        "O .txt é para selecionar tudo e colar. A primeira linha é o título;",
-        "o resto é a descrição. Não há rótulo nem cabeçalho a apagar.",
-        "",
-        "-" * 60,
+        *COMO_COLAR.get(plataforma, _COMO_COLAR_DE_SEMPRE),
         "",
     ]
+    if regra and regra.idioma:
+        linhas += [
+            "O texto está em chinês: as IAs gratuitas do programa o traduziram do",
+            "texto original, e o app busca e recomenda por ele. O vídeo continua como",
+            "foi feito, com a fala e a legenda no idioma original.",
+            "",
+        ]
+        if any(sem_traducao(item, plataforma) for item in itens):
+            linhas += [
+                "Os cortes marcados abaixo ficaram com o texto no idioma original:",
+                "nenhuma IA de texto respondeu a tempo. Baixe o pacote de novo mais",
+                "tarde, ou traduza antes de postar.",
+                "",
+            ]
+    linhas += ["-" * 60, ""]
     for i, item in enumerate(itens, start=1):
         base = nome_no_zip(i, item)
         titulo = (item.meta.title or item.clip.title or "").strip() or "(sem título)"
@@ -137,6 +194,8 @@ def leia_me(itens: list, dia: str, plataforma: str,
             # A COPPA (etapa 7.5): pela API o programa marca sozinho; postando a
             # mao, quem marca e a pessoa, e o YouTube pergunta na hora de subir.
             linhas.append("    Canal infantil: marque \"Sim, é conteúdo para crianças\".")
+        if sem_traducao(item, plataforma):
+            linhas.append("    Texto no idioma original: a tradução não saiu.")
         linhas.append("")
     if faltando:
         linhas += [

@@ -18,7 +18,7 @@ import { apiFetch } from '../lib/api';
 import { useAplicativos } from '../lib/aplicativo';
 import { situacaoDoAplicativo } from '../lib/conexoes';
 import { apagarCanal, IDIOMAS } from '../lib/canais';
-import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
+import { DRIVERS, MEDIDAS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS, PRINCIPAIS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 import { hrefDe, ir } from '../lib/rota';
 
@@ -87,7 +87,10 @@ function VisaoGeral({ canal }) {
 
       <Secao titulo="os galhos do canal">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {ORDEM_DAS_PLATAFORMAS.map((p) => {
+          {/* O convite de ligar só nas três de sempre: as chinesas (7.10) aparecem
+              quando o canal tem conta nelas, e se ligam pelos ajustes. */}
+          {ORDEM_DAS_PLATAFORMAS.filter((p) => PRINCIPAIS.includes(p)
+            || canal.contas.some((c) => c.platform === p)).map((p) => {
             const daPlataforma = canal.contas.filter((c) => c.platform === p);
             if (daPlataforma.length === 0) {
               return (
@@ -197,7 +200,8 @@ function Ajustes({ canal }) {
 // As telas de análises do canal (etapa 7.4): a Geral (a soma) e uma por
 // plataforma ligada -- as "três telas no canal ligado" do plano.
 function AnalisesDoCanal({ canal, subaba }) {
-  const plataformas = ORDEM_DAS_PLATAFORMAS.filter((p) => canal.contas.some((c) => c.platform === p));
+  // Só as que o programa mede: as chinesas (7.10) não têm números a mostrar.
+  const plataformas = MEDIDAS.filter((p) => canal.contas.some((c) => c.platform === p));
   const atual = plataformas.includes(subaba) ? subaba : null;
   const abas = [{ id: null, rotulo: 'Geral' }, ...plataformas.map((p) => ({ id: p, rotulo: PLATAFORMAS[p].nome }))];
   return (

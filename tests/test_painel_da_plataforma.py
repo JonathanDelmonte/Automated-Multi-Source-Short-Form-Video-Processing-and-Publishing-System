@@ -405,7 +405,9 @@ def test_a_conta_do_tiktok_ganha_o_botao_nas_duas_telas():
     publicacoes = _fonte("components", "PublicacoesTab.jsx")
     canal = _fonte("pages", "Canal.jsx")
     assert "c.platform === 'youtube'" not in publicacoes
-    assert "{c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram') && (" in publicacoes
+    assert "{c.conexao && (TIPOS_DE[c.platform] || c.platform === 'instagram'" in publicacoes
+    # As chinesas (7.10) ganham o cartao que diz o caminho delas.
+    assert "|| PLATAFORMAS[c.platform]?.chinesa) && (" in publicacoes
     assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, c.platform)}" in publicacoes
     assert "aplicativo={situacaoDoAplicativo(aplicativos.prontos, p)}" in canal
 

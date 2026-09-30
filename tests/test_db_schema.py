@@ -264,6 +264,22 @@ class TestConstraints:
             "algum adapter de sources/ nao passa no CHECK de sources.adapter -- "
             "acrescente-o em db_models.Source e crie a migracao")
 
+    def test_accounts_aceita_toda_plataforma_registrada(self, banco):
+        """O CHECK de `accounts.platform` e o cadastro de `plataformas.py` nao
+        podem divergir (7.10): a plataforma que so um dos dois conhece e a
+        conta que o painel oferece e o banco recusa."""
+        import plataformas
+
+        assert db_models.PLATFORMS == plataformas.IDS
+
+        async def _t():
+            async with db.tenant() as t:
+                for plataforma in plataformas.IDS:
+                    t.add(db_models.Account(platform=plataforma, handle=f"conta-{plataforma}"))
+                await t.commit()
+                return "aceitou"
+        assert corre(_t) == "aceitou"
+
     def test_clips_recusa_fim_antes_do_inicio(self, banco):
         from sqlalchemy.exc import IntegrityError
 

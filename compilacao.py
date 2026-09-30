@@ -15,6 +15,11 @@ no meio do quadro, sobre uma copia desfocada e ampliada dele.
   assunto para outro soaria como defeito.
 - **Os capitulos sao os cortes**: cada trecho abre um capitulo com o titulo do
   corte (`capitulos.validos` aplica as regras do YouTube).
+- **Um corte re-editado no editor entra pelos trechos da edicao** (a `recipe`
+  do recut), e nao pela faixa que os cobre -- ela inclui o que a pessoa tirou.
+  Cada trecho vira um pedaco; o primeiro leva o titulo e os seguintes vem com
+  `continua`: sem escurecer entre eles e sem abrir capitulo. Os limites contam
+  CORTES, e o minimo de duracao vale para o corte inteiro.
 - **A legenda e a do projeto de origem**: as palavras da transcricao de cada
   trecho, no tempo da compilacao, e o preset deitado
   (`montagem.legenda_horizontal`). Saem dois arquivos do mesmo grafo, o limpo e
@@ -46,7 +51,13 @@ TRECHOS_MIN, TRECHOS_MAX = 2, 60
 #: Uma hora: o YouTube aceita mais, mas passar disso e outro produto (e um
 #: render de horas numa maquina sem placa).
 DURACAO_MAX_S = 3600
+#: O minimo de um corte inteiro; e o de cada pedaco de um corte re-editado
+#: (o editor ja recusa trecho abaixo de 0,5 s).
 TRECHO_MINIMO_S = 1.0
+PEDACO_MINIMO_S = 0.2
+#: Cada pedaco e uma entrada do ffmpeg: um corte re-editado conta uma por
+#: trecho da edicao (ate 12), e 60 cortes assim seriam 720 arquivos abertos.
+ENTRADAS_MAX = 120
 LARGURA, ALTURA = montagem.LARGURA_HORIZONTAL, montagem.ALTURA_HORIZONTAL
 QUADROS_POR_SEGUNDO = 30
 #: O escurecer entre dois trechos: some em 0,25 s e volta em 0,25 s.
@@ -73,26 +84,55 @@ def _numero(valor, nome: str) -> float:
         raise CompilacaoInvalida(f"{nome}: esperava um número")
 
 
+def quantos_cortes(trechos: Sequence[dict]) -> int:
+    """Quantos cortes os trechos sao: o pedaco que `continua` o anterior e do
+    mesmo corte."""
+    return sum(1 for k, t in enumerate(trechos) if k == 0 or not t.get("continua"))
+
+
 def planejar(trechos: Sequence[dict]) -> List[dict]:
-    """Os trechos na ordem, cada um com a `duracao` e o `inicio_no_video` (onde
-    ele comeca na compilacao). Cada trecho e `{arquivo, corte_inicio,
-    corte_fim, titulo, palavras}`, com as palavras ja no tempo do trecho (0 e
-    o comeco dele). Levanta `CompilacaoInvalida` com o trecho e o motivo."""
-    if len(trechos) < TRECHOS_MIN:
+    """Os trechos na ordem, cada um com a `duracao`, o `inicio_no_video` (onde
+    ele comeca na compilacao) e o `corte` (de 1 em diante). Cada trecho e
+    `{arquivo, corte_inicio, corte_fim, titulo, palavras, continua?}`, com as
+    palavras ja no tempo do trecho (0 e o comeco dele). Levanta
+    `CompilacaoInvalida` com o corte e o motivo."""
+    cortes = quantos_cortes(trechos)
+    if cortes < TRECHOS_MIN:
         raise CompilacaoInvalida(f"Escolha pelo menos {TRECHOS_MIN} cortes.")
-    if len(trechos) > TRECHOS_MAX:
+    if cortes > TRECHOS_MAX:
         raise CompilacaoInvalida(f"No máximo {TRECHOS_MAX} cortes numa compilação.")
-    plano, inicio = [], 0.0
+    if len(trechos) > ENTRADAS_MAX:
+        raise CompilacaoInvalida(
+            f"Os cortes escolhidos somam {len(trechos)} trechos (um corte re-editado conta um "
+            f"por trecho da edição); o máximo numa compilação é {ENTRADAS_MAX}. Escolha "
+            "menos cortes.")
+    plano, inicio, corte, do_corte = [], 0.0, 0, 0.0
     for k, t in enumerate(trechos):
-        corte_inicio = max(0.0, _numero(t.get("corte_inicio"), f"trecho {k + 1}"))
-        corte_fim = _numero(t.get("corte_fim"), f"trecho {k + 1}")
+        continua = k > 0 and bool(t.get("continua"))
+        if not continua:
+            if corte and do_corte < TRECHO_MINIMO_S:
+                raise CompilacaoInvalida(f"O corte {corte} tem menos de {TRECHO_MINIMO_S:g} s.")
+            corte, do_corte = corte + 1, 0.0
+        corte_inicio = max(0.0, _numero(t.get("corte_inicio"), f"corte {corte}"))
+        corte_fim = _numero(t.get("corte_fim"), f"corte {corte}")
         duracao = round(corte_fim - corte_inicio, 3)
-        if duracao < TRECHO_MINIMO_S:
-            raise CompilacaoInvalida(f"O trecho {k + 1} tem menos de {TRECHO_MINIMO_S:g} s.")
+        # Um pedaco de um corte re-editado pode ser curto; o corte inteiro nao.
+        em_pedacos = continua or (k + 1 < len(trechos)
+                                  and bool((trechos[k + 1] or {}).get("continua")))
+        if duracao <= 0 or (not em_pedacos and duracao < TRECHO_MINIMO_S):
+            raise CompilacaoInvalida(f"O corte {corte} tem menos de {TRECHO_MINIMO_S:g} s.")
+        if em_pedacos and duracao < PEDACO_MINIMO_S:
+            raise CompilacaoInvalida(
+                f"O corte {corte} tem um trecho de menos de {PEDACO_MINIMO_S:g} s.")
         plano.append({**t, "corte_inicio": corte_inicio, "corte_fim": corte_fim,
                       "duracao": duracao, "inicio_no_video": round(inicio, 3),
-                      "titulo": re.sub(r"\s+", " ", str(t.get("titulo") or "")).strip()})
+                      "continua": continua, "corte": corte,
+                      "titulo": "" if continua else
+                      re.sub(r"\s+", " ", str(t.get("titulo") or "")).strip()})
         inicio += duracao
+        do_corte += duracao
+    if do_corte < TRECHO_MINIMO_S:
+        raise CompilacaoInvalida(f"O corte {corte} tem menos de {TRECHO_MINIMO_S:g} s.")
     if inicio > DURACAO_MAX_S:
         raise CompilacaoInvalida(
             f"A compilação passaria de {DURACAO_MAX_S // 60} minutos "
@@ -155,23 +195,30 @@ def fundo(largura: int, altura: int) -> str:
             f"scale={largura}:{altura}:flags=bilinear")
 
 
-def _grafo_do_trecho(k: int, trecho: dict, largura: int, altura: int) -> list:
+def _grafo_do_trecho(k: int, trecho: dict, largura: int, altura: int,
+                     entra: bool = True, sai: bool = True) -> list:
+    """O grafo de um trecho. `entra`/`sai` escurecem o comeco e o fim: entre
+    dois cortes, sim; entre os pedacos de um corte re-editado, nao -- ali a
+    emenda e a da propria edicao."""
     d = trecho["duracao"]
     fade = min(TRANSICAO_S, d / 4)
     saida_fade = max(0.0, d - fade)
+    escurecer = ([f"fade=t=in:st=0:d={fade:.3f}"] if entra else []) + \
+        ([f"fade=t=out:st={saida_fade:.3f}:d={fade:.3f}"] if sai else [])
+    silenciar = ([f"afade=t=in:st=0:d={fade:.3f}"] if entra else []) + \
+        ([f"afade=t=out:st={saida_fade:.3f}:d={fade:.3f}"] if sai else [])
     video = (
         f"[{k}:v]fps={QUADROS_POR_SEGUNDO},setpts=PTS-STARTPTS,split=2[f{k}][b{k}]",
         f"[b{k}]{fundo(largura, altura)},setsar=1[bg{k}]",
         f"[f{k}]scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
         f"scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[fg{k}]",
         f"[bg{k}][fg{k}]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,"
-        f"trim=duration={d:.3f},"
-        f"fade=t=in:st=0:d={fade:.3f},fade=t=out:st={saida_fade:.3f}:d={fade:.3f}[v{k}]",
+        + ",".join([f"trim=duration={d:.3f}", *escurecer]) + f"[v{k}]",
     )
     if trecho.get("tem_audio", True):
         audio = (f"[{k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                 f"asetpts=PTS-STARTPTS,apad,atrim=duration={d:.3f},"
-                 f"afade=t=in:st=0:d={fade:.3f},afade=t=out:st={saida_fade:.3f}:d={fade:.3f}[a{k}]")
+                 f"asetpts=PTS-STARTPTS,apad,"
+                 + ",".join([f"atrim=duration={d:.3f}", *silenciar]) + f"[a{k}]")
     else:
         # Sem trilha de audio (raro, mas o concat exige uma por trecho): silencio.
         audio = (f"anullsrc=r=48000:cl=stereo,atrim=duration={d:.3f},"
@@ -214,7 +261,9 @@ def comando(plano: Sequence[dict], saida: str, legenda: Optional[str] = None,
                 "-i", t["arquivo"]]
     partes = []
     for k, t in enumerate(plano):
-        partes += _grafo_do_trecho(k, t, largura, altura)
+        seguinte_continua = k + 1 < len(plano) and bool(plano[k + 1].get("continua"))
+        partes += _grafo_do_trecho(k, t, largura, altura, entra=not t.get("continua"),
+                                   sai=not seguinte_continua)
     pares = "".join(f"[v{k}][a{k}]" for k in range(len(plano)))
     filtro_de_audio, audio_args = _filtro_de_audio(audio_args)
     if filtro_de_audio:

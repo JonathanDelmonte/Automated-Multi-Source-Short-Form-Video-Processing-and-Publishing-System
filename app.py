@@ -8988,7 +8988,9 @@ def _compilacao_do_projeto(job_id: str) -> Optional[dict]:
         return None
     pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_COMPILACAO) or {}
     trechos = [t for t in pedido.get("trechos") or [] if isinstance(t, dict)]
-    return {"titulo": pedido.get("titulo") or None, "trechos": len(trechos),
+    # `trechos` conta CORTES: um corte re-editado vem em varios pedacos.
+    return {"titulo": pedido.get("titulo") or None,
+            "trechos": compilacao.quantos_cortes(trechos),
             "projetos": len({t.get("job_id") for t in trechos if t.get("job_id")}),
             "duracao_s": pedido.get("duracao_s")}
 
@@ -9026,10 +9028,27 @@ def _palavras_do_trecho(transcricao: Optional[dict], inicio: float, fim: float) 
     return saida
 
 
-def _trecho_do_corte(job_id: str, indice: int) -> dict:
-    """Um corte como trecho da compilacao: da ORIGEM deitada quando ela ainda
-    esta no disco, ou o proprio corte vertical (o limpo, sem legenda nem
-    gancho). Levanta 400 dizendo qual corte e por que."""
+def _recorte_limpo(pasta: str, limpo: str) -> Optional[str]:
+    """O arquivo da ultima re-edicao de um corte no editor, SEM legenda nem
+    gancho (`recut_<ts>_<id>_<limpo>`; os derivados comecam por `subtitled_`
+    e `hooked_`), ou None."""
+    try:
+        achados = glob.glob(os.path.join(pasta, f"recut_*_{glob.escape(limpo)}"))
+    except Exception:
+        return None
+    return max(achados, key=os.path.getmtime) if achados else None
+
+
+def _trechos_do_corte(job_id: str, indice: int) -> list:
+    """Um corte como trechos da compilacao: da ORIGEM deitada quando ela ainda
+    esta no disco, ou do proprio corte vertical (o limpo, sem legenda nem
+    gancho). Levanta 400 dizendo qual corte e por que.
+
+    **Um corte re-editado no editor entra pelos trechos da edicao** (a
+    `recipe`), e nao pela faixa `start`/`end` -- ela so COBRE os trechos, e
+    inclui o que a pessoa tirou. Da origem, um pedaco por trecho; sem ela, o
+    arquivo limpo da edicao, ou o corte limpo original nos trechos que cabem
+    nele. O primeiro pedaco leva o titulo; os seguintes, `continua`."""
     pasta = os.path.join(OUTPUT_DIR, job_id)
     metas = glob.glob(os.path.join(pasta, "*_metadata.json"))
     try:
@@ -9048,23 +9067,51 @@ def _trecho_do_corte(job_id: str, indice: int) -> dict:
         raise HTTPException(status_code=400, detail=(
             f"“{titulo or 'Este vídeo'}” já é um vídeo longo: ele não entra numa compilação."))
     try:
-        inicio, fim = float(clip.get("start") or 0), float(clip.get("end") or 0)
-    except (TypeError, ValueError):
-        inicio, fim = 0.0, 0.0
-    base = {"job_id": job_id, "clip": indice, "titulo": titulo,
-            "palavras": _palavras_do_trecho(data.get("transcript"), inicio, fim)}
+        segmentos, faixa = _clip_recipe_parts(clip)
+        segmentos = [{"start": float(x["start"]), "end": float(x["end"])} for x in segmentos
+                     if float(x["end"]) > float(x["start"])]
+        faixa = {"start": float(faixa["start"]), "end": float(faixa["end"])}
+    except (KeyError, TypeError, ValueError):
+        segmentos, faixa = [], {"start": 0.0, "end": 0.0}
+    if not segmentos:
+        raise HTTPException(status_code=400, detail=(
+            f"O corte {indice + 1} (“{titulo or 'sem título'}”) não tem duração."))
+    transcricao = data.get("transcript")
+
+    def pedaco(k, arquivo, inicio, fim, palavras, vertical):
+        return {"job_id": job_id, "clip": indice, "titulo": titulo if k == 0 else "",
+                "continua": k > 0, "palavras": palavras, "arquivo": os.path.abspath(arquivo),
+                "corte_inicio": round(max(0.0, inicio), 3), "corte_fim": round(fim, 3),
+                "vertical": vertical}
+
     origem = None if _e_criacao(job_id) else _locate_source(job_id)
-    if origem and fim > inicio:
-        return {**base, "arquivo": os.path.abspath(origem), "corte_inicio": inicio,
-                "corte_fim": fim, "vertical": False}
+    if origem:
+        return [pedaco(k, origem, x["start"], x["end"],
+                       _palavras_do_trecho(transcricao, x["start"], x["end"]), False)
+                for k, x in enumerate(segmentos)]
     nome_base = os.path.basename(metas[0]).replace("_metadata.json", "")
-    limpo = os.path.join(pasta, f"{nome_base}_clip_{indice + 1}.mp4")
+    limpo_nome = f"{nome_base}_clip_{indice + 1}.mp4"
+    if (clip.get("recipe") or {}).get("segments"):
+        editado = _recorte_limpo(pasta, limpo_nome)
+        if editado:
+            total = recut.total_duration(segmentos)
+            virtual = recut.virtual_transcript(transcricao or {}, segmentos)
+            return [pedaco(0, editado, 0.0, total, _palavras_do_trecho(virtual, 0.0, total),
+                           True)]
+    limpo = os.path.join(pasta, limpo_nome)
     if not os.path.isfile(limpo):
         raise HTTPException(status_code=400, detail=(
             f"O corte {indice + 1} (“{titulo or 'sem título'}”) não tem mais o vídeo de "
             "origem nem o arquivo do corte."))
-    return {**base, "arquivo": os.path.abspath(limpo), "corte_inicio": 0.0,
-            "corte_fim": max(0.0, fim - inicio), "vertical": True}
+    if not recut.within_range(segmentos, faixa["start"], faixa["end"]):
+        raise HTTPException(status_code=400, detail=(
+            f"O corte {indice + 1} (“{titulo or 'sem título'}”) foi re-editado com trechos "
+            "fora do corte original, e nem o vídeo de origem nem o arquivo da edição estão "
+            "mais no disco."))
+    no_arquivo = recut.rebase_segments(segmentos, faixa["start"], faixa["end"])
+    return [pedaco(k, limpo, r["start"], r["end"],
+                   _palavras_do_trecho(transcricao, x["start"], x["end"]), True)
+            for k, (x, r) in enumerate(zip(segmentos, no_arquivo))]
 
 
 def _comando_da_compilacao(pasta: str) -> list:
@@ -9140,7 +9187,7 @@ async def criar_compilacao(request: Request):
             raise HTTPException(status_code=404, detail="Projeto nao encontrado")
         # O corte de outro tenant e 404, como em toda rota de projeto.
         await _assert_job_owner(request, registro)
-        trechos.append(_trecho_do_corte(job_id_do_corte, indice))
+        trechos.extend(_trechos_do_corte(job_id_do_corte, indice))
     try:
         plano = compilacao.planejar(trechos)
     except compilacao.CompilacaoInvalida as e:
@@ -9159,14 +9206,16 @@ async def criar_compilacao(request: Request):
     os.makedirs(pasta, exist_ok=True)
     total = compilacao.duracao_total(plano)
     projetos = len({t["job_id"] for t in plano})
+    n_cortes = compilacao.quantos_cortes(plano)
     pedido = {"titulo": titulo, "descricao": descricao, "legenda": legenda,
               "canal_id": (canal or {}).get("id"), "idioma": idioma, "hashtags": [],
               "creditos": creditos, "duracao_s": total,
               "trechos": [{k: t[k] for k in ("job_id", "clip", "arquivo", "corte_inicio",
-                                             "corte_fim", "titulo", "palavras", "vertical")}
+                                             "corte_fim", "titulo", "palavras", "vertical",
+                                             "continua")}
                           for t in plano]}
     source_id = await job_registry.registrar_fonte(
-        adapter="compilacao", entrada=f"compilação: {len(plano)} cortes de {projetos} projeto(s)")
+        adapter="compilacao", entrada=f"compilação: {n_cortes} cortes de {projetos} projeto(s)")
     if source_id and await job_registry.registrar_job(job_id, source_id) and canal:
         await canais.ligar_job(job_id, canal["id"])
     # O pedido na pasta e a fila, sem `await` entre os dois (o motivo do
@@ -9176,10 +9225,10 @@ async def criar_compilacao(request: Request):
     _gravar_tenant_do_job(pasta, tenant_id)
     if canal:
         _gravar_canal_do_job(pasta, canal["id"])
-    print(f"🎬 [compilacao] job={job_id} {len(plano)} cortes de {projetos} projeto(s), "
+    print(f"🎬 [compilacao] job={job_id} {n_cortes} cortes de {projetos} projeto(s), "
           f"{total:.0f}s")
     _enfileirar_compilacao(job_id, pasta, tenant_id, (canal or {}).get("id"), [
-        f"Compilação na fila: {len(plano)} cortes de {projetos} projeto(s), "
+        f"Compilação na fila: {n_cortes} cortes de {projetos} projeto(s), "
         f"{capitulos.tempo(total)} de vídeo."])
     return {"job_id": job_id, "status": "queued", "duracao_s": total}
 
@@ -9208,9 +9257,11 @@ async def cortes_do_projeto(job_id: str, request: Request):
     for i, clip in enumerate(data.get("shorts") or []):
         if not isinstance(clip, dict):
             continue
+        # A duracao do corte re-editado e a soma dos trechos da edicao, e nao a
+        # faixa que os cobre: e o que ele leva para a compilacao.
         try:
-            duracao = max(0.0, float(clip.get("end") or 0) - float(clip.get("start") or 0))
-        except (TypeError, ValueError):
+            duracao = max(0.0, recut.total_duration(_clip_recipe_parts(clip)[0]))
+        except (KeyError, TypeError, ValueError):
             duracao = 0.0
         arquivo = _canonical_clip_file(pasta, base, i)
         if not os.path.isfile(os.path.join(pasta, arquivo)):

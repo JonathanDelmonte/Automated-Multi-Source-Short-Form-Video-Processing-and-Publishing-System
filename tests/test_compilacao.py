@@ -32,13 +32,51 @@ def test_o_plano_poe_cada_trecho_depois_do_anterior():
 @pytest.mark.parametrize("trechos,trecho", [
     ([_trecho(0, 10)], "pelo menos 2"),
     ([_trecho(0, 10)] * 61, "No máximo 60"),
-    ([_trecho(0, 10), _trecho(5, 5.5)], "O trecho 2 tem menos de 1 s"),
-    ([_trecho(0, 10), _trecho("x", 5)], "trecho 2: esperava um número"),
+    ([_trecho(0, 10), _trecho(5, 5.5)], "O corte 2 tem menos de 1 s"),
+    ([_trecho(0, 10), _trecho("x", 5)], "corte 2: esperava um número"),
     ([_trecho(0, 1900), _trecho(0, 1900)], "passaria de 60 minutos"),
+    # Os limites contam CORTES: tres pedacos de um corte re-editado sao um.
+    ([_trecho(0, 5), _trecho(8, 9, continua=True), _trecho(12, 20, continua=True)],
+     "pelo menos 2"),
+    # O corte re-editado inteiro tem de ter 1 s; o pedaco, 0,2 s.
+    ([_trecho(0, 10), _trecho(0, 0.4), _trecho(3, 3.4, continua=True)], "O corte 2 tem menos de 1 s"),
+    ([_trecho(0, 10), _trecho(0, 5), _trecho(8, 8.1, continua=True)],
+     "O corte 2 tem um trecho de menos de 0.2 s"),
+    ([_trecho(0, 10), _trecho(0, 10)] + [_trecho(0, 1, continua=True)] * 119,
+     "somam 121 trechos"),
 ])
-def test_o_plano_torto_diz_o_trecho(trechos, trecho):
+def test_o_plano_torto_diz_o_corte(trechos, trecho):
     with pytest.raises(compilacao.CompilacaoInvalida, match=trecho):
         compilacao.planejar(trechos)
+
+
+def test_o_corte_re_editado_entra_pelos_trechos_da_edicao():
+    """Um corte re-editado no editor vem em pedacos: o primeiro com o titulo,
+    os seguintes com `continua`. Um capitulo por corte, e escuro so entre dois
+    cortes -- dentro do corte, a emenda e a da propria edicao."""
+    plano = compilacao.planejar([
+        _trecho(10, 22, "Um", arquivo="a.mp4"),
+        _trecho(30, 36, "Dois", arquivo="b.mp4"),
+        _trecho(50, 56, "ignorado", arquivo="b.mp4", continua=True),
+        _trecho(0, 12, "Três", arquivo="c.mp4")])
+    assert [(t["corte"], t["continua"], t["titulo"], t["inicio_no_video"]) for t in plano] == \
+        [(1, False, "Um", 0.0), (2, False, "Dois", 12.0), (2, True, "", 18.0),
+         (3, False, "Três", 24.0)]
+    assert compilacao.quantos_cortes(plano) == 3
+    assert compilacao.capitulos_do_plano(plano) == [(0, "Um"), (12, "Dois"), (24, "Três")]
+    # O primeiro trecho de um plano nunca "continua" um anterior que nao existe.
+    assert compilacao.planejar([_trecho(0, 5, continua=True), _trecho(0, 5)])[0]["continua"] is False
+
+    grafo = compilacao.comando(plano, "s.mp4")
+    grafo = grafo[grafo.index("-filter_complex") + 1].split(";")
+    video = {int(re.search(r"\[v(\d+)\]$", g).group(1)): g for g in grafo if re.search(r"\[v\d+\]$", g)}
+    audio = {int(re.search(r"\[a(\d+)\]$", g).group(1)): g for g in grafo if re.search(r"\[a\d+\]$", g)}
+    # Entre dois cortes, escurece e silencia; entre os pedacos do corte 2, nao.
+    assert "fade=t=in" in video[0] and "fade=t=out" in video[0]
+    assert "fade=t=in" in video[1] and "fade=t=out" not in video[1]
+    assert "fade=t=in" not in video[2] and "fade=t=out" in video[2]
+    assert "afade=t=out" not in audio[1] and "afade=t=in" not in audio[2]
+    assert "afade=t=in" in audio[3] and "afade=t=out" in audio[3]
 
 
 def test_os_capitulos_sao_os_cortes():
@@ -231,9 +269,45 @@ def test_o_trecho_que_sumiu_para_o_job_dizendo_qual(ffmpeg, tmp_path):
         {"arquivo": deitada, "corte_inicio": 0, "corte_fim": 2, "titulo": "Fica"},
         {"arquivo": str(fontes / "apagado.mp4"), "corte_inicio": 0, "corte_fim": 2,
          "titulo": "Sumiu"}])
-    with pytest.raises(compilar_video.CompilacaoFalhou, match="O trecho 2 .*Sumiu"):
+    with pytest.raises(compilar_video.CompilacaoFalhou, match="O corte 2 .*Sumiu"):
         compilar_video.compilar(str(pasta))
     assert not (pasta / "compilacao_metadata.json").exists()
+
+
+def test_o_corte_re_editado_sai_em_pedacos_de_verdade(ffmpeg, tmp_path, capsys):
+    """O corte re-editado (dois trechos da mesma origem, com o meio tirado)
+    sai com a duracao dos trechos, e nao da faixa que os cobre; o pedaco que
+    sumiu fala do corte dele."""
+    fontes = tmp_path / "fontes"
+    fontes.mkdir()
+    deitada = _fonte(fontes, "deitada.mp4", "640x360", 6)
+    pasta = tmp_path / "job"
+    pasta.mkdir()
+    _pedido(pasta, [
+        {"arquivo": deitada, "corte_inicio": 0, "corte_fim": 2, "titulo": "Inteiro"},
+        {"arquivo": deitada, "corte_inicio": 2.5, "corte_fim": 3.5, "titulo": "Editado"},
+        {"arquivo": deitada, "corte_inicio": 5, "corte_fim": 6, "titulo": "", "continua": True},
+    ], legenda="nenhuma")
+    job_metrics.reset(str(pasta), compilacao.BASE)
+    entregue = compilar_video.compilar(str(pasta))
+    saida = capsys.readouterr().out
+    assert "🎬 2 cortes em 3 trechos" in saida and "do mesmo corte (re-editado)" in saida
+    _, sonda = _medidas(str(pasta / entregue))
+    assert sonda["duracao"] == pytest.approx(4.0, abs=0.15)      # 2 + 1 + 1, e nao 2 + 3,5
+    meta = json.loads((pasta / "compilacao_metadata.json").read_text(encoding="utf-8"))
+    assert meta["shorts"][0]["compilacao"] == {"cortes": 2, "trechos": 3}
+    assert [(t["corte"], t["continua"]) for t in meta["compilacao"]["trechos"]] == \
+        [(1, False), (2, False), (2, True)]
+
+    outra = tmp_path / "outra"
+    outra.mkdir()
+    _pedido(outra, [
+        {"arquivo": deitada, "corte_inicio": 0, "corte_fim": 2, "titulo": "Inteiro"},
+        {"arquivo": deitada, "corte_inicio": 2.5, "corte_fim": 3.5, "titulo": "Editado"},
+        {"arquivo": str(fontes / "apagado.mp4"), "corte_inicio": 0, "corte_fim": 1,
+         "titulo": "", "continua": True}])
+    with pytest.raises(compilar_video.CompilacaoFalhou, match="O corte 2 .“Editado”"):
+        compilar_video.compilar(str(outra))
 
 
 def test_main_diz_o_erro_e_sai_com_1(tmp_path, capsys):

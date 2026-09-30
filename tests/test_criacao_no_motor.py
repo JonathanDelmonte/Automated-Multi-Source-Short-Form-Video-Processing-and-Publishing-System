@@ -472,6 +472,25 @@ class TestOEpisodio:
         r = _chama("POST", "/api/criacoes", {**base, "historia": "O Bento no mar"})
         assert r.status_code == 200 and r.json()["episodio"] == 1
 
+    def test_apagar_o_episodio_parado_destrava_a_historia(self, ambiente):
+        """A tela manda "continue (ou apague) esse episodio": apagar o projeto
+        leva a linha de `creations` junto (o CASCADE da FK composta com
+        `jobs`), e a historia volta a aceitar o proximo -- com o numero do que
+        sobrou, e nao pulando o apagado."""
+        canal, estilo, pid = self._pronto(ambiente)
+        base = {"channel_id": canal["id"], "formato": "longo", "duracao_min": 2,
+                "historia": "A Lulu na floresta"}
+        primeiro = _chama("POST", "/api/criacoes", base).json()["job_id"]
+        self._terminar(ambiente, primeiro, "A chegada", "Resumo.", "A Lulu na floresta", 1)
+        parado = _chama("POST", "/api/criacoes", base).json()["job_id"]
+        assert _chama("POST", "/api/criacoes", base).status_code == 400
+
+        r = _chama("DELETE", f"/api/jobs/{parado}")
+        assert r.status_code == 200, r.text
+        r = _chama("POST", "/api/criacoes", base)
+        assert r.status_code == 200, r.text
+        assert r.json()["episodio"] == 2
+
     def test_a_cota_do_episodio_conta_as_cenas_da_duracao(self, ambiente, monkeypatch):
         canal, estilo, pid = self._pronto(ambiente)
         # A ficha da Lulu ja gastou uma imagem; sobram umas 10.

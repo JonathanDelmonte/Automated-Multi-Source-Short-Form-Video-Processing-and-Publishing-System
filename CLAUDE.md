@@ -3080,6 +3080,16 @@ formato `longo` do `criar_video.py`; etapa 7.8):
   o `loudnorm` DENTRO do grafo (`_filtro_de_audio`) -- o ffmpeg recusa `-af`
   num audio que sai de `-filter_complex`. Com legenda, `split` no video e
   `asplit` no audio: um rotulo so vai a uma saida.
+- **Um corte re-editado no editor entra pelos trechos da edicao**
+  (`_trechos_do_corte`, pela `recipe`), e nao pela faixa `start`/`end`: o
+  recut grava ali a faixa que COBRE os trechos, com o que a pessoa tirou do
+  meio. Da origem, um pedaco por trecho; sem ela, o arquivo limpo da edicao
+  (`_recorte_limpo`: `recut_*`, nunca o `subtitled_`), ou o corte limpo
+  original nos trechos que cabem nele. O pedaco seguinte vem com `continua`:
+  sem escurecer entre eles e sem abrir capitulo. Os limites (2 a 60) contam
+  CORTES (`compilacao.quantos_cortes`), o minimo de 1 s vale para o corte
+  inteiro, e `ENTRADAS_MAX` (120) segura quantos arquivos o ffmpeg abre. O
+  `/api/jobs/{id}/cortes` da a duracao da edicao, que e a que a tela soma.
 - **A legenda da compilacao e a transcricao dos projetos**: as palavras de cada
   corte, no tempo da compilacao (`transcricao_do_plano`), no preset deitado
   (`montagem.legenda_horizontal`: o ASS mede a letra pela altura, e o preset do

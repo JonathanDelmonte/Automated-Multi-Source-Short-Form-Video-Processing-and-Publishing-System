@@ -819,7 +819,9 @@ acertos: o pacote do dia do TikTok e do Instagram levava os vídeos longos (e o
 botão contava com eles); o canal inteiro aparecia como destino do vídeo longo
 com "TikTok, Instagram, YouTube" no nome; a linha do estilo na tela do episódio
 dizia a duração do vídeo curto ("60 s · 8 cenas") ao lado da escolhida; e "1
-cortes". **O que falta ver no PC do autor**: um episódio de verdade (as imagens
+cortes". Na revisão do código saiu um quinto: um corte re-editado no editor
+(com um pedaço do meio tirado) entrava na compilação inteiro, com o que a pessoa
+tinha tirado — agora ele entra pelos trechos da edição. **O que falta ver no PC do autor**: um episódio de verdade (as imagens
 deitadas, a voz em blocos sem emenda aparente, a história continuando no
 episódio 2) e uma compilação subindo para o YouTube com os capítulos na barra do
 vídeo. O roteiro está no `COMO-EXECUTAR.md`, Passo 16.

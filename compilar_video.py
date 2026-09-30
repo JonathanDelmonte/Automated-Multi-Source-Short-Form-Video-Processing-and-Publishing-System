@@ -62,14 +62,19 @@ def conferir_trechos(pedido: dict) -> list:
     que passa do fim do arquivo encolhe ate o fim, e o arquivo sem trilha de
     audio entra com silencio. Um arquivo que sumiu para o job."""
     trechos = []
+    corte, titulo = 0, ""
     for k, t in enumerate(pedido.get("trechos") or []):
         if not isinstance(t, dict):
             raise CompilacaoFalhou(f"O trecho {k + 1} do pedido esta torto.")
+        # O pedaco de um corte re-editado (`continua`) e do mesmo corte: a
+        # frase fala do corte, que e o que a pessoa escolheu.
+        if k == 0 or not t.get("continua"):
+            corte, titulo = corte + 1, t.get("titulo") or ""
         arquivo = str(t.get("arquivo") or "")
         if not os.path.isfile(arquivo):
             raise CompilacaoFalhou(
-                f"O trecho {k + 1} (“{t.get('titulo') or 'sem título'}”) não está mais no "
-                "disco: o vídeo de origem e o corte foram apagados. Refaça a compilação sem ele.")
+                f"O corte {corte} (“{titulo or 'sem título'}”) não está mais no disco: o "
+                "vídeo de origem e o corte foram apagados. Refaça a compilação sem ele.")
         sonda = compilacao.sondar(arquivo)
         t = dict(t)
         if sonda["duracao"]:
@@ -111,12 +116,13 @@ def metadata(pedido: dict, plano: list, arquivo: str, transcricao: dict) -> dict
             pedido.get("hashtags") or []),
         "formato": "longo",
         "capitulos": [{"inicio": t, "titulo": n} for t, n in lista],
-        "compilacao": {"trechos": len(plano)},
+        "compilacao": {"cortes": compilacao.quantos_cortes(plano), "trechos": len(plano)},
     }
     return {"shorts": [video], "transcript": transcricao,
             "compilacao": {
                 "titulo": titulo, "arquivo": arquivo, "canal_id": pedido.get("canal_id"),
                 "trechos": [{"job_id": t.get("job_id"), "clip": t.get("clip"),
+                             "corte": t.get("corte"), "continua": bool(t.get("continua")),
                              "titulo": t["titulo"], "inicio": t["inicio_no_video"],
                              "duracao": t["duracao"], "vertical": bool(t.get("vertical"))}
                             for t in plano]}}
@@ -134,9 +140,14 @@ def compilar(pasta: str) -> str:
         plano = conferir_trechos(pedido)
         total = compilacao.duracao_total(plano)
         job_metrics.fact("spoken_seconds", total)
-        print(f"🎬 {len(plano)} trechos, {capitulos.tempo(total)} no total:")
+        cortes = compilacao.quantos_cortes(plano)
+        em_pedacos = f" em {len(plano)} trechos" if len(plano) > cortes else ""
+        print(f"🎬 {cortes} cortes{em_pedacos}, {capitulos.tempo(total)} no total:")
         for t in plano:
             origem = "do corte vertical" if t.get("vertical") else "da origem"
+            if t.get("continua"):
+                print(f"      + {t['duracao']:.1f}s do mesmo corte (re-editado), {origem}")
+                continue
             print(f"   {capitulos.tempo(t['inicio_no_video'])} {t['titulo'] or 'sem título'} "
                   f"({t['duracao']:.1f}s, {origem})")
 

@@ -246,3 +246,76 @@ def test_os_cortes_de_um_projeto_para_escolher(ambiente):
     sem = _projeto(ambiente, com_origem=False)
     assert _chama("GET", f"/api/jobs/{sem}/cortes").json()["origem"] is False
     assert _chama("GET", f"/api/jobs/{uuid.uuid4()}/cortes").status_code == 404
+
+
+def _re_editar(ambiente, job_id, indice, segmentos, faixa):
+    """O que o editor (recut) deixa no metadata: a faixa que COBRE os trechos
+    em `start`/`end`, e os trechos de verdade na `recipe`."""
+    meta = ambiente["saida"] / job_id / "v_metadata.json"
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    data["shorts"][indice].update({
+        "start": min(a for a, _ in segmentos), "end": max(b for _, b in segmentos),
+        "recipe": {"v": 1, "segments": [{"start": a, "end": b} for a, b in segmentos],
+                   "canonical_range": {"start": faixa[0], "end": faixa[1]}}})
+    meta.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_o_corte_re_editado_entra_pelos_trechos_da_edicao(ambiente):
+    """A faixa `start`/`end` de um corte re-editado cobre os trechos -- e o que
+    a pessoa tirou do meio. Da origem, sai um pedaco por trecho da edicao."""
+    job_id = _projeto(ambiente)
+    _re_editar(ambiente, job_id, 1, [(40.0, 45.0), (60.0, 70.0)], (40.0, 70.0))
+    dados = _chama("GET", f"/api/jobs/{job_id}/cortes").json()
+    assert [c["duracao_s"] for c in dados["cortes"]] == [15.0, 15.0]     # e nao 30
+    r = _chama("POST", "/api/compilacoes", {"titulo": "T", "cortes": [
+        {"job_id": job_id, "clip": 0}, {"job_id": job_id, "clip": 1}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["duracao_s"] == 15 + 5 + 10
+    a, b, c = _pedido(ambiente, r.json()["job_id"])["trechos"]
+    assert (a["continua"], a["titulo"]) == (False, "O começo")
+    assert (b["corte_inicio"], b["corte_fim"], b["continua"], b["titulo"]) == \
+        (40.0, 45.0, False, "A virada")
+    assert (c["corte_inicio"], c["corte_fim"], c["continua"], c["titulo"]) == \
+        (60.0, 70.0, True, "")
+    assert b["palavras"] == [{"word": " depois", "start": 0.0, "end": 0.5}]
+    lista = {j["job_id"]: j for j in _chama("GET", "/api/jobs").json()["jobs"]}
+    assert lista[r.json()["job_id"]]["compilacao"]["trechos"] == 2       # dois cortes
+    assert "2 cortes de 1 projeto(s)" in app_module.jobs[r.json()["job_id"]]["logs"][0]
+
+
+def test_o_corte_re_editado_sem_a_origem(ambiente):
+    """Sem a origem: o arquivo limpo da edicao, se ele esta no disco; senao o
+    corte limpo original, nos trechos que cabem nele; e, se a edicao saiu do
+    corte original, a frase diz por que nao da."""
+    job_id = _projeto(ambiente, com_origem=False)
+    pasta = ambiente["saida"] / job_id
+    _re_editar(ambiente, job_id, 0, [(10.0, 12.0), (20.0, 25.0)], (10.0, 25.0))
+    (pasta / "recut_1790000000_abc123_v_clip_1.mp4").write_bytes(b"\x00" * 64)
+    (pasta / "subtitled_1790000001_recut_1790000000_abc123_v_clip_1.mp4").write_bytes(b"\x00")
+    r = _chama("POST", "/api/compilacoes", {"titulo": "T", "cortes": [
+        {"job_id": job_id, "clip": 0}, {"job_id": job_id, "clip": 1}]})
+    assert r.status_code == 200, r.text
+    editado, outro = _pedido(ambiente, r.json()["job_id"])["trechos"]
+    # O limpo da edicao (nunca o legendado), inteiro: 2 s + 5 s.
+    assert editado["arquivo"] == str(pasta / "recut_1790000000_abc123_v_clip_1.mp4")
+    assert (editado["corte_inicio"], editado["corte_fim"], editado["vertical"]) == (0.0, 7.0, True)
+    assert [w["word"] for w in editado["palavras"]] == [" ola", " mundo"]
+    assert outro["arquivo"] == str(pasta / "v_clip_2.mp4") and outro["continua"] is False
+
+    # Sem o arquivo da edicao: o corte limpo original, com o tempo dele.
+    (pasta / "recut_1790000000_abc123_v_clip_1.mp4").unlink()
+    r = _chama("POST", "/api/compilacoes", {"titulo": "T", "cortes": [
+        {"job_id": job_id, "clip": 0}, {"job_id": job_id, "clip": 1}]})
+    assert r.status_code == 200, r.text
+    a, b, _ = _pedido(ambiente, r.json()["job_id"])["trechos"]
+    assert a["arquivo"] == b["arquivo"] == str(pasta / "v_clip_1.mp4")
+    assert [(t["corte_inicio"], t["corte_fim"], t["continua"]) for t in (a, b)] == \
+        [(0.0, 2.0, False), (10.0, 15.0, True)]
+    assert a["palavras"][0]["word"] == " ola" and a["palavras"][0]["start"] == pytest.approx(0.2)
+
+    # A edicao que saiu do corte original precisa da origem ou do arquivo dela.
+    _re_editar(ambiente, job_id, 0, [(5.0, 12.0)], (10.0, 25.0))
+    r = _chama("POST", "/api/compilacoes", {"titulo": "T", "cortes": [
+        {"job_id": job_id, "clip": 0}, {"job_id": job_id, "clip": 1}]})
+    assert r.status_code == 400 and "re-editado com trechos fora do corte original" in \
+        r.json()["detail"]

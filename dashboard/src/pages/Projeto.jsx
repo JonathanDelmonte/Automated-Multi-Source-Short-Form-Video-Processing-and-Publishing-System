@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, ListVideo, Loader2, Play, Plus, Send, Terminal, Wand2 } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, Download, Film, FolderOpen, ListVideo, Loader2, Play, Plus, RotateCcw, Send, Terminal, Wand2 } from 'lucide-react';
 import ResultCard from '../components/ResultCard';
+import VideoLongo from '../components/longo/VideoLongo';
 import ProcessingAnimation from '../components/ProcessingAnimation';
 import ClipEditor from '../components/ClipEditor';
 import ReframeEditor from '../components/ReframeEditor';
@@ -13,7 +14,7 @@ import { seloDaIA } from '../lib/seloDaIA';
 import { midiaDoProjeto } from '../lib/processar';
 import { comCorteTrocado, corteDoIndice, indiceDoCorte, naOrdemDaTela } from '../lib/cortes';
 import { textoDaSerie } from '../lib/serie';
-import { continuarCriacao } from '../lib/criacaoNoMotor';
+import { continuarCriacao, refazerCompilacao } from '../lib/criacaoNoMotor';
 import { usePainel } from '../lib/painel';
 import { hrefDe } from '../lib/rota';
 
@@ -83,6 +84,9 @@ export default function Projeto({ jobId }) {
   // Não há vídeo de origem para mostrar, e quem falhou pode continuar de onde
   // parou (o roteiro, as imagens e a voz prontos ficam na pasta).
   const [criacao, setCriacao] = useState(null);
+  // A compilação dos cortes (7.8), quando o projeto é uma: o título e de
+  // quantos cortes e projetos ela é feita. Também não tem vídeo de origem.
+  const [compilacao, setCompilacao] = useState(null);
   const [continuando, setContinuando] = useState(false);
   const [erroAoContinuar, setErroAoContinuar] = useState(null);
   const [publicando, setPublicando] = useState(false);
@@ -126,6 +130,7 @@ export default function Projeto({ jobId }) {
     if ('channel_id' in data) setCanalId(data.channel_id || null);
     if ('serie' in data) setSerie(data.serie || null);
     if ('criacao' in data) setCriacao(data.criacao || null);
+    if ('compilacao' in data) setCompilacao(data.compilacao || null);
     setStage(data.stage_index
       ? { label: data.stage_label, index: data.stage_index, total: data.stage_total }
       : null);
@@ -160,6 +165,7 @@ export default function Projeto({ jobId }) {
         if (data.result) setResults(data.result);
         if ('serie' in data) setSerie(data.serie || null);
         if ('criacao' in data) setCriacao(data.criacao || null);
+        if ('compilacao' in data) setCompilacao(data.compilacao || null);
         if (data.stage_index) {
           setStage({ label: data.stage_label, index: data.stage_index, total: data.stage_total });
         }
@@ -214,7 +220,8 @@ export default function Projeto({ jobId }) {
   const continuar = useCallback(async () => {
     setContinuando(true);
     setErroAoContinuar(null);
-    const r = await continuarCriacao(jobId);
+    // A compilação (7.8) é montada de novo inteira: não há cota a poupar.
+    const r = await (compilacao ? refazerCompilacao(jobId) : continuarCriacao(jobId));
     setContinuando(false);
     if (!r.ok) {
       setErroAoContinuar(r.erro);
@@ -222,7 +229,7 @@ export default function Projeto({ jobId }) {
     }
     setStage(null);
     setStatus('processing');
-  }, [jobId]);
+  }, [jobId, compilacao]);
 
   const handleCopyLogs = useCallback(async () => {
     try {
@@ -333,8 +340,17 @@ export default function Projeto({ jobId }) {
   };
 
   const doCanal = canalId ? canais.porId[canalId] : null;
-  const tipoDoNovo = criacao ? 'ia' : serie ? 'serie' : 'cortes';
-  const novoHref = hrefDe(`/criar/${tipoDoNovo}${canalId ? `?canal=${canalId}` : ''}`);
+  // O vídeo longo (7.8): o episódio de IA, a compilação, ou um corte marcado
+  // `formato: longo` no metadata. Ele é horizontal e tem o cartão próprio.
+  const longo = Boolean(compilacao) || criacao?.formato === 'longo'
+    || Boolean(results?.clips?.some((c) => c?.formato === 'longo'));
+  const tipoDoNovo = longo ? 'longo' : criacao ? 'ia' : serie ? 'serie' : 'cortes';
+  const buscaDoNovo = [compilacao ? 'modo=cortes' : null, canalId ? `canal=${canalId}` : null]
+    .filter(Boolean).join('&');
+  const novoHref = hrefDe(`/criar/${tipoDoNovo}${buscaDoNovo ? `?${buscaDoNovo}` : ''}`);
+  // "Vídeo longo com estes cortes": a compilação com os cortes deste projeto já
+  // escolhidos, na ordem dele.
+  const compilarHref = hrefDe(`/criar/longo?modo=cortes&projeto=${jobId}${canalId ? `&canal=${canalId}` : ''}`);
   const editando = editingClip !== null ? corteDoIndice(results?.clips, editingClip) : null;
   const reenquadrando = reframingClip !== null ? corteDoIndice(results?.clips, reframingClip) : null;
   const faltando = serie?.faltando || [];
@@ -406,7 +422,7 @@ export default function Projeto({ jobId }) {
           <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2">
             <h2 className="text-sm font-medium text-ink lowercase flex items-center gap-2">
               <Activity className={`text-brass ${status === 'processing' ? 'animate-pulse' : ''}`} size={18} />
-              {criacao ? 'criação' : 'análise ao vivo'}
+              {criacao ? 'criação' : compilacao ? 'compilação' : 'análise ao vivo'}
             </h2>
             <span className={selo.classe}>{selo.texto}</span>
           </div>
@@ -419,13 +435,36 @@ export default function Projeto({ jobId }) {
                 <Wand2 size={15} className="text-brass shrink-0" />
                 <span className="truncate">{criacao.titulo || 'vídeo criado por IA'}</span>
               </p>
+              {criacao.formato === 'longo' && (
+                <p className="text-[12px] text-ink2 leading-snug" data-episodio>
+                  {criacao.historia
+                    ? `Episódio ${criacao.episodio} de “${criacao.historia}”`
+                    : 'Episódio avulso'}
+                  {criacao.duracao_s ? ` · ${Math.round(criacao.duracao_s / 60)} minutos, horizontal` : ''}
+                </p>
+              )}
               <p className="text-[12px] text-muted leading-snug">
-                {criacao.ideia ? `Ideia: ${criacao.ideia}` : 'Ideia nova, inventada no estilo do canal.'}
+                {criacao.ideia ? `Ideia: ${criacao.ideia}`
+                  : criacao.historia ? 'Sem ideia: a história continua de onde parou.'
+                    : 'Ideia nova, inventada no estilo do canal.'}
               </p>
             </div>
           )}
 
-          {midia && !criacao && (
+          {compilacao && (
+            // A compilação também não tem vídeo de origem: diz do que ela é feita.
+            <div className="mb-4 rounded-input border border-rule2 p-3 space-y-1" data-compilacao>
+              <p className="flex items-center gap-2 text-sm text-ink min-w-0">
+                <Film size={15} className="text-brass shrink-0" />
+                <span className="truncate">{compilacao.titulo || 'compilação dos cortes'}</span>
+              </p>
+              <p className="text-[12px] text-muted leading-snug">
+                {compilacao.trechos} cortes de {compilacao.projetos} projeto{compilacao.projetos === 1 ? '' : 's'}, horizontal, para o YouTube.
+              </p>
+            </div>
+          )}
+
+          {midia && !criacao && !compilacao && (
             <ProcessingAnimation
               media={midia}
               isComplete={status === 'complete'}
@@ -538,8 +577,8 @@ export default function Projeto({ jobId }) {
         <div className={`${status === 'complete' ? 'w-full md:w-[70%] lg:w-[75%]' : 'w-full md:w-[45%] lg:w-[40%]'} md:h-full flex flex-col shrink-0 md:shrink card p-3.5 sm:p-6 transition-all duration-700 ease-in-out`}>
           <div className="mb-4 sm:mb-6 shrink-0 space-y-3">
             <h2 className="font-display uppercase tracking-wide text-lg sm:text-xl text-ink flex flex-wrap items-center gap-2">
-              <span className="mr-auto">{criacao ? 'vídeo' : serie ? 'partes' : 'cortes'}</span>
-              {results?.clips?.length > 0 && (
+              <span className="mr-auto">{criacao || longo ? 'vídeo' : serie ? 'partes' : 'cortes'}</span>
+              {results?.clips?.length > 0 && !longo && (
                 <span className="readout bg-paper3 px-2.5 py-1 rounded-full">
                   {serie && serie.partes && serie.partes !== results.clips.length
                     ? `${results.clips.length} de ${serie.partes}`
@@ -579,6 +618,13 @@ export default function Projeto({ jobId }) {
             )}
             {results?.clips?.length > 0 && status === 'complete' && (
               <div className="flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-2">
+                {!longo && !criacao && results.clips.length > 1 && (
+                  // Os cortes deste projeto viram um vídeo horizontal longo (7.8).
+                  <a href={compilarHref} className="btn-ghost px-3 py-2 text-xs"
+                     title="Juntar estes cortes num vídeo horizontal longo para o YouTube">
+                    <Film size={14} />vídeo longo com estes cortes
+                  </a>
+                )}
                 <button
                   onClick={() => setPublicando((v) => !v)}
                   aria-expanded={publicando}
@@ -611,6 +657,7 @@ export default function Projeto({ jobId }) {
                 projeto={jobId}
                 canalDoProjeto={canalId}
                 serie={!!serie}
+                longo={longo}
               />
             </div>
           )}
@@ -629,7 +676,13 @@ export default function Projeto({ jobId }) {
                 menu lateral (7.1), o `xl:grid-cols-2` de antes dava cartões de
                 ~330 px numa tela de 1280, e os rótulos dos botões se sobrepunham.
                 Duas colunas só quando cada cartão ganha pelo menos 24rem. */}
-            {results && results.clips && results.clips.length > 0 ? (
+            {results && results.clips && results.clips.length > 0 && longo ? (
+              <div className="space-y-4 pb-10">
+                {rankedClips.map(({ clip, index: i }) => (
+                  <VideoLongo key={`${jobId}-${i}-${clip.video_url || ''}`} clip={clip} index={i} />
+                ))}
+              </div>
+            ) : results && results.clips && results.clips.length > 0 ? (
               <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))]' : 'grid-cols-1'}`}>
                 {rankedClips.map(({ clip, index: i }) => (
                   <ResultCard
@@ -652,12 +705,26 @@ export default function Projeto({ jobId }) {
             ) : status === 'processing' ? (
               <div className="h-full min-h-[140px] flex flex-col items-center justify-center text-muted space-y-3 text-center px-4">
                 <Loader2 size={28} className="animate-spin text-brass" />
-                <p className="text-sm lowercase">{criacao ? 'fazendo o vídeo…' : 'esperando os cortes…'}</p>
+                <p className="text-sm lowercase">{criacao || compilacao ? 'fazendo o vídeo…' : 'esperando os cortes…'}</p>
                 <p className="text-xs text-muted/80 max-w-[26ch] leading-snug">
-                  {criacao
-                    ? 'Roteiro, imagens, narração e montagem: ele aparece aqui quando ficar pronto.'
-                    : 'Eles aparecem aqui um a um, conforme cada um termina.'}
+                  {compilacao
+                    ? 'Os trechos, a legenda e a montagem: ele aparece aqui quando ficar pronto.'
+                    : criacao
+                      ? 'Roteiro, imagens, narração e montagem: ele aparece aqui quando ficar pronto.'
+                      : 'Eles aparecem aqui um a um, conforme cada um termina.'}
                 </p>
+              </div>
+            ) : status === 'error' && compilacao ? (
+              <div className="h-full min-h-[120px] flex flex-col items-center justify-center text-center gap-2.5 px-4" data-refazer-compilacao>
+                <p className="text-danger">A compilação parou no meio.</p>
+                <p className="text-muted text-xs max-w-[40ch]">
+                  O log ao lado diz onde. Se um corte sumiu do disco, faça outra compilação sem ele; se o programa
+                  foi fechado no meio, montar de novo refaz o vídeo (nada ali gasta cota).
+                </p>
+                <button type="button" className="btn-primary px-4 py-2 text-sm" onClick={continuar} disabled={continuando}>
+                  {continuando ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} montar de novo
+                </button>
+                {erroAoContinuar && <p className="text-sm text-danger max-w-[44ch]">{erroAoContinuar}</p>}
               </div>
             ) : status === 'error' && criacao ? (
               <div className="h-full min-h-[120px] flex flex-col items-center justify-center text-center gap-2.5 px-4" data-continuar-criacao>

@@ -28,6 +28,8 @@ import playlists_youtube
 import estilos
 import midia_ia
 import criacoes
+import capitulos
+import compilacao
 import template as template_doc
 import db
 import db_models
@@ -764,9 +766,14 @@ def _recover_jobs_from_disk():
             # Um video de IA que parou (7.7): sem metadata e sem manifesto, e a
             # pasta com o que ja saiu. Some da lista, e a tela do projeto diria
             # "nao existe mais", justo no video que so precisa de "continuar".
-            if (os.path.isfile(os.path.join(job_path, ARQUIVO_DA_CRIACAO))
-                    and not os.path.isfile(os.path.join(job_path, _RESUME_FILE))):
+            sem_manifesto = not os.path.isfile(os.path.join(job_path, _RESUME_FILE))
+            if sem_manifesto and os.path.isfile(os.path.join(job_path, ARQUIVO_DA_CRIACAO)):
                 jobs[job_id] = _criacao_parada(job_path)
+                recovered += 1
+            elif sem_manifesto and os.path.isfile(os.path.join(job_path,
+                                                               ARQUIVO_DA_COMPILACAO)):
+                # A compilacao dos cortes (7.8) que parou: o mesmo caso.
+                jobs[job_id] = _compilacao_parada(job_path)
                 recovered += 1
             continue
         if (os.path.isfile(os.path.join(job_path, _RESUME_FILE))
@@ -908,6 +915,14 @@ CRIACAO_STAGES = [
 ]
 _CRIACAO_ORDER = {nome: i for i, (nome, _) in enumerate(CRIACAO_STAGES)}
 
+#: Os estagios da compilacao dos cortes (7.8), os do `compilacao.ESTAGIOS`.
+COMPILACAO_STAGES = [
+    ("k1_trechos", "separando os trechos"),
+    ("k2_legenda", "preparando a legenda"),
+    ("k3_montagem", "montando o vídeo"),
+]
+_COMPILACAO_ORDER = {nome: i for i, (nome, _) in enumerate(COMPILACAO_STAGES)}
+
 #: Importado, nao redigitado: o produtor do marcador e o `job_metrics`, e duas
 #: copias da mesma string divergem no dia em que uma delas mudar.
 _STAGE_MARKER = job_metrics.STAGE_MARKER
@@ -923,9 +938,13 @@ def _stage_view(job) -> dict:
     vira decoracao. `stage_index` de 4 e honesto e ja responde "esta andando?".
     """
     nome = (job or {}).get('stage')
-    criacao = nome in _CRIACAO_ORDER or (job or {}).get('kind') == 'criacao'
-    lista, ordem = ((CRIACAO_STAGES, _CRIACAO_ORDER) if criacao
-                    else (PIPELINE_STAGES, _STAGE_ORDER))
+    tipo = (job or {}).get('kind')
+    if nome in _CRIACAO_ORDER or (not nome and tipo == 'criacao'):
+        lista, ordem = CRIACAO_STAGES, _CRIACAO_ORDER
+    elif nome in _COMPILACAO_ORDER or (not nome and tipo == 'compilacao'):
+        lista, ordem = COMPILACAO_STAGES, _COMPILACAO_ORDER
+    else:
+        lista, ordem = PIPELINE_STAGES, _STAGE_ORDER
     if not nome:
         return {"stage": None, "stage_label": None,
                 "stage_index": 0, "stage_total": len(lista)}
@@ -2611,6 +2630,10 @@ async def get_config():
         # anterior responde 404 no `/api/criacoes`; a marca deixa o painel
         # dizer "atualize" antes, na tela, em vez de depois do clique.
         "criacao": True,
+        # Este motor sabe fazer video longo (7.8): o episodio de IA horizontal e
+        # a compilacao dos cortes. Um motor anterior IGNORA o `formato` do
+        # `/api/criacoes` e faria um video curto no lugar do episodio.
+        "video_longo": True,
     }
 
 
@@ -3826,16 +3849,24 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
     serie = _serie_do_projeto(job_id, job)
     if serie and serie.get("nome"):
         titulo = serie["nome"]
-    # Um video de IA (7.7) ainda sem titulo se chama pela ideia.
+    # Um video de IA (7.7) ainda sem titulo se chama pela ideia -- ou, no
+    # episodio de uma historia (7.8), pela historia e pelo numero.
     criacao = _criacao_do_projeto(job_id)
     if criacao and not titulo:
         titulo = criacao.get("ideia")
+        if not titulo and criacao.get("historia"):
+            titulo = estilos.titulo_do_episodio(criacao["historia"], criacao.get("episodio"), "")
+    # A compilacao dos cortes (7.8) antes de terminar se chama pelo titulo pedido.
+    compilacao_do_projeto = _compilacao_do_projeto(job_id)
+    if compilacao_do_projeto and not titulo:
+        titulo = compilacao_do_projeto.get("titulo")
     return {
         "job_id": job_id,
         "status": _presented_status(job_id, job),
         "title": titulo,
         "serie": serie,
         "criacao": criacao,
+        "compilacao": compilacao_do_projeto,
         "source_url": _job_source_url(job),
         "clip_count": len(clipes),
         "first_clip_url": capa,
@@ -3985,6 +4016,7 @@ async def get_status(job_id: str, request: Request):
         # titulo. A tela troca "cortes" por "video" e oferece "continuar de
         # onde parou" quando ele falha.
         "criacao": _criacao_do_projeto(job_id, com_titulo=True),
+        "compilacao": _compilacao_do_projeto(job_id),
         **_stage_view(job),
     }
 
@@ -4183,7 +4215,9 @@ def _post_meta_do_clip(clip: dict, credito: str = "") -> publishers.PostMeta:
     TikTok e Instagram. Entao a descricao de um Short sai da queda de
     `PostMeta.description_for`, que pega a primeira que existir. E o
     comportamento certo: um texto escrito para vertical curto serve aos tres, e
-    nao ter descricao nao pode impedir a publicacao.
+    nao ter descricao nao pode impedir a publicacao. O video longo (7.8) e o
+    que tem a do YouTube -- com os capitulos --, e ela vem por ultimo no dict:
+    a queda dos outros continua a de antes.
 
     `credito` e o que a licenca da fonte exige (7.5), lido da pasta do projeto
     (`.origem.json`) uma vez por job.
@@ -4194,6 +4228,7 @@ def _post_meta_do_clip(clip: dict, credito: str = "") -> publishers.PostMeta:
         descriptions={
             'tiktok': clip.get('video_description_for_tiktok') or '',
             'instagram': clip.get('video_description_for_instagram') or '',
+            'youtube': clip.get('video_description_for_youtube') or '',
         },
         credit=credito,
     )
@@ -4226,6 +4261,12 @@ def _itens_do_job(job_id: str):
     # do dia e a lista de projetos vem do disco.
     origem = licencas.ler_origem(output_dir)
     credito = licencas.credito(origem, (origem or {}).get("idioma"))
+    # A compilacao (7.8) junta cortes de varias fontes: o credito de cada uma
+    # que pede credito, uma linha por fonte (resolvido quando ela foi pedida).
+    pedido_da_compilacao = _ler_json_da_pasta(job_id, ARQUIVO_DA_COMPILACAO) or {}
+    creditos = [c for c in pedido_da_compilacao.get("creditos") or [] if isinstance(c, str)]
+    if creditos:
+        credito = "\n".join(dict.fromkeys(c for c in [credito, *creditos] if c))
 
     itens = []
     for i, clip in enumerate(data.get('shorts') or []):
@@ -4248,7 +4289,7 @@ def _itens_do_job(job_id: str):
         rendered = publishers.RenderedClip(
             path=os.path.join(output_dir, filename), job_id=job_id, index=i,
             title=(clip.get('video_title_for_youtube_short') or '').strip(),
-            duration_s=duracao)
+            duration_s=duracao, longo=clip.get('formato') == 'longo')
         itens.append(publishers.pacote.Item(clip=rendered,
                                             meta=_post_meta_do_clip(clip, credito)))
     return itens
@@ -4297,15 +4338,31 @@ async def _cortes_por_dia(request) -> dict:
     return por_dia
 
 
+#: As plataformas que tem pacote do dia, e o nome de cada uma nas frases.
+PLATAFORMAS_DO_PACOTE = {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram"}
+
+
+def _vai_no_pacote(item, plataforma: str) -> bool:
+    """O video longo (7.8) e horizontal e vai so para o YouTube: o pacote do
+    TikTok e o do Instagram nao o levam -- postado a mao ali, ele sairia
+    espremido numa tela em pe."""
+    return not getattr(item.clip, "longo", False) or plataforma in PLATAFORMAS_DO_VIDEO_LONGO
+
+
 @app.get("/api/publicacoes/dias")
 async def listar_dias_com_cortes(request: Request):
     """Os dias que tem corte, do mais recente para o mais antigo.
 
     E o que o painel desenha para oferecer o pacote. `dia` vem no formato ISO
     e no fuso da maquina do servidor (ver `publishers.pacote.dia_de`).
+    `por_plataforma` diz quantos vao no pacote de cada uma: o video longo
+    (7.8) so vai no do YouTube. `cortes` continua sendo o total (o painel de
+    antes le so ele).
     """
     por_dia = await _cortes_por_dia(request)
-    dias = [{"dia": dia, "cortes": len(itens)}
+    dias = [{"dia": dia, "cortes": len(itens),
+             "por_plataforma": {p: sum(1 for i in itens if _vai_no_pacote(i, p))
+                                for p in PLATAFORMAS_DO_PACOTE}}
             for dia, itens in sorted(por_dia.items(), reverse=True)]
     return {"dias": dias,
             "hoje": publishers.pacote.hoje(fuso_de_quem_usa.tz_do_tenant(db.tenant_atual()))}
@@ -4323,21 +4380,32 @@ async def baixar_pacote_do_dia(request: Request,
     escrita no nome do arquivo e dentro do LEIA-ME, entao nao ha como confundir
     qual dia veio.
     """
-    if plataforma not in ("youtube", "tiktok", "instagram"):
+    if plataforma not in PLATAFORMAS_DO_PACOTE:
         raise HTTPException(status_code=400,
                             detail=f"Plataforma desconhecida: {plataforma}")
 
-    por_dia = await _cortes_por_dia(request)
-    if not por_dia:
+    todos = await _cortes_por_dia(request)
+    if not todos:
         raise HTTPException(status_code=404,
                             detail="Nenhum corte em disco para empacotar.")
+    # O video longo (7.8) so vai no pacote do YouTube; um dia so com ele nao
+    # tem pacote para o TikTok nem para o Instagram.
+    por_dia = {d: [i for i in itens if _vai_no_pacote(i, plataforma)]
+               for d, itens in todos.items()}
+    por_dia = {d: itens for d, itens in por_dia.items() if itens}
+    nome_da_plataforma = PLATAFORMAS_DO_PACOTE[plataforma]
+    if not por_dia:
+        raise HTTPException(status_code=404, detail=(
+            f"Nenhum corte para o {nome_da_plataforma} em disco: os vídeos longos vão "
+            "só para o YouTube."))
     escolhido = dia or max(por_dia)
     itens = por_dia.get(escolhido)
     if not itens:
         raise HTTPException(
             status_code=404,
-            detail=f"Nenhum corte em {escolhido}. Dias com corte: "
-                   f"{', '.join(sorted(por_dia, reverse=True)[:5])}")
+            detail=(f"Nenhum corte para o {nome_da_plataforma} em {escolhido}"
+                    + (" (os vídeos longos vão só para o YouTube)" if escolhido in todos else "")
+                    + f". Dias com corte: {', '.join(sorted(por_dia, reverse=True)[:5])}"))
 
     if plataforma == "youtube":
         # O LEIA-ME lembra o "feito para criancas" dos cortes de canal infantil
@@ -5787,6 +5855,12 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
             karaoke_opts["margin_v"] = template_doc.margem_vertical(req.template)
         except template_doc.TemplateInvalido as e:
             raise HTTPException(status_code=400, detail=f"Template invalido: {e}")
+        # O video longo (7.8) e deitado: o preset do Short sairia com a letra
+        # do Short (o ASS mede pela altura), a mesma conta da legenda que o job
+        # queimou (`montagem.legenda_horizontal`).
+        if clip_data.get('formato') == 'longo':
+            import montagem
+            karaoke_opts = montagem.legenda_horizontal(karaoke_opts)
         is_karaoke = True
         srt_filename = f"subs_{req.clip_index}_{generation_id}.ass"
         srt_path = os.path.join(output_dir, srt_filename)
@@ -6785,6 +6859,23 @@ def _da_conta(conta) -> dict:
     return {"account_id": conta.id, "platform": conta.platform, "handle": conta.handle}
 
 
+#: Para onde o video longo (7.8) vai: so o YouTube. O painel tem a mesma lista
+#: (`lib/publicacoes.js`, `PLATAFORMAS_DO_VIDEO_LONGO`), e o teste compara.
+PLATAFORMAS_DO_VIDEO_LONGO = ("youtube",)
+#: O que a fila responde ao galho que o video longo nao faz.
+SO_NO_YOUTUBE = ("vídeo longo vai só para o YouTube: é para lá que ele foi feito "
+                 "(horizontal, com capítulos)")
+
+
+def _fora_do_destino(item, conta) -> Optional[str]:
+    """Por que este corte nao vai para esta conta, ou None. O video longo e
+    horizontal (7.8) vai so para o YouTube: TikTok e Instagram sao a tela em
+    pe, e no canal com as tres contas ele sai so no galho do YouTube."""
+    if getattr(item.clip, "longo", False) and conta.platform not in PLATAFORMAS_DO_VIDEO_LONGO:
+        return SO_NO_YOUTUBE
+    return None
+
+
 @app.get("/api/agenda")
 async def ver_agenda(canal: Optional[str] = None):
     """A agenda em vigor. E o que o painel mostra antes de agendar, para que
@@ -6856,13 +6947,22 @@ async def _agendar_itens(job_id: str, escolhidos: list, contas: list) -> tuple:
     for conta in contas:
         agenda = agendas.get(conta.id) or scheduler.AgendaDaConta(
             teto=_teto_do_agendador(), fuso=fuso_do_tenant)
+        # O video longo (7.8) nao entra na agenda do TikTok e do Instagram.
+        da_conta = []
+        for item in escolhidos:
+            fora = _fora_do_destino(item, conta)
+            if fora:
+                resultados.append({"clip_index": item.clip.index, **_da_conta(conta),
+                                   "ok": False, "pulado": True, "detail": fora})
+            else:
+                da_conta.append(item)
         # Horario proprio por conta: o jitter e sorteado de novo para cada
         # galho, e o YouTube e o TikTok do mesmo corte nao saem no mesmo minuto.
         horarios = scheduler.proximos_horarios(
-            len(escolhidos), datetime.now(agenda.fuso or fuso_do_tenant),
+            len(da_conta), datetime.now(agenda.fuso or fuso_do_tenant),
             horas=agenda.horas, teto_por_dia=agenda.teto or _teto_do_agendador(),
             ocupados=ocupados.get(conta.id, []))
-        for item, quando in zip(escolhidos, horarios):
+        for item, quando in zip(da_conta, horarios):
             base = {"clip_index": item.clip.index, **_da_conta(conta)}
             corte = await job_registry.clipe_do_job(job_id, item.clip.index)
             if corte is None:
@@ -8331,6 +8431,11 @@ def _criacao_do_projeto(job_id: str, com_titulo: bool = False) -> Optional[dict]
         return None
     pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_CRIACAO) or {}
     saida = {"ideia": pedido.get("ideia") or None}
+    if pedido.get("formato") == "longo":
+        historia = pedido.get("historia") if isinstance(pedido.get("historia"), dict) else {}
+        saida.update({"formato": "longo", "duracao_s": pedido.get("duracao_s"),
+                      "historia": historia.get("nome") or None,
+                      "episodio": historia.get("episodio") or None})
     if com_titulo:
         saida["titulo"] = (_ler_json_da_pasta(job_id, "roteiro.json") or {}).get("titulo") or None
     return saida
@@ -8393,12 +8498,30 @@ def _catalogo_da_criacao() -> dict:
         "limites": {"duracao_s": [estilos.DURACAO_MIN, estilos.DURACAO_MAX],
                     "cenas": [estilos.CENAS_MIN, estilos.CENAS_MAX],
                     "personagens": estilos.MAX_PERSONAGENS},
+        # O episodio longo (7.8): a duracao e escolhida em cada episodio, e as
+        # cenas saem dela.
+        "episodio": {"duracao_s": [estilos.DURACAO_LONGA_MIN, estilos.DURACAO_LONGA_MAX],
+                     "segundos_por_cena": estilos.SEGUNDOS_POR_CENA_LONGA,
+                     "cenas": [estilos.CENAS_LONGAS_MIN, estilos.CENAS_LONGAS_MAX]},
     }
 
 
-def _por_que_nao_cria(estilo: Optional[dict]) -> Optional[str]:
+def _chamadas_de_voz_do_episodio(duracao_s: int) -> int:
+    """Quantas chamadas de voz um episodio desta duracao deve gastar: a fala
+    estimada (~6 caracteres por palavra) dividida pelo bloco."""
+    caracteres = estilos.palavras_por_duracao(duracao_s) * 6
+    return max(1, -(-caracteres // estilos.CARACTERES_POR_BLOCO))
+
+
+def _por_que_nao_cria(estilo: Optional[dict], cenas: Optional[int] = None,
+                      chamadas_de_voz: int = 1) -> Optional[str]:
     """A frase que impede criar agora, ou None. Conferida ANTES do job: sem
-    chave, sem estilo ou sem cota, o job so gastaria o roteiro para falhar."""
+    chave, sem estilo ou sem cota, o job so gastaria o roteiro para falhar.
+
+    `cenas` e o numero de imagens do video (sem ele, as do estilo; com 0, a
+    cota de imagem nao e conferida -- a tela do episodio confere pela duracao
+    escolhida), e `chamadas_de_voz` as da narracao (o episodio longo gasta
+    uma por bloco)."""
     if estilo is None:
         return ("Este canal ainda não tem estilo de criação. Configure o estilo na aba "
                 "Criar do canal: é ele que faz um vídeo sair parecido com o outro.")
@@ -8417,16 +8540,22 @@ def _por_que_nao_cria(estilo: Optional[dict]) -> Optional[str]:
                 "narração grátis.")
     if not (llm_backend.active() or llm_cascade.has_text_provider()):
         return "Falta uma IA de texto em Configurações → Chaves de IA: é ela que escreve o roteiro."
-    cenas = int((estilo.get("spec") or {}).get("cenas") or 0)
+    if cenas is None:
+        cenas = int((estilo.get("spec") or {}).get("cenas") or 0)
     refs = min(2, len((estilo.get("spec") or {}).get("personagens") or []))
     cabem = midia_ia.imagens_que_cabem(referencias=refs)
     if cabem < cenas:
         return (f"A cota grátis de imagem de hoje só dá para {cabem} imagem(ns), e o vídeo tem "
                 f"{cenas} cenas. Ela volta {_quando_volta_a_cota_de_imagem()}.")
     teto = midia_ia.vozes_por_dia()
-    if teto is not None and midia_ia.uso()["vozes"] >= teto:
+    usadas = midia_ia.uso()["vozes"]
+    if teto is not None and usadas >= teto:
         return (f"O teto de {teto} narrações por dia (GEMINI_TTS_CALLS_DAILY) já foi usado "
                 "hoje. Ele volta à meia-noite do Pacífico.")
+    if teto is not None and usadas + chamadas_de_voz > teto:
+        return (f"A narração do episódio precisa de {chamadas_de_voz} chamadas de voz, e o teto "
+                f"de {teto} por dia (GEMINI_TTS_CALLS_DAILY) só tem {teto - usadas} hoje. Ele "
+                "volta à meia-noite do Pacífico.")
     return None
 
 
@@ -8462,7 +8591,27 @@ async def ver_estilo(canal_id: str):
         raise _erro_do_estilo(e)
     return {"estilo": estilo, "padrao": estilos.padrao(), "catalogo": _catalogo_da_criacao(),
             "midia": midia_ia.disponivel(), "cota": _cota_de_midia(),
-            "pode_criar": _por_que_nao_cria(estilo)}
+            "pode_criar": _por_que_nao_cria(estilo),
+            # O episodio longo (7.8) tem a cota conferida pela duracao que a
+            # pessoa escolher, na tela: aqui vai o resto (estilo, chaves).
+            "pode_criar_episodio": _por_que_nao_cria(estilo, cenas=0)}
+
+
+@app.get("/api/canais/{canal_id}/historias")
+async def ver_historias(canal_id: str):
+    """As historias de varios episodios do canal (7.8), da mais recente para a
+    mais antiga, para a tela escolher em qual continuar."""
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    try:
+        if await canais.obter(canal_id) is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+        historias = await criacoes.historias_do_canal(canal_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    return {"historias": historias}
 
 
 @app.put("/api/canais/{canal_id}/estilo")
@@ -8582,10 +8731,69 @@ def _enfileirar_criacao(job_id: str, pasta: str, tenant_id: str, canal_id: Optio
     _enqueue_job(job_id, 2)
 
 
+#: Dois pedidos do mesmo episodio ao mesmo tempo (dois cliques) leriam o mesmo
+#: "ultimo episodio" e sairiam com o mesmo numero: o numero e o registro no
+#: banco acontecem sob esta trava.
+_TRAVA_DOS_EPISODIOS = asyncio.Lock()
+
+
+def _episodio_do_corpo(corpo: dict) -> Optional[dict]:
+    """O que o pedido diz do episodio longo (7.8): `{duracao_s, cenas,
+    historia}`, com a historia so pelo nome -- ou None no video curto.
+    Levanta 400 com a frase para a tela."""
+    formato = str(corpo.get("formato") or "curto").strip().lower()
+    if formato not in ("curto", "longo"):
+        raise HTTPException(status_code=400, detail="formato: curto ou longo.")
+    if formato != "longo":
+        return None
+    try:
+        minutos = float(corpo.get("duracao_min"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail="Diga quantos minutos o episódio tem (duracao_min).")
+    duracao_s = int(round(minutos * 60))
+    if not estilos.DURACAO_LONGA_MIN <= duracao_s <= estilos.DURACAO_LONGA_MAX:
+        raise HTTPException(status_code=400, detail=(
+            f"O episódio tem de {estilos.DURACAO_LONGA_MIN // 60} a "
+            f"{estilos.DURACAO_LONGA_MAX // 60} minutos."))
+    bruto = re.sub(r"\s+", " ", str(corpo.get("historia") or "")).strip()
+    if len(bruto) > estilos.HISTORIA_MAX:
+        raise HTTPException(status_code=400, detail=(
+            f"O nome da história pode ter no máximo {estilos.HISTORIA_MAX} caracteres."))
+    return {"duracao_s": duracao_s, "cenas": estilos.cenas_do_longo(duracao_s),
+            "historia": estilos.nome_da_historia(bruto) or None}
+
+
+async def _historia_do_episodio(canal_id: str, nome: Optional[str]) -> Optional[dict]:
+    """A historia que o episodio novo continua: `{nome, episodio,
+    anteriores}`. Recusa (400) enquanto o episodio anterior nao terminou: o
+    novo continua do RESUMO dele, que so existe no fim do job."""
+    if not nome:
+        return None
+    try:
+        feitos = await criacoes.episodios_da_historia(canal_id, nome)
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    parado = next((e for e in feitos if not e["pronto"]), None)
+    if parado:
+        raise HTTPException(status_code=400, detail=(
+            f"O episódio {parado['episodio']} de “{parado['historia'] or nome}” ainda não "
+            "terminou. Continue (ou apague) esse episódio antes de criar o próximo: o novo "
+            "continua do resumo dele."))
+    return {"nome": feitos[-1]["historia"] if feitos else nome,
+            "episodio": max([e["episodio"] for e in feitos] or [0]) + 1,
+            "anteriores": [{"episodio": e["episodio"], "titulo": e["titulo"],
+                            "resumo": e["resumo"]} for e in feitos]}
+
+
 @app.post("/api/criacoes")
 async def criar_video_por_ia(request: Request):
-    """Cria um video curto por IA no estilo do canal: `{channel_id, ideia}`.
-    Sem ideia, o roteiro inventa uma nova, sem repetir os temas do canal."""
+    """Cria um video por IA no estilo do canal: `{channel_id, ideia}`. Sem
+    ideia, o roteiro inventa uma nova, sem repetir os temas do canal.
+
+    O episodio longo (7.8) vem com `formato: "longo"`, `duracao_min` (2 a 10)
+    e, opcional, `historia`: o nome da historia de varios episodios que ele
+    continua (um nome novo comeca uma historia no episodio 1)."""
     corpo = await _corpo_json(request)
     canal_id = str(corpo.get("channel_id") or "").strip()
     ideia = re.sub(r"\s+", " ", str(corpo.get("ideia") or "")).strip()
@@ -8594,6 +8802,7 @@ async def criar_video_por_ia(request: Request):
     if not canais.id_valido(canal_id):
         raise HTTPException(status_code=400,
                             detail="Escolha o canal: o estilo do vídeo é o do canal.")
+    episodio = _episodio_do_corpo(corpo)
     try:
         canal = await canais.obter(canal_id)
         if canal is None:
@@ -8603,7 +8812,12 @@ async def criar_video_por_ia(request: Request):
         raise
     except Exception as e:
         raise _erro_do_estilo(e)
-    motivo = _por_que_nao_cria(estilo)
+    if episodio:
+        motivo = _por_que_nao_cria(
+            estilo, cenas=episodio["cenas"],
+            chamadas_de_voz=_chamadas_de_voz_do_episodio(episodio["duracao_s"]))
+    else:
+        motivo = _por_que_nao_cria(estilo)
     if motivo:
         raise HTTPException(status_code=400, detail=motivo)
     # A receita de IA do canal (7.7) passa pela mesma porta, e diz quem pediu:
@@ -8615,6 +8829,16 @@ async def criar_video_por_ia(request: Request):
         if receita is None or receita.kind != "ia" or receita.channel_id != canal_id:
             raise HTTPException(status_code=400, detail="receita_id não é a receita de IA deste canal.")
 
+    async with _TRAVA_DOS_EPISODIOS:
+        historia = await _historia_do_episodio(canal_id, (episodio or {}).get("historia"))
+        return await _enfileirar_pedido_de_criacao(canal, estilo, ideia, receita_id,
+                                                   episodio, historia)
+
+
+async def _enfileirar_pedido_de_criacao(canal: dict, estilo: dict, ideia: str,
+                                        receita_id: Optional[str], episodio: Optional[dict],
+                                        historia: Optional[dict]) -> dict:
+    canal_id = canal["id"]
     tenant_id = db.tenant_atual()
     job_id = str(uuid.uuid4())
     pasta = os.path.join(OUTPUT_DIR, job_id)
@@ -8632,11 +8856,20 @@ async def criar_video_por_ia(request: Request):
         # Os temas mais recentes primeiro; o roteiro recebe no maximo 30.
         "ja_feitos": await criacoes.temas_do_canal(canal_id),
     }
+    preliminar = None
+    if episodio:
+        pedido.update({"formato": "longo", "duracao_s": episodio["duracao_s"],
+                       "cenas": episodio["cenas"], "historia": historia})
+        # O episodio ja nasce no banco com a historia e o numero: e o que faz o
+        # proximo pedido saber que este existe (e esperar ele terminar).
+        preliminar = {"formato": "longo"}
+        if historia:
+            preliminar.update({"historia": historia["nome"], "episodio": historia["episodio"]})
     source_id = await job_registry.registrar_fonte(
         adapter="ia", entrada=(f"ia: {ideia}" if ideia else "ia: ideia nova")[:500])
     if source_id and await job_registry.registrar_job(job_id, source_id):
         await canais.ligar_job(job_id, canal_id)
-    await criacoes.registrar_criacao(job_id, canal_id, ideia)
+    await criacoes.registrar_criacao(job_id, canal_id, ideia, roteiro=preliminar)
 
     # O pedido na pasta e a fila, SEM `await` entre os dois: uma pasta com o
     # `criacao.json` e sem manifesto e o que o `_recover_jobs_from_disk` le como
@@ -8646,10 +8879,18 @@ async def criar_video_por_ia(request: Request):
         json.dump(pedido, f, ensure_ascii=False, indent=2)
     _gravar_tenant_do_job(pasta, tenant_id)
     _gravar_canal_do_job(pasta, canal_id)
-    print(f"🎨 [criacao] job={job_id} canal={canal['name']} ideia={ideia[:80]!r}")
-    _enfileirar_criacao(job_id, pasta, tenant_id, canal_id, ideia,
-                        [f"Vídeo de IA na fila, no estilo do canal {canal['name']}."])
-    return {"job_id": job_id, "status": "queued"}
+    print(f"🎨 [criacao] job={job_id} canal={canal['name']} ideia={ideia[:80]!r}"
+          + (f" episodio={episodio['duracao_s']}s" if episodio else ""))
+    if episodio:
+        quem = (f"Episódio {historia['episodio']} de “{historia['nome']}”" if historia
+                else "Episódio")
+        primeira = (f"{quem} na fila: {episodio['duracao_s'] // 60} minutos, "
+                    f"{episodio['cenas']} cenas, no estilo do canal {canal['name']}.")
+    else:
+        primeira = f"Vídeo de IA na fila, no estilo do canal {canal['name']}."
+    _enfileirar_criacao(job_id, pasta, tenant_id, canal_id, ideia, [primeira])
+    return {"job_id": job_id, "status": "queued",
+            **({"episodio": historia["episodio"]} if historia else {})}
 
 
 def _o_que_falta_para_continuar(pasta: str, pedido: dict) -> Optional[str]:
@@ -8665,17 +8906,33 @@ def _o_que_falta_para_continuar(pasta: str, pedido: dict) -> Optional[str]:
                 "narração grátis.")
     estilo = pedido.get("estilo") if isinstance(pedido.get("estilo"), dict) else {}
     roteiro = _ler_json_da_pasta(os.path.basename(pasta), criar_video.ARQUIVO_DO_ROTEIRO)
-    cenas = len((roteiro or {}).get("cenas") or []) or int(estilo.get("cenas") or 0)
+    episodio = criar_video.episodio_do_pedido(pedido)
+    cenas = (len((roteiro or {}).get("cenas") or [])
+             or int((episodio or {}).get("cenas") or estilo.get("cenas") or 0))
     faltam = sum(1 for i in range(cenas) if criar_video.arquivo_da_cena(pasta, i) is None)
     cabem = midia_ia.imagens_que_cabem(referencias=min(2, len(estilo.get("personagens") or [])))
     if faltam > cabem:
         return (f"A cota grátis de imagem de hoje só dá para {cabem} imagem(ns), e faltam "
                 f"{faltam}. Ela volta {_quando_volta_a_cota_de_imagem()}.")
     teto = midia_ia.vozes_por_dia()
-    if (teto is not None and midia_ia.uso()["vozes"] >= teto
-            and not os.path.isfile(os.path.join(pasta, criar_video.ARQUIVO_DA_VOZ))):
+    if teto is None or os.path.isfile(os.path.join(pasta, criar_video.ARQUIVO_DA_VOZ)):
+        return None
+    # A voz que falta: uma chamada no video curto; no episodio, os blocos que
+    # ainda nao estao na pasta (os prontos nao gastam de novo).
+    chamadas = 1
+    if episodio:
+        blocos = (estilos.blocos_de_narracao(roteiro) if roteiro
+                  else [None] * _chamadas_de_voz_do_episodio(episodio["duracao_s"]))
+        chamadas = sum(1 for k in range(len(blocos)) if not os.path.isfile(
+            os.path.join(pasta, criar_video.ARQUIVO_DO_BLOCO.format(k + 1))))
+    usadas = midia_ia.uso()["vozes"]
+    if chamadas and usadas >= teto:
         return (f"O teto de {teto} narrações por dia (GEMINI_TTS_CALLS_DAILY) já foi usado "
                 "hoje. Ele volta à meia-noite do Pacífico.")
+    if usadas + chamadas > teto:
+        return (f"Faltam {chamadas} chamadas de voz da narração, e o teto de {teto} por dia "
+                f"(GEMINI_TTS_CALLS_DAILY) só tem {teto - usadas} hoje. Ele volta à "
+                "meia-noite do Pacífico.")
     return None
 
 
@@ -8707,6 +8964,283 @@ async def continuar_criacao(job_id: str, request: Request):
     _enfileirar_criacao(job_id, pasta, _tenant_do_disco(pasta), _canal_do_disco(pasta),
                         pedido.get("ideia") or "",
                         ["▶️ Continuando o vídeo de onde parou."])
+    await job_registry.marcar_job(job_id, status="queued")
+    return {"job_id": job_id, "status": "queued"}
+
+
+# --- A compilacao dos cortes (etapa 7.8) --------------------------------------------
+# Um video horizontal longo feito dos cortes que a pessoa escolheu, de um ou de
+# varios projetos. As regras moram em `compilacao.py`; o job e o
+# `compilar_video.py`, com a fila, a barra, a retomada e a publicacao de sempre.
+
+ARQUIVO_DA_COMPILACAO = compilacao.ARQUIVO_DO_PEDIDO
+
+
+def _e_compilacao(job_id: str) -> bool:
+    return bool(_JOB_ID_RE.match(job_id or "")) and os.path.isfile(
+        os.path.join(OUTPUT_DIR, job_id, ARQUIVO_DA_COMPILACAO))
+
+
+def _compilacao_do_projeto(job_id: str) -> Optional[dict]:
+    """O que a lista e a tela mostram de uma compilacao: o titulo pedido e de
+    quantos cortes e projetos ela e feita. Le so o pedido."""
+    if not _e_compilacao(job_id):
+        return None
+    pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_COMPILACAO) or {}
+    trechos = [t for t in pedido.get("trechos") or [] if isinstance(t, dict)]
+    return {"titulo": pedido.get("titulo") or None, "trechos": len(trechos),
+            "projetos": len({t.get("job_id") for t in trechos if t.get("job_id")}),
+            "duracao_s": pedido.get("duracao_s")}
+
+
+def _compilacao_parada(job_path: str) -> dict:
+    """A compilacao que parou antes do fim, lida do disco (o reinicio apagou a
+    memoria). Montar de novo refaz o video inteiro: nada ali gasta cota."""
+    try:
+        criado = os.path.getmtime(os.path.join(job_path, ARQUIVO_DA_COMPILACAO))
+    except OSError:
+        criado = None
+    return {
+        'status': 'failed', 'kind': 'compilacao', 'created_at': criado,
+        'logs': LinhasDoLog(["⏸️ Esta compilação parou antes de terminar (ela falhou, ou o "
+                             "programa foi fechado no meio). Use \"montar de novo\"."]),
+        'output_dir': job_path, 'user_id': None,
+        'tenant_id': _tenant_do_disco(job_path), 'channel_id': _canal_do_disco(job_path),
+        'result': None,
+    }
+
+
+def _palavras_do_trecho(transcricao: Optional[dict], inicio: float, fim: float) -> list:
+    """As palavras da transcricao do projeto entre `inicio` e `fim`, no tempo
+    do trecho (0 e o comeco dele)."""
+    saida = []
+    for seg in (transcricao or {}).get("segments") or []:
+        for w in seg.get("words") or []:
+            try:
+                ini, fi = float(w["start"]), float(w["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if inicio <= ini < fim:
+                saida.append({"word": w.get("word") or "", "start": round(ini - inicio, 3),
+                              "end": round(min(fi, fim) - inicio, 3)})
+    return saida
+
+
+def _trecho_do_corte(job_id: str, indice: int) -> dict:
+    """Um corte como trecho da compilacao: da ORIGEM deitada quando ela ainda
+    esta no disco, ou o proprio corte vertical (o limpo, sem legenda nem
+    gancho). Levanta 400 dizendo qual corte e por que."""
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    metas = glob.glob(os.path.join(pasta, "*_metadata.json"))
+    try:
+        with open(metas[0], encoding="utf-8") as f:
+            data = json.load(f)
+    except (IndexError, OSError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail=f"O projeto {job_id[:8]} ainda não tem cortes prontos.")
+    shorts = data.get("shorts") or []
+    if not 0 <= indice < len(shorts) or not isinstance(shorts[indice], dict):
+        raise HTTPException(status_code=400, detail=(
+            f"O corte {indice + 1} não existe no projeto {job_id[:8]}."))
+    clip = shorts[indice]
+    titulo = (clip.get("video_title_for_youtube_short") or clip.get("title") or "").strip()
+    if clip.get("formato") == "longo":
+        raise HTTPException(status_code=400, detail=(
+            f"“{titulo or 'Este vídeo'}” já é um vídeo longo: ele não entra numa compilação."))
+    try:
+        inicio, fim = float(clip.get("start") or 0), float(clip.get("end") or 0)
+    except (TypeError, ValueError):
+        inicio, fim = 0.0, 0.0
+    base = {"job_id": job_id, "clip": indice, "titulo": titulo,
+            "palavras": _palavras_do_trecho(data.get("transcript"), inicio, fim)}
+    origem = None if _e_criacao(job_id) else _locate_source(job_id)
+    if origem and fim > inicio:
+        return {**base, "arquivo": os.path.abspath(origem), "corte_inicio": inicio,
+                "corte_fim": fim, "vertical": False}
+    nome_base = os.path.basename(metas[0]).replace("_metadata.json", "")
+    limpo = os.path.join(pasta, f"{nome_base}_clip_{indice + 1}.mp4")
+    if not os.path.isfile(limpo):
+        raise HTTPException(status_code=400, detail=(
+            f"O corte {indice + 1} (“{titulo or 'sem título'}”) não tem mais o vídeo de "
+            "origem nem o arquivo do corte."))
+    return {**base, "arquivo": os.path.abspath(limpo), "corte_inicio": 0.0,
+            "corte_fim": max(0.0, fim - inicio), "vertical": True}
+
+
+def _comando_da_compilacao(pasta: str) -> list:
+    return [sys.executable, "-u", "compilar_video.py", "--pasta", pasta]
+
+
+def _enfileirar_compilacao(job_id: str, pasta: str, tenant_id: str, canal_id: Optional[str],
+                           logs: list) -> None:
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    cmd = _comando_da_compilacao(pasta)
+    jobs[job_id] = {
+        'status': 'queued', 'kind': 'compilacao', 'created_at': time.time(),
+        'logs': LinhasDoLog(logs), 'cmd': cmd, 'env': env, 'output_dir': pasta,
+        'user_id': None, 'reservation_id': None, 'watermark': False,
+        'webhook_url': None, 'webhook_secret': None, 'base_url': None,
+        'tenant_id': tenant_id, 'channel_id': canal_id,
+    }
+    _write_resume_manifest(job_id, cmd, 2, None, None, watermark=False,
+                           tenant_id=tenant_id, env_do_job={})
+    _enqueue_job(job_id, 2)
+
+
+@app.post("/api/compilacoes")
+async def criar_compilacao(request: Request):
+    """A compilacao horizontal dos cortes escolhidos (7.8): `{titulo, cortes:
+    [{job_id, clip}], descricao?, channel_id?, legenda?}`, na ordem em que os
+    cortes vem. Sem IA: nada aqui gasta cota."""
+    corpo = await _corpo_json(request)
+    titulo = re.sub(r"\s+", " ", str(corpo.get("titulo") or "")).strip()
+    if not titulo:
+        raise HTTPException(status_code=400,
+                            detail="Dê um título à compilação: é o título do vídeo no YouTube.")
+    if len(titulo) > compilacao.TITULO_MAX:
+        raise HTTPException(status_code=400, detail=(
+            f"O título pode ter no máximo {compilacao.TITULO_MAX} caracteres."))
+    descricao = str(corpo.get("descricao") or "").strip()
+    if len(descricao) > compilacao.DESCRICAO_MAX:
+        raise HTTPException(status_code=400, detail=(
+            f"A descrição pode ter no máximo {compilacao.DESCRICAO_MAX} caracteres."))
+    legenda = str(corpo.get("legenda") or "limpo")
+    if legenda not in estilos.LEGENDAS:
+        raise HTTPException(status_code=400,
+                            detail=f"legenda: uma de {', '.join(estilos.LEGENDAS)}.")
+    canal_id = corpo.get("channel_id") or None
+    canal = None
+    if canal_id is not None:
+        if not canais.id_valido(str(canal_id)):
+            raise HTTPException(status_code=400, detail="channel_id invalido")
+        try:
+            canal = await canais.obter(str(canal_id))
+        except Exception as e:
+            raise _erro_do_canal(e)
+        if canal is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    cortes = corpo.get("cortes")
+    if not isinstance(cortes, list) or not cortes:
+        raise HTTPException(status_code=400, detail="Escolha os cortes da compilação.")
+    if len(cortes) > compilacao.TRECHOS_MAX:
+        raise HTTPException(status_code=400, detail=(
+            f"No máximo {compilacao.TRECHOS_MAX} cortes numa compilação."))
+    trechos = []
+    for item in cortes:
+        job_id_do_corte = str((item or {}).get("job_id") or "") if isinstance(item, dict) else ""
+        try:
+            indice = int((item or {}).get("clip"))
+        except (TypeError, ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Cada corte é {job_id, clip}.")
+        if not _JOB_ID_RE.match(job_id_do_corte):
+            raise HTTPException(status_code=400, detail="Cada corte é {job_id, clip}.")
+        registro = jobs.get(job_id_do_corte) or _job_view_from_disk(job_id_do_corte)
+        if registro is None:
+            raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+        # O corte de outro tenant e 404, como em toda rota de projeto.
+        await _assert_job_owner(request, registro)
+        trechos.append(_trecho_do_corte(job_id_do_corte, indice))
+    try:
+        plano = compilacao.planejar(trechos)
+    except compilacao.CompilacaoInvalida as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    idioma = (canal or {}).get("language") or "pt-BR"
+    creditos = []
+    for projeto in dict.fromkeys(t["job_id"] for t in plano):
+        origem = licencas.ler_origem(os.path.join(OUTPUT_DIR, projeto))
+        linha = licencas.credito(origem, (origem or {}).get("idioma") or idioma)
+        if linha:
+            creditos.append(linha)
+    tenant_id = db.tenant_atual()
+    job_id = str(uuid.uuid4())
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    os.makedirs(pasta, exist_ok=True)
+    total = compilacao.duracao_total(plano)
+    projetos = len({t["job_id"] for t in plano})
+    pedido = {"titulo": titulo, "descricao": descricao, "legenda": legenda,
+              "canal_id": (canal or {}).get("id"), "idioma": idioma, "hashtags": [],
+              "creditos": creditos, "duracao_s": total,
+              "trechos": [{k: t[k] for k in ("job_id", "clip", "arquivo", "corte_inicio",
+                                             "corte_fim", "titulo", "palavras", "vertical")}
+                          for t in plano]}
+    source_id = await job_registry.registrar_fonte(
+        adapter="compilacao", entrada=f"compilação: {len(plano)} cortes de {projetos} projeto(s)")
+    if source_id and await job_registry.registrar_job(job_id, source_id) and canal:
+        await canais.ligar_job(job_id, canal["id"])
+    # O pedido na pasta e a fila, sem `await` entre os dois (o motivo do
+    # `/api/criacoes`: a pasta com pedido e sem manifesto e um job parado).
+    with open(os.path.join(pasta, ARQUIVO_DA_COMPILACAO), "w", encoding="utf-8") as f:
+        json.dump(pedido, f, ensure_ascii=False, indent=2)
+    _gravar_tenant_do_job(pasta, tenant_id)
+    if canal:
+        _gravar_canal_do_job(pasta, canal["id"])
+    print(f"🎬 [compilacao] job={job_id} {len(plano)} cortes de {projetos} projeto(s), "
+          f"{total:.0f}s")
+    _enfileirar_compilacao(job_id, pasta, tenant_id, (canal or {}).get("id"), [
+        f"Compilação na fila: {len(plano)} cortes de {projetos} projeto(s), "
+        f"{capitulos.tempo(total)} de vídeo."])
+    return {"job_id": job_id, "status": "queued", "duracao_s": total}
+
+
+@app.get("/api/jobs/{job_id}/cortes")
+async def cortes_do_projeto(job_id: str, request: Request):
+    """Os cortes prontos de um projeto, leves (sem o log do `/api/status`):
+    o que a tela da compilacao (7.8) lista para escolher. Cada um diz se tem a
+    origem deitada no disco -- sem ela, entra o proprio corte vertical."""
+    if not _JOB_ID_RE.match(job_id or ""):
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+    registro = jobs.get(job_id) or _job_view_from_disk(job_id)
+    if registro is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+    await _assert_job_owner(request, registro)
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    metas = glob.glob(os.path.join(pasta, "*_metadata.json"))
+    try:
+        with open(metas[0], encoding="utf-8") as f:
+            data = json.load(f)
+    except (IndexError, OSError, ValueError):
+        return {"cortes": [], "origem": False}
+    origem = (not _e_criacao(job_id)) and _locate_source(job_id) is not None
+    base = os.path.basename(metas[0]).replace("_metadata.json", "")
+    saida = []
+    for i, clip in enumerate(data.get("shorts") or []):
+        if not isinstance(clip, dict):
+            continue
+        try:
+            duracao = max(0.0, float(clip.get("end") or 0) - float(clip.get("start") or 0))
+        except (TypeError, ValueError):
+            duracao = 0.0
+        arquivo = _canonical_clip_file(pasta, base, i)
+        if not os.path.isfile(os.path.join(pasta, arquivo)):
+            continue            # nao renderizou: nao entra numa compilacao
+        saida.append({"clip": i, "duracao_s": round(duracao, 2),
+                      "titulo": (clip.get("video_title_for_youtube_short")
+                                 or clip.get("title") or "").strip(),
+                      "video_url": f"/videos/{job_id}/{arquivo}",
+                      "formato": clip.get("formato") or "curto"})
+    return {"cortes": saida, "origem": origem}
+
+
+@app.post("/api/compilacoes/{job_id}/refazer")
+async def refazer_compilacao(job_id: str, request: Request):
+    """Uma compilacao que parou (o programa fechou no meio, um arquivo sumiu e
+    voltou) volta para a fila e e montada de novo, do comeco."""
+    _exigir_json(request)
+    if not _e_compilacao(job_id):
+        raise HTTPException(status_code=404, detail="Essa compilação não existe.")
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    job = jobs.get(job_id) or _job_view_from_disk(job_id) or {
+        'tenant_id': _tenant_do_disco(pasta), 'user_id': None}
+    await _assert_job_owner(request, job)
+    if job_id in _job_processes or (jobs.get(job_id) or {}).get('status') in ('queued', 'processing'):
+        raise HTTPException(status_code=409, detail="Essa compilação já está sendo montada.")
+    if glob.glob(os.path.join(pasta, "*_metadata.json")):
+        raise HTTPException(status_code=409, detail="Essa compilação já está pronta.")
+    _cancelled_jobs.discard(job_id)
+    _enfileirar_compilacao(job_id, pasta, _tenant_do_disco(pasta), _canal_do_disco(pasta),
+                           ["▶️ Montando a compilação de novo."])
     await job_registry.marcar_job(job_id, status="queued")
     return {"job_id": job_id, "status": "queued"}
 
@@ -9362,6 +9896,10 @@ async def publicar_cortes(req: PublicarIn, request: Request):
             corte.id, os.path.basename(item.clip.path))
         for conta in contas:
             base = {"clip_index": item.clip.index, **_da_conta(conta)}
+            fora = _fora_do_destino(item, conta)
+            if fora:
+                resultados.append({**base, "ok": False, "pulado": True, "detail": fora})
+                continue
             try:
                 import dataclasses as _dc
                 resultado = await publish_queue.publicar(

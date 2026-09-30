@@ -206,3 +206,26 @@ export function caminhoDoPacote(dia, plataforma) {
   const q = new URLSearchParams({ dia, plataforma: plataforma || 'youtube' });
   return `/api/publicacoes/pacote?${q}`;
 }
+
+// Quantos cortes vão no pacote de um dia para uma plataforma. O vídeo longo
+// (7.8) só vai no do YouTube, e o motor conta por plataforma
+// (`por_plataforma`); um motor de antes da 7.8 manda só o total.
+export function cortesNoPacote(dia, plataforma) {
+  const n = dia?.por_plataforma?.[plataforma || 'youtube'];
+  return Number.isFinite(n) ? n : (Number(dia?.cortes) || 0);
+}
+
+// Os dias que têm pacote para a plataforma: um dia só com vídeo longo não tem
+// pacote do TikTok nem do Instagram.
+export function diasDoPacote(dias, plataforma) {
+  return (dias || []).filter((d) => cortesNoPacote(d, plataforma) > 0);
+}
+
+// O vídeo longo (7.8) vai só para o YouTube: ele é horizontal, e o motor pula
+// os galhos do TikTok e do Instagram (`app._fora_do_destino`, com a mesma lista
+// em `app.PLATAFORMAS_DO_VIDEO_LONGO`; o teste compara as duas).
+export const PLATAFORMAS_DO_VIDEO_LONGO = ['youtube'];
+
+export function aceitaVideoLongo(conta) {
+  return PLATAFORMAS_DO_VIDEO_LONGO.includes(conta?.platform);
+}

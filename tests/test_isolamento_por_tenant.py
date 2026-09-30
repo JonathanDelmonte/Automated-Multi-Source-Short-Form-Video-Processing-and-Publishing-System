@@ -144,10 +144,25 @@ class TestEndpointsDeJob:
             ("DELETE", f"/api/jobs/{meu}"),
             # Fase 7: por o projeto num canal tambem e mexer no projeto.
             ("PUT", f"/api/jobs/{meu}/canal"),
+            # 7.8: montar de novo uma compilacao e mexer no projeto dela, e a
+            # lista de cortes para escolher e ler o projeto.
+            ("POST", f"/api/compilacoes/{meu}/refazer"),
+            ("GET", f"/api/jobs/{meu}/cortes"),
         ]
         for metodo, url in casos:
             r = _chama(metodo, url, corpo={}, token=b)
             assert r.status_code == 404, f"{metodo} {url} respondeu {r.status_code}"
+
+    def test_a_compilacao_nao_leva_o_corte_do_vizinho(self, dois_donos, ambiente):
+        """7.8: os cortes da compilacao vem no CORPO, e nao no caminho -- cada
+        um passa pela mesma guarda, e o do vizinho responde como o que nao
+        existe."""
+        _, b, _ = dois_donos
+        meu = _job_de(ambiente, db.SELF_HOST_TENANT_ID, quantos=2)
+        r = _chama("POST", "/api/compilacoes", {"titulo": "Roubo", "cortes": [
+            {"job_id": meu, "clip": 0}, {"job_id": meu, "clip": 1}]}, token=b)
+        assert r.status_code == 404
+        assert sorted(p.name for p in ambiente.iterdir()) == [meu]
 
     def test_o_dono_continua_alcancando(self, dois_donos, ambiente):
         a, _, _ = dois_donos

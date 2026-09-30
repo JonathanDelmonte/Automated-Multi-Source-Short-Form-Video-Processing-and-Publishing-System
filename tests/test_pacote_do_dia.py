@@ -314,3 +314,62 @@ class TestEndpointPacote:
         r = _chama("GET", "/api/publicacoes/pacote")
         dados = zipfile.ZipFile(io.BytesIO(r.content)).read("01_Titulo.mp4")
         assert len(dados) == 99
+
+
+class TestVideoLongoSoNoPacoteDoYouTube:
+    """O video longo (7.8) e horizontal e vai so para o YouTube: o pacote do
+    TikTok e o do Instagram nao o levam, e a contagem por plataforma diz isso
+    ao painel (achado no passeio pelas telas: o botao do pacote do TikTok dizia
+    "8 cortes" contando a compilacao e os episodios)."""
+
+    def _longo(self, raiz):
+        job_id = _job_com_cortes(raiz, 1, titulos=["Os melhores"])
+        meta = raiz / job_id / "video_metadata.json"
+        dados = json.loads(meta.read_text(encoding="utf-8"))
+        dados["shorts"][0].update({"formato": "longo", "video_description_for_youtube": "capitulos"})
+        meta.write_text(json.dumps(dados), encoding="utf-8")
+        return job_id
+
+    def test_os_dias_contam_por_plataforma(self, saida):
+        _job_com_cortes(saida, 2)
+        self._longo(saida)
+        dia = _chama("GET", "/api/publicacoes/dias").json()["dias"][0]
+        assert dia["cortes"] == 3
+        assert dia["por_plataforma"] == {"youtube": 3, "tiktok": 2, "instagram": 2}
+
+    def test_o_pacote_do_tiktok_nao_leva_o_video_longo(self, saida):
+        _job_com_cortes(saida, 1, titulos=["Curto"])
+        self._longo(saida)
+        for plataforma, esperado in (("youtube", {"01_Curto.mp4", "01_Os_melhores.mp4"}),
+                                     ("tiktok", {"01_Curto.mp4"}), ("instagram", {"01_Curto.mp4"})):
+            r = _chama("GET", f"/api/publicacoes/pacote?plataforma={plataforma}")
+            assert r.status_code == 200, (plataforma, r.text)
+            videos = {n for n in zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+                      if n.endswith(".mp4")}
+            # A numeracao e por corte do pacote; so o conjunto de titulos importa.
+            assert {n.split("_", 1)[1] for n in videos} == {n.split("_", 1)[1] for n in esperado}, \
+                plataforma
+
+    def test_um_dia_so_de_video_longo_nao_tem_pacote_do_tiktok(self, saida):
+        self._longo(saida)
+        r = _chama("GET", "/api/publicacoes/pacote?plataforma=tiktok")
+        assert r.status_code == 404
+        assert "só para o YouTube" in r.json()["detail"]
+        assert _chama("GET", "/api/publicacoes/pacote?plataforma=youtube").status_code == 200
+        hoje = pacote.hoje()
+        r = _chama("GET", f"/api/publicacoes/pacote?plataforma=instagram&dia={hoje}")
+        assert r.status_code == 404
+        assert "só para o YouTube" in r.json()["detail"]
+
+    def test_sem_dia_vale_o_mais_recente_que_tem_corte_para_a_plataforma(self, saida):
+        """Um dia mais novo so com video longo nao faz o pacote do TikTok
+        responder 404: vale o dia mais recente que tem corte PARA ELE."""
+        curto = _job_com_cortes(saida, 1, titulos=["Antigo"])
+        antigo = time.time() - 3 * 86400
+        for arquivo in (saida / curto).glob("*.mp4"):
+            os.utime(arquivo, (antigo, antigo))
+        self._longo(saida)
+        r = _chama("GET", "/api/publicacoes/pacote?plataforma=tiktok")
+        assert r.status_code == 200, r.text
+        assert pacote.dia_de(antigo) in r.headers.get("content-disposition", "")
+

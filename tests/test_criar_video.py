@@ -290,3 +290,152 @@ def test_os_estagios_sao_os_da_barra():
               if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "stage"
               and n.args and isinstance(n.args[0], ast.Constant)]
     assert tuple(usados) == criar_video.ESTAGIOS
+
+
+# --------------------------------------------------------------------------- #
+# O episodio longo (etapa 7.8)
+# --------------------------------------------------------------------------- #
+
+FALAS_DO_EPISODIO = [f"Na cena {i + 1}, a Lulu anda pela floresta e encontra um amigo novo."
+                     for i in range(8)]
+
+
+def _episodio(ambiente, monkeypatch, pasta, historia=None):
+    """O pedido de um episodio de 2 minutos (8 cenas), e a cascata devolvendo o
+    roteiro dele com capitulos e resumo."""
+    doc = _pedido(pasta)
+    pedido = json.loads((pasta / criar_video.ARQUIVO_DO_PEDIDO).read_text(encoding="utf-8"))
+    pedido.update({"formato": "longo", "duracao_s": 120, "cenas": 8})
+    if historia:
+        pedido["historia"] = historia
+    (pasta / criar_video.ARQUIVO_DO_PEDIDO).write_text(json.dumps(pedido), encoding="utf-8")
+
+    def cascata(prompt, schema, *, call, duration_seconds=None, log=print):
+        ambiente["roteiros"].append(prompt)
+        assert "capitulos" in schema.model_fields and "resumo" in schema.model_fields
+        return ({"titulo": "O amigo novo", "descricao": "A Lulu faz amizade.",
+                 "hashtags": ["lulu"], "resumo": "A Lulu conheceu o Tito na floresta.",
+                 "cenas": [{"fala": f, "imagem": f"scene {i}", "personagens": ["Lulu"]}
+                           for i, f in enumerate(FALAS_DO_EPISODIO)],
+                 "capitulos": [{"titulo": "A floresta", "cena": 1},
+                               {"titulo": "O encontro", "cena": 4},
+                               {"titulo": "A amizade", "cena": 7}]},
+                {"provider": "groq", "input_tokens": 900, "output_tokens": 900})
+
+    import llm_cascade
+    monkeypatch.setattr(llm_cascade, "run", cascata)
+
+    def whisper(caminho):
+        # As palavras do roteiro, espalhadas pela narracao inteira (os blocos
+        # juntos), como o whisper as ouviria.
+        with wave.open(caminho) as w:
+            total = w.getnframes() / w.getframerate()
+        texto = " ".join(FALAS_DO_EPISODIO).split()
+        passo = total / len(texto)
+        return {"language": "pt", "segments": [{"start": 0.0, "end": total, "words": [
+            {"word": " " + p, "start": round(i * passo, 3), "end": round((i + 0.8) * passo, 3)}
+            for i, p in enumerate(texto)]}]}
+
+    import transcribe_backends
+    monkeypatch.setattr(transcribe_backends, "transcribe_media", whisper)
+    # Blocos pequenos: o roteiro de 8 cenas vira 3 chamadas de voz.
+    monkeypatch.setattr(estilos, "CARACTERES_POR_BLOCO", 200)
+    return doc
+
+
+def _medidas(caminho):
+    import re
+    import subprocess
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", caminho], capture_output=True, text=True)
+    return tuple(int(x) for x in re.search(r"Video: .*?(\d{3,4})x(\d{3,4})", r.stderr).groups())
+
+
+def test_cria_o_episodio_longo_deitado_com_capitulos(ambiente, tmp_path, monkeypatch):
+    pasta = tmp_path / "job"
+    pasta.mkdir()
+    # 15 s por bloco: ~46 s de video, o bastante para tres capitulos de 10 s.
+    ambiente["rede"].segundos = 15.0
+    _episodio(ambiente, monkeypatch, pasta,
+              historia={"nome": "A Lulu", "episodio": 2,
+                        "anteriores": [{"episodio": 1, "titulo": "O começo",
+                                        "resumo": "A Lulu chegou na floresta."}]})
+    entregue = criar_video.criar(str(pasta))
+
+    # O roteiro pediu o episodio e leu o anterior.
+    prompt = ambiente["roteiros"][0]
+    assert "Este e o episodio 2" in prompt and "A Lulu chegou na floresta." in prompt
+    # As imagens sao deitadas: medidas trocadas e o enquadramento no pedido.
+    rede = ambiente["rede"]
+    assert len(rede.imagens) == 8
+    campos = dict(rede.imagens[0]["files"])
+    assert (campos["width"][1], campos["height"][1]) == ("1344", "768")
+    assert "Horizontal 16:9 composition" in campos["prompt"][1]
+    # A narracao saiu em 3 blocos, um por chamada, e os blocos foram juntos.
+    assert len(rede.vozes) == 3
+    falado = [v["json"]["contents"][0]["parts"][0]["text"] for v in rede.vozes]
+    assert "\n\n".join(falado).count("Na cena") == 8
+    assert not list(pasta.glob("narracao_bloco_*.wav"))
+    assert _duracao(str(pasta / entregue)) == pytest.approx(3 * 15.0 + 2 * 0.6, abs=0.3)
+    assert _medidas(str(pasta / entregue)) == (1920, 1080)
+
+    roteiro = json.loads((pasta / criar_video.ARQUIVO_DO_ROTEIRO).read_text(encoding="utf-8"))
+    assert (roteiro["historia"], roteiro["episodio"], roteiro["formato"]) == ("A Lulu", 2, "longo")
+    assert roteiro["resumo"] == "A Lulu conheceu o Tito na floresta."
+    meta = json.loads((pasta / "criacao_metadata.json").read_text(encoding="utf-8"))
+    video = meta["shorts"][0]
+    assert video["formato"] == "longo" and meta["criacao"]["formato"] == "longo"
+    assert video["video_title_for_youtube_short"] == "A Lulu - Episódio 2: O amigo novo"
+    assert "video_description_for_tiktok" not in video
+    descricao = video["video_description_for_youtube"]
+    assert descricao.startswith("A Lulu faz amizade.\n\nCapítulos\n0:00 A floresta\n")
+    assert descricao.endswith("#lulu")
+    # Os capitulos comecam quando a cena deles comeca (a cena 4 e a 7).
+    assert [c["titulo"] for c in video["capitulos"]] == ["A floresta", "O encontro", "A amizade"]
+    assert video["capitulos"][0]["inicio"] == 0
+    assert 3 <= video["capitulos"][1]["inicio"] < video["capitulos"][2]["inicio"]
+
+
+def test_a_voz_que_acaba_no_meio_do_episodio_guarda_os_blocos_prontos(ambiente, tmp_path,
+                                                                      monkeypatch):
+    pasta = tmp_path / "job"
+    pasta.mkdir()
+    _episodio(ambiente, monkeypatch, pasta)
+    rede = ambiente["rede"]
+    original = rede.__call__
+
+    def cota_acaba_no_segundo(url, **kw):
+        if "api.cloudflare.com" not in url and len(rede.vozes) == 1:
+            return 429, "application/json", b'{"error": {"status": "RESOURCE_EXHAUSTED"}}'
+        return original(url, **kw)
+
+    monkeypatch.setattr(midia_ia, "_post", cota_acaba_no_segundo)
+    with pytest.raises(midia_ia.CotaEsgotada):
+        criar_video.criar(str(pasta))
+    assert (pasta / "narracao_bloco_01.wav").is_file()
+    assert not (pasta / "narracao_bloco_02.wav").exists()
+
+    # No dia seguinte: so os blocos que faltam, nenhuma imagem de novo.
+    monkeypatch.setattr(midia_ia, "_post", rede)
+    criar_video.criar(str(pasta))
+    assert len(rede.vozes) == 3 and len(rede.imagens) == 8
+    assert (pasta / "criacao_metadata.json").is_file()
+
+
+def test_o_episodio_avulso_tem_o_titulo_do_roteiro(ambiente, tmp_path, monkeypatch):
+    pasta = tmp_path / "job"
+    pasta.mkdir()
+    _episodio(ambiente, monkeypatch, pasta)
+    criar_video.criar(str(pasta))
+    meta = json.loads((pasta / "criacao_metadata.json").read_text(encoding="utf-8"))
+    assert meta["shorts"][0]["video_title_for_youtube_short"] == "O amigo novo"
+    roteiro = json.loads((pasta / criar_video.ARQUIVO_DO_ROTEIRO).read_text(encoding="utf-8"))
+    assert "historia" not in roteiro and roteiro["formato"] == "longo"
+
+
+def test_o_pedido_do_episodio_volta_para_os_limites():
+    assert criar_video.episodio_do_pedido({"formato": "curto"}) is None
+    assert criar_video.episodio_do_pedido({}) is None
+    e = criar_video.episodio_do_pedido({"formato": "longo", "duracao_s": 5000, "cenas": 99})
+    assert e["duracao_s"] == 600 and e["cenas"] == 40
+    e = criar_video.episodio_do_pedido({"formato": "longo", "duracao_s": "x"})
+    assert e["duracao_s"] == 120 and e["cenas"] == 8 and e["historia"] is None

@@ -252,9 +252,11 @@ class Source(Base, TenantScoped):
         # `ia` (7.7): o video criado por IA nao tem video de origem -- a
         # fonte dele e a ideia, e o `input` guarda o texto dela. Entrou pela
         # migracao `b8d4f1a2c9e3` e, num banco que ja existe, pelo `db_acerto`.
+        # `compilacao` (7.8): o video longo feito dos cortes de outros
+        # projetos; o `input` diz quantos e de onde. Migracao `c5f0a8e2d417`.
         CheckConstraint(
             "adapter in ('youtube','youtube-channel','twitch-vod','twitch-live',"
-            "'gdrive','upload','direct','ia')", name="ck_sources_adapter"),
+            "'gdrive','upload','direct','ia','compilacao')", name="ck_sources_adapter"),
         CheckConstraint("duration_ms is null or duration_ms >= 0",
                         name="ck_sources_duration_nao_negativa"),
         Index("ix_sources_tenant_id_id", "tenant_id", "id", unique=True),

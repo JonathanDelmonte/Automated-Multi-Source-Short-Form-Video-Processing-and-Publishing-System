@@ -13,15 +13,23 @@ token, abrir a sessao de upload, mandar o arquivo) e o cliente oficial traz
 ja carrega torch e mediapipe. O `httpx` ja e dependencia e faz as tres.
 
 **O que fala com a rede esta isolado em funcoes pequenas** (`_token_de_acesso`,
-`_abrir_sessao`, `_enviar_arquivo`) e o que decide esta em funcoes puras
-(`corpo_do_video`, `privacidade`, `erro_da_resposta`). Nao e gosto por camadas:
-a parte de rede deste driver nao tem como ser exercitada no CI, e a parte que
-decide tem -- separadas, o teste alcanca tudo o que da para alcancar.
+`_abrir_sessao`, `_enviar_arquivo`, `_put`) e o que decide esta em funcoes
+puras (`corpo_do_video`, `privacidade`, `erro_da_resposta`, `proximo_byte`). Nao
+e gosto por camadas: a parte de rede deste driver nao tem como ser exercitada no
+CI, e a parte que decide tem -- separadas, o teste alcanca tudo o que da para
+alcancar.
+
+**O video longo (7.8) sobe em pedacos, com retomada** (`_enviar_em_pedacos`):
+um episodio de 10 minutos tem centenas de megabytes, e um PUT so, numa conexao
+de casa, perde tudo na primeira queda. O Short continua no PUT unico, o caminho
+que ja funcionava.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
+import time
 
 from . import quota
 from .base import (Account, Cost, PostMeta, PublishOptions, PublishResult,
@@ -44,6 +52,15 @@ MAX_TAGS_CHARS = 500
 REF_PADRAO = "vault://env/youtube/{handle}"
 
 PRIVACIDADES = ("public", "private", "unlisted")
+
+#: Acima disto o envio e em pedacos, com retomada (7.8). Um Short tem alguns
+#: megabytes e continua num PUT so.
+LIMITE_DE_UM_PUT = 64 * 1024 * 1024
+#: O pedaco do envio retomavel: a API exige multiplo de 256 KiB.
+PEDACO = 8 * 1024 * 1024
+#: Quantas quedas seguidas no MESMO ponto do arquivo antes de desistir. Cada
+#: pedaco que chega zera a conta: uma conexao ruim, mas que anda, termina.
+TENTATIVAS_POR_PEDACO = 6
 
 
 def ref_de(account: Account) -> str:
@@ -177,16 +194,87 @@ def _abrir_sessao(token: str, corpo: dict, tamanho: int) -> str:
     return destino
 
 
-def _enviar_arquivo(destino: str, caminho: str) -> dict:
-    """Manda o arquivo inteiro num PUT so.
+def proximo_byte(range_header) -> int:
+    """De onde o proximo pedaco comeca: o `Range: bytes=0-N` da resposta 308
+    diz o que o YouTube ja guardou (N inclusive). Sem o cabecalho, nada foi
+    guardado ainda."""
+    achou = re.match(r"\s*bytes=0-(\d+)\s*$", str(range_header or ""))
+    return int(achou.group(1)) + 1 if achou else 0
 
-    Um corte tem no maximo 60 s e alguns megabytes -- a fonte de horas nunca
-    chega aqui. Fatiar em blocos so faria sentido para retomar upload longo, e
-    retomar um arquivo de 20 MB e mais codigo que refazer.
+
+def _put(destino: str, dados: bytes, cabecalhos: dict) -> tuple:
+    """Um PUT na sessao de envio: `(status, cabecalhos em minusculas, texto)`."""
+    import httpx
+
+    resposta = httpx.put(destino, content=dados, timeout=600.0, headers=cabecalhos)
+    return (resposta.status_code, {k.lower(): v for k, v in resposta.headers.items()},
+            resposta.text)
+
+
+def _enviar_em_pedacos(destino: str, caminho: str, put=None, esperar=time.sleep) -> dict:
+    """O envio retomavel do YouTube, pedaco a pedaco.
+
+    Cada pedaco vai com `Content-Range: bytes a-b/total`; o 308 responde ate
+    onde o YouTube guardou, e o proximo parte dali (ele pode ter guardado menos
+    do que recebeu). Uma queda de rede, um 5xx, 408 ou 429 pergunta onde parou
+    (`bytes */total`, sem corpo) e retoma, esperando mais a cada queda seguida.
+    O 404/410 da pergunta e a sessao que expirou (ela dura uma semana): ai nao
+    ha o que retomar, e o erro sobe para a publicacao tentar de novo inteira.
     """
+    put = put or _put
+    total = os.path.getsize(caminho)
+    inicio, quedas = 0, 0
+    with open(caminho, "rb") as fh:
+        while True:
+            fh.seek(inicio)
+            dados = fh.read(PEDACO)
+            fim = inicio + len(dados) - 1
+            try:
+                status, cabecalhos, texto = put(destino, dados, {
+                    "Content-Length": str(len(dados)),
+                    "Content-Range": f"bytes {inicio}-{fim}/{total}"})
+            except Exception as e:                   # rede
+                status, cabecalhos, texto = 0, {}, str(e)
+            if status in (200, 201):
+                return json.loads(texto or "{}") if texto else {}
+            if status == 308:
+                inicio, quedas = proximo_byte(cabecalhos.get("range")), 0
+                continue
+            if status and status < 500 and status not in (408, 429):
+                raise erro_da_resposta(status, texto)
+            # Caiu no meio: pergunta ao YouTube quanto chegou e retoma dali.
+            while True:
+                quedas += 1
+                if quedas > TENTATIVAS_POR_PEDACO:
+                    raise PublisherError(
+                        f"o envio parou em {inicio // (1024 * 1024)} de "
+                        f"{total // (1024 * 1024)} MB depois de {TENTATIVAS_POR_PEDACO} "
+                        f"quedas ({status or 'rede'}: {str(texto)[:120]})")
+                esperar(min(60, 2 ** quedas))
+                try:
+                    status, cabecalhos, texto = put(destino, b"", {
+                        "Content-Length": "0", "Content-Range": f"bytes */{total}"})
+                except Exception as e:
+                    status, cabecalhos, texto = 0, {}, str(e)
+                if status in (200, 201):
+                    return json.loads(texto or "{}") if texto else {}
+                if status == 308:
+                    inicio = proximo_byte(cabecalhos.get("range"))
+                    break
+                if status in (404, 410):
+                    raise PublisherError("a sessao de envio do YouTube expirou; a publicacao "
+                                         "precisa ser tentada de novo")
+
+
+def _enviar_arquivo(destino: str, caminho: str) -> dict:
+    """Manda o arquivo: num PUT so ate `LIMITE_DE_UM_PUT` (o Short, que tem
+    alguns megabytes -- o caminho que ja funcionava), e em pedacos com retomada
+    acima disso (o video longo da 7.8)."""
     import httpx
 
     tamanho = os.path.getsize(caminho)
+    if tamanho > LIMITE_DE_UM_PUT:
+        return _enviar_em_pedacos(destino, caminho)
     with open(caminho, "rb") as fh:
         resposta = httpx.put(destino, content=fh, timeout=1800.0, headers={
             "Content-Type": "video/*",

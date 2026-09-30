@@ -249,7 +249,11 @@ function App() {
       else pagina = <Canal key={sub} canalId={sub} aba={extra} subaba={quarta || null} />;
       break;
     case 'criar':
-      pagina = <Criar key={`${sub || ''}-${rota.busca.get('canal') || ''}`} tipo={sub || null} canalInicial={rota.busca.get('canal')} />;
+      pagina = (
+        <Criar key={`${sub || ''}-${rota.busca.get('canal') || ''}-${rota.busca.get('projeto') || ''}`}
+               tipo={sub || null} canalInicial={rota.busca.get('canal')}
+               modoInicial={rota.busca.get('modo')} projetoInicial={rota.busca.get('projeto')} />
+      );
       break;
     case 'projetos':
       pagina = sub

@@ -1600,6 +1600,75 @@ que ela fazia.
 
 ---
 
+## Passo 16 — Vídeo longo: o episódio e a compilação para o YouTube
+
+Criar → **Vídeo longo** tem dois caminhos. Os dois saem **horizontais**
+(1920x1080), com **capítulos** na descrição, e **vão só para o YouTube**: TikTok e
+Instagram são a tela em pé. Publicado no canal inteiro, o vídeo longo abre só o
+galho do YouTube, e o pacote do dia do TikTok e do Instagram não o leva.
+
+**O episódio criado por IA** é o vídeo do Passo 15, deitado e mais longo — as
+mesmas chaves (Cloudflare e Gemini) e o mesmo estilo salvo no canal:
+- **a duração**, de 2 a 10 minutos, com uma imagem a cada 15 segundos (um
+  episódio de 5 minutos tem 20 cenas). A tela diz quantas imagens ainda cabem
+  hoje; um episódio de 10 minutos (40 imagens) cabe na cota grátis de um dia;
+- **a história**: avulso, uma história que já existe (o episódio novo continua de
+  onde o último parou, e o título sai "A Lulu na floresta - Episódio 2: ...") ou
+  **começar uma história nova**. Enquanto o episódio anterior não terminou, o
+  próximo espera: é do resumo dele que o novo continua;
+- **a ideia**, opcional: numa história, sem ideia ela continua de onde parou.
+
+A narração sai em **blocos de uns 2 minutos e meio**, cada um uma chamada da cota de
+voz do dia. Um episódio de 5 minutos leva uns 15 a 30 minutos neste computador. Se
+parar no meio, **continuar de onde parou**, como no vídeo curto: as imagens e os
+blocos de narração prontos ficam guardados.
+
+**A compilação dos cortes** junta cortes que você já tem — de um projeto ou de
+vários, na ordem que você escolher — num vídeo de "melhores momentos". Cada corte
+sai do **vídeo de origem, deitado**, quando ele ainda está no disco; sem ele, entra
+o próprio corte em pé, no meio da tela, sobre um fundo desfocado (a tela avisa
+antes). Cada corte abre um capítulo com o título dele, a legenda vem da
+transcrição dos projetos, e o crédito das fontes Creative Commons entra na
+descrição sozinho. Nada ali gasta cota. Atalho: na tela de um projeto de cortes,
+**vídeo longo com estes cortes** já abre a compilação com todos escolhidos.
+
+**Subir para o YouTube**: acima de 64 MB o envio é em pedaços, e se a conexão cair
+no meio o programa pergunta ao YouTube até onde chegou e continua dali.
+
+### Roteiro de teste (7.8)
+
+1. **O primeiro episódio.** Criar → Vídeo longo, o canal da Lulu (o do Passo 15,
+   com o estilo pronto), **3 minutos**, história → **começar uma história nova**
+   ("A Lulu na floresta"), uma ideia ("a Lulu se perde e acha um amigo") e
+   **criar o episódio**. Esperar: o log diz cada cena, cada bloco da narração e os
+   capítulos. No fim, assistir: deitado, a Lulu com a cara de sempre, a voz sem
+   emenda aparente entre um bloco e outro, a legenda embaixo e menor que a do
+   vídeo curto, e os capítulos na tela do projeto (clicar num pula para ele).
+2. **O episódio 2.** De novo, a mesma história, **sem ideia**: a tela diz "Este
+   será o episódio 2". Assistir: ele continua a história do 1? O título sai "A
+   Lulu na floresta - Episódio 2: ..."?
+3. **Esperar o anterior.** Criar o episódio 3 e, enquanto ele roda, voltar ao
+   Criar e escolher a mesma história: o botão fica desligado, dizendo que o 3
+   ainda não terminou.
+4. **A compilação.** Num projeto de cortes de um vídeo do YouTube (o do Passo 5
+   serve), **vídeo longo com estes cortes**: os cortes vêm escolhidos, na ordem.
+   Dar um título, **montar a compilação** e assistir: deitado, cada corte do vídeo
+   original (não o corte em pé), meio segundo de escuro entre eles, os capítulos
+   com os títulos dos cortes.
+5. **Subir.** Publicar a compilação (ou um episódio) numa conta do YouTube
+   **conectada** (Passo 8): no YouTube Studio, os capítulos aparecem na barra do
+   vídeo e a descrição tem a lista. Publicando no canal inteiro, conferir na fila
+   que só o galho do YouTube saiu.
+6. **O pacote do dia.** Na Agenda, o pacote do TikTok não conta o vídeo longo; o
+   do YouTube conta.
+
+**O que me mandar de volta**: os dois episódios (ou prints de uma cena de cada) e se
+o 2 continuou o 1, se a voz teve emenda perceptível entre os blocos, o link da
+compilação no YouTube (ou um print dos capítulos na barra), e o log de qualquer
+vídeo que não saiu.
+
+---
+
 ## Armadilhas, todas vindas do código (ou do Windows)
 
 | Sintoma | Causa | Solução |

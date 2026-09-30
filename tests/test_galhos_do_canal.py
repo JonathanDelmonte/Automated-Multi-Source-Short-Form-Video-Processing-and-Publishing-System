@@ -214,3 +214,51 @@ def test_o_galho_do_tiktok_conectado_sobe_pela_api_e_so_para_voce(ambiente, monk
     assert fila["tiktok"]["status"] == "published"
     assert fila["tiktok"]["posted_at"] and fila["tiktok"]["url"] is None
     assert fila["youtube"]["status"] == "scheduled" and fila["youtube"]["posted_at"] is None
+
+
+# --------------------------------------------------------------------------- #
+# O video longo so vai para o YouTube (etapa 7.8)
+# --------------------------------------------------------------------------- #
+
+def _projeto_longo(raiz):
+    """O episodio de IA ou a compilacao: um video so, `formato: longo`, com a
+    descricao do YouTube e os capitulos."""
+    job_id = _projeto(raiz, 1)
+    meta = raiz / job_id / "v_metadata.json"
+    data = json.loads(meta.read_text())
+    data["shorts"][0].update({
+        "formato": "longo", "video_title_for_youtube_short": "A Lulu - Episódio 2: O susto",
+        "video_description_for_youtube": "A Lulu volta.\n\nCapítulos\n0:00 A\n1:00 B\n2:00 C",
+    })
+    del data["shorts"][0]["video_description_for_tiktok"]
+    del data["shorts"][0]["video_description_for_instagram"]
+    meta.write_text(json.dumps(data))
+    return job_id
+
+
+def test_o_video_longo_so_abre_o_galho_do_youtube(ambiente):
+    job_id = _projeto_longo(ambiente)
+    canal = _canal()
+    r = _chama("POST", "/api/publicar", {"job_id": job_id, "channel_id": canal["id"]})
+    assert r.status_code == 200, r.text
+    por_plataforma = {x["platform"]: x for x in r.json()["resultados"]}
+    assert por_plataforma["youtube"]["ok"] is True
+    for plataforma in ("tiktok", "instagram"):
+        assert por_plataforma[plataforma]["ok"] is False
+        assert por_plataforma[plataforma]["pulado"] is True
+        assert "só para o YouTube" in por_plataforma[plataforma]["detail"]
+    assert [p["account"]["platform"] for p in _fila()] == ["youtube"]
+    # A legenda pronta para colar e a do YouTube, com os capitulos.
+    youtube = (ambiente / job_id / "v_clip_1.youtube.txt").read_text(encoding="utf-8")
+    assert "0:00 A\n1:00 B" in youtube
+
+
+def test_o_video_longo_nao_entra_na_agenda_do_tiktok(ambiente):
+    job_id = _projeto_longo(ambiente)
+    canal = _canal(("youtube", "tiktok"))
+    r = _chama("POST", "/api/agendar", {"job_id": job_id, "channel_id": canal["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["agendados"] == 1
+    assert [p["account"]["platform"] for p in _fila()] == ["youtube"]
+    pulados = [x for x in r.json()["resultados"] if x.get("pulado")]
+    assert [x["platform"] for x in pulados] == ["tiktok"]

@@ -575,3 +575,141 @@ class TestAjudanteDeOAuth:
         monkeypatch.setattr("builtins.input", lambda *a: "")
         assert youtube_oauth.main(["--handle", "x"]) == 2
         assert "Client ID" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# O envio em pedacos, com retomada (etapa 7.8)
+# --------------------------------------------------------------------------- #
+
+import re as _re
+
+from publishers import youtube_api
+
+
+class YouTubeDeMentira:
+    """A sessao de envio retomavel como a documentacao do YouTube descreve: o
+    308 com o `Range` do que ficou guardado, o `bytes */total` que pergunta
+    onde parou, e o 200 com o video no ultimo pedaco."""
+
+    def __init__(self, total, quedas=(), guarda_so=None, expira=False):
+        self.total = total
+        self.recebido = bytearray()
+        self.pedidos = []
+        self.quedas = list(quedas)          # numeros dos pedidos que caem
+        self.guarda_so = guarda_so          # guarda so N bytes de um pedaco
+        self.expira = expira
+
+    def _faixa(self):
+        return {"range": f"bytes=0-{len(self.recebido) - 1}"} if self.recebido else {}
+
+    def __call__(self, destino, dados, cabecalhos):
+        faixa = cabecalhos["Content-Range"]
+        self.pedidos.append(faixa)
+        if faixa.startswith("bytes */"):
+            if self.expira:
+                return 404, {}, "sessao expirada"
+            if len(self.recebido) == self.total:
+                return 200, {}, json.dumps({"id": "vid123"})
+            return 308, self._faixa(), ""
+        if len(self.pedidos) in self.quedas:
+            self.quedas.remove(len(self.pedidos))
+            raise ConnectionError("a conexao caiu")
+        inicio, fim, total = map(int, _re.match(r"bytes (\d+)-(\d+)/(\d+)", faixa).groups())
+        assert inicio == len(self.recebido) and total == self.total
+        assert int(cabecalhos["Content-Length"]) == len(dados) == fim - inicio + 1
+        if self.guarda_so is not None:
+            dados, self.guarda_so = dados[:self.guarda_so], None
+        self.recebido += dados
+        if len(self.recebido) == self.total:
+            return 200, {}, json.dumps({"id": "vid123", "status": {"privacyStatus": "public"}})
+        return 308, self._faixa(), ""
+
+
+@pytest.fixture()
+def arquivo_grande(tmp_path, monkeypatch):
+    monkeypatch.setattr(youtube_api, "PEDACO", 256 * 1024)
+    conteudo = os.urandom(1024 * 1024 + 5)
+    caminho = tmp_path / "episodio.mp4"
+    caminho.write_bytes(conteudo)
+    return str(caminho), conteudo
+
+
+def test_proximo_byte():
+    assert youtube_api.proximo_byte("bytes=0-262143") == 262144
+    assert youtube_api.proximo_byte(None) == 0
+    assert youtube_api.proximo_byte("bytes=10-20") == 0
+    assert youtube_api.proximo_byte("lixo") == 0
+
+
+def test_o_video_longo_sobe_em_pedacos(arquivo_grande):
+    caminho, conteudo = arquivo_grande
+    servidor = YouTubeDeMentira(len(conteudo))
+    resposta = youtube_api._enviar_em_pedacos("https://sessao", caminho, put=servidor)
+    assert resposta["id"] == "vid123" and bytes(servidor.recebido) == conteudo
+    assert servidor.pedidos[0] == f"bytes 0-262143/{len(conteudo)}"
+    assert servidor.pedidos[-1] == f"bytes 1048576-1048580/{len(conteudo)}"
+    assert len(servidor.pedidos) == 5
+
+
+def test_a_queda_pergunta_onde_parou_e_retoma(arquivo_grande):
+    caminho, conteudo = arquivo_grande
+    servidor = YouTubeDeMentira(len(conteudo), quedas=[3])
+    esperas = []
+    resposta = youtube_api._enviar_em_pedacos("https://sessao", caminho, put=servidor,
+                                              esperar=esperas.append)
+    assert resposta["id"] == "vid123" and bytes(servidor.recebido) == conteudo
+    assert f"bytes */{len(conteudo)}" in servidor.pedidos and esperas == [2]
+
+
+def test_o_que_o_youtube_guardou_manda_no_proximo_pedaco(arquivo_grande):
+    """Ele pode guardar menos do que recebeu: o proximo pedaco parte do Range."""
+    caminho, conteudo = arquivo_grande
+    servidor = YouTubeDeMentira(len(conteudo), guarda_so=1000)
+    youtube_api._enviar_em_pedacos("https://sessao", caminho, put=servidor)
+    assert bytes(servidor.recebido) == conteudo
+    assert servidor.pedidos[1].startswith("bytes 1000-")
+
+
+def test_quedas_demais_no_mesmo_ponto_desistem(arquivo_grande):
+    caminho, conteudo = arquivo_grande
+
+    def sempre_503(destino, dados, cabecalhos):
+        if cabecalhos["Content-Range"].startswith("bytes */"):
+            return 503, {}, "backend error"
+        return 503, {}, "backend error"
+
+    with pytest.raises(PublisherError, match="o envio parou em 0 de 1 MB"):
+        youtube_api._enviar_em_pedacos("https://sessao", caminho, put=sempre_503,
+                                       esperar=lambda s: None)
+
+
+def test_a_sessao_que_expirou_nao_se_retoma(arquivo_grande):
+    caminho, conteudo = arquivo_grande
+    servidor = YouTubeDeMentira(len(conteudo), quedas=[2], expira=True)
+    with pytest.raises(PublisherError, match="expirou"):
+        youtube_api._enviar_em_pedacos("https://sessao", caminho, put=servidor,
+                                       esperar=lambda s: None)
+
+
+def test_o_pedido_recusado_nao_insiste(arquivo_grande):
+    caminho, _ = arquivo_grande
+
+    def recusa(destino, dados, cabecalhos):
+        return 403, {}, json.dumps({"error": {"errors": [{"reason": "quotaExceeded"}],
+                                              "message": "quota"}})
+
+    with pytest.raises(QuotaEsgotada):
+        youtube_api._enviar_em_pedacos("https://sessao", caminho, put=recusa)
+
+
+def test_so_o_arquivo_grande_vai_em_pedacos(tmp_path, monkeypatch):
+    usados = []
+    monkeypatch.setattr(youtube_api, "_enviar_em_pedacos",
+                        lambda destino, caminho: usados.append(caminho) or {"id": "x"})
+    grande = tmp_path / "grande.mp4"
+    grande.write_bytes(b"\x00" * 2048)
+    monkeypatch.setattr(youtube_api, "LIMITE_DE_UM_PUT", 1024)
+    assert youtube_api._enviar_arquivo("https://sessao", str(grande)) == {"id": "x"}
+    assert usados == [str(grande)]
+    # O PEDACO respeita a regra da API: multiplo de 256 KiB.
+    assert youtube_api.PEDACO % (256 * 1024) == 0

@@ -6,6 +6,12 @@
   arquivo -- quem monta o caminho e este modulo, nunca o que veio da tela.
 - **Cada video criado** (`creations`): o job, a ideia e o roteiro. A automacao
   le daqui os temas ja feitos para nao repetir.
+- **As historias de varios episodios** (7.8) moram no roteiro guardado
+  (`script_json`: `historia`, `episodio`, `resumo`), e nao numa tabela nova:
+  `creations` ja existia, e o `create_all` do boot nao acrescenta coluna em
+  tabela que existe. O pedido de um episodio ja nasce com a historia e o
+  numero; o roteiro inteiro (com o resumo) so chega no fim do job -- e e isso
+  que diz que o episodio terminou.
 
 O CRUD do estilo **levanta**, como o dos canais: e acao de quem esta na tela,
 e "o banco nao respondeu" e a resposta certa (o painel mostra o 503). O
@@ -287,3 +293,74 @@ async def temas_do_canal(canal_id: Optional[str], limite: int = 30) -> list:
                                            if l.created_at else datetime.min),
                     reverse=True)
     return [(l.title or l.idea or "").strip() for l in linhas[:limite] if (l.title or l.idea)]
+
+
+# --------------------------------------------------------------------------- #
+# As historias de varios episodios (7.8)
+# --------------------------------------------------------------------------- #
+
+def _numero(valor) -> int:
+    try:
+        return max(0, int(valor))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def episodios_da_historia(canal_id: Optional[str], nome: Optional[str]) -> list:
+    """Os episodios de uma historia do canal, em ordem: `[{"job_id",
+    "episodio", "titulo", "resumo", "pronto", "historia"}]`. `pronto` e o
+    episodio que terminou: o roteiro inteiro chegou ao banco no fim do job.
+
+    **Levanta** se o banco nao responde, ao contrario dos temas: um episodio
+    novo que nao sabe dos anteriores sairia com o numero errado e sem
+    continuar a historia -- e melhor a tela dizer que o banco caiu."""
+    chave = estilos.chave_da_historia(nome)
+    if not chave or not _ID.match(canal_id or ""):
+        return []
+    async with db.tenant() as t:
+        linhas = await t.all(db_models.Creation, db_models.Creation.channel_id == canal_id)
+    saida = []
+    for linha in linhas:
+        roteiro = linha.script_json if isinstance(linha.script_json, dict) else {}
+        if estilos.chave_da_historia(roteiro.get("historia")) != chave:
+            continue
+        saida.append({"job_id": linha.job_id, "episodio": _numero(roteiro.get("episodio")),
+                      "titulo": linha.title or roteiro.get("titulo") or "",
+                      "resumo": roteiro.get("resumo") or "",
+                      "pronto": bool(roteiro.get("cenas")),
+                      "historia": estilos.nome_da_historia(roteiro.get("historia"))})
+    return sorted(saida, key=lambda e: e["episodio"])
+
+
+async def historias_do_canal(canal_id: Optional[str]) -> list:
+    """As historias do canal, da mais recente para a mais antiga, para a tela
+    escolher em qual continuar: `[{"nome", "episodios", "ultimo": {...}}]`.
+    O nome e a grafia do episodio mais recente. Levanta como a de cima."""
+    if not _ID.match(canal_id or ""):
+        return []
+    async with db.tenant() as t:
+        linhas = await t.all(db_models.Creation, db_models.Creation.channel_id == canal_id)
+    grupos: dict = {}
+    for linha in linhas:
+        roteiro = linha.script_json if isinstance(linha.script_json, dict) else {}
+        chave = estilos.chave_da_historia(roteiro.get("historia"))
+        if not chave:
+            continue
+        grupos.setdefault(chave, []).append((linha, roteiro))
+    saida = []
+    for itens in grupos.values():
+        itens.sort(key=lambda par: _numero(par[1].get("episodio")))
+        linha, roteiro = itens[-1]
+        quando = linha.created_at.replace(tzinfo=None) if linha.created_at else datetime.min
+        saida.append({
+            "nome": estilos.nome_da_historia(roteiro.get("historia")),
+            "episodios": len(itens),
+            "ultimo": {"episodio": _numero(roteiro.get("episodio")), "job_id": linha.job_id,
+                       "titulo": linha.title or roteiro.get("titulo") or "",
+                       "pronto": bool(roteiro.get("cenas"))},
+            "_quando": quando,
+        })
+    saida.sort(key=lambda h: h["_quando"], reverse=True)
+    for h in saida:
+        del h["_quando"]
+    return saida

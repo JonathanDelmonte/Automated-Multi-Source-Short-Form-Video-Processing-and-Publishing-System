@@ -735,7 +735,94 @@ cara. O roteiro está no `COMO-EXECUTAR.md`, Passo 15.
 ### 7.8 — Vídeo longo
 
 A mesma máquina da 7.7, em episódios mais longos para o YouTube: uma novelinha de
-vários minutos. Depende de a 7.7 estar de pé.
+vários minutos. Depende de a 7.7 estar de pé. O cartão do Criar já prometia os
+dois caminhos — "um vídeo horizontal longo, montado a partir dos cortes ou de um
+roteiro" —, e a etapa entrega os dois.
+
+**Pronto quando:** um canal com um estilo salvo cria um episódio horizontal de
+vários minutos que continua a história do episódio anterior, sem nenhum serviço
+pago; e os cortes de um projeto viram um vídeo horizontal de "melhores momentos",
+com capítulos, que sobe para o YouTube em partes, retomando se a conexão cair.
+
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.8a | motor: o episódio longo por IA — horizontal, de 2 a 10 minutos, a narração em blocos, os capítulos e a história que continua | feita (29-set) |
+| 7.8b | motor: a compilação horizontal dos cortes — da origem deitada quando ela está no disco, com capítulos e legenda | feita (29-set) |
+| 7.8c | motor: o vídeo longo vai só para o YouTube — o envio em partes com retomada, os capítulos na descrição, o galho do canal | feita (30-set) |
+| 7.8d | painel: Criar → Vídeo longo (o episódio e a compilação), o vídeo deitado no projeto e a publicação só no YouTube | feita (30-set) |
+| 7.8e | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (30-set) |
+
+**Como o vídeo longo ficou, e por quê:**
+
+- **Dois caminhos na mesma tela** (Criar → Vídeo longo): o episódio criado por
+  IA, no estilo salvo no canal, e a compilação dos cortes que já existem. Os dois
+  são horizontais (1920x1080) e **vão só para o YouTube**: TikTok e Instagram são
+  a tela em pé. Publicado no canal inteiro, ele abre só o galho do YouTube; a
+  tela de publicar nem oferece as outras contas, e o pacote do dia do TikTok e do
+  Instagram não o leva.
+- **O episódio é o vídeo de IA da 7.7, deitado e mais longo.** A duração vai de 2
+  a 10 minutos, com uma imagem a cada 15 segundos de fala (um episódio de 5
+  minutos tem 20 cenas). A cota é conferida pela duração escolhida, antes do
+  clique: um episódio de 10 minutos (40 imagens) cabe na cota grátis de um dia,
+  e a tela diz quantas imagens ainda cabem hoje.
+- **A narração sai em blocos de uns dois minutos e meio.** Uma fala de vários
+  minutos numa chamada só é o que a voz grátis do Gemini faz pior (ela acelera,
+  muda e corta); em blocos, cada um é uma chamada da cota de voz do dia, o bloco
+  quebra entre duas cenas e os blocos prontos ficam na pasta — a cota que acabar
+  no terceiro não custa os dois primeiros de novo.
+- **A história continua.** O episódio pode ser avulso ou de uma história: com
+  ela, o roteiro recebe o título e o resumo dos episódios anteriores e continua de
+  onde o último parou, e o vídeo sai com "História - Episódio N: título". Um nome
+  novo começa uma história no episódio 1. Enquanto o episódio anterior não
+  terminou, o próximo espera — é do resumo dele que o novo continua.
+- **Os capítulos seguem as regras do YouTube, ou não saem.** O primeiro em 0:00,
+  pelo menos três, cada um com 10 segundos: uma lista fora disso é ignorada
+  inteira pelo YouTube, sem aviso. No episódio, o roteiro diz onde cada capítulo
+  começa; na compilação, cada corte abre um, com o título dele. Um capítulo curto
+  demais some e o trecho fica com o anterior.
+- **A compilação sai do vídeo de origem, deitado**, quando ele ainda está no
+  disco: o corte vertical jogou fora os lados do quadro. Sem a origem (um upload
+  que a limpeza levou, ou um vídeo de IA), entra o próprio corte em pé, no meio,
+  sobre uma cópia desfocada dele — e a tela avisa antes. Entre um corte e outro,
+  meio segundo de escuro. A legenda é a transcrição dos projetos, no tempo da
+  compilação, e o crédito das fontes Creative Commons entra na descrição sozinho,
+  uma linha por fonte. Nada ali gasta cota: é o ffmpeg do computador.
+- **O envio ao YouTube é em partes, com retomada.** Um episódio tem centenas de
+  megabytes, e um envio só, numa conexão de casa, perde tudo na primeira queda.
+  Acima de 64 MB ele sobe em pedaços de 8 MB; se a conexão cai, o programa
+  pergunta ao YouTube até onde chegou e continua dali. O Short continua como
+  sempre foi.
+- **Tudo é projeto como os outros**: fila, barra, cancelar, a lista de projetos
+  ("episódio 2", "compilação de 4 cortes"), a agenda e a publicação. O episódio
+  que parou continua de onde parou, como o vídeo de IA; a compilação que parou é
+  montada de novo inteira, pelo botão "montar de novo". Os cortes de um projeto
+  viram um vídeo longo pelo atalho "vídeo longo com estes cortes", na tela dele.
+- **O site novo com o programa antigo não cria vídeo longo**: um programa de
+  antes da 7.8 faria um vídeo curto no lugar do episódio, sem erro nenhum. A tela
+  pergunta antes e manda atualizar.
+
+**Onde a 7.8 está (30-set-2026).** O "pronto quando" roda nos testes: o episódio
+de ponta a ponta com o ffmpeg de verdade — deitado, com capítulos e a narração em
+blocos, e o bloco pronto guardado quando a voz acaba no meio
+(`tests/test_criar_video.py`) —, a história que continua e o pedido pela API
+(`tests/test_criacao_no_motor.py`), a compilação de ponta a ponta da origem e do
+corte em pé (`tests/test_compilacao.py`, `tests/test_compilacao_no_motor.py`) e o
+envio em partes com as quedas imitadas (`tests/test_youtube_api.py`). As telas
+foram conferidas com o motor de verdade e um banco de demonstração (o canal da
+Lulu com duas histórias, uma parada no episódio 1; um canal de podcast com um
+projeto com a origem no disco e outro sem), no computador e no celular — e a
+compilação do passeio foi montada de verdade pelo motor: 4 cortes de 2 projetos,
+50 segundos em 1920x1080, com os quatro capítulos. Na conferência saíram quatro
+acertos: o pacote do dia do TikTok e do Instagram levava os vídeos longos (e o
+botão contava com eles); o canal inteiro aparecia como destino do vídeo longo
+com "TikTok, Instagram, YouTube" no nome; a linha do estilo na tela do episódio
+dizia a duração do vídeo curto ("60 s · 8 cenas") ao lado da escolhida; e "1
+cortes". **O que falta ver no PC do autor**: um episódio de verdade (as imagens
+deitadas, a voz em blocos sem emenda aparente, a história continuando no
+episódio 2) e uma compilação subindo para o YouTube com os capítulos na barra do
+vídeo. O roteiro está no `COMO-EXECUTAR.md`, Passo 16.
 
 ### 7.9 — Frota de aparelhos (phone farm)
 
@@ -955,6 +1042,13 @@ curto criado por IA, pelo pedido da primeira mensagem ("vai criar um roteiro
 inteligência artificial, (...) um minuto de vídeo, e vai postar") e pela decisão
 de 26-set sobre o estilo salvo no canal. Depois vieram só pedidos de "continue":
 a etapa seguiu sem mudança de rumo, e o teste continua sendo o do final.
+
+**29-set-2026, ao fechar a 7.7:** "siga para o proximo passo" — a 7.8, o vídeo
+longo, pelo pedido de 26-set ("tem que ter opção de criação de vídeo longo") e
+pelo que o cartão do Criar já prometia: "montado a partir dos cortes ou de um
+roteiro". Os dois caminhos entraram. Depois, de novo só "continue": nenhuma
+decisão nova do autor nesta etapa, e o teste continua sendo o do final, pelo
+Passo 16 do `COMO-EXECUTAR.md`.
 
 ## Fontes
 

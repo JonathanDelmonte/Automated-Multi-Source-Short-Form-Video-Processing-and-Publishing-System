@@ -46,6 +46,16 @@ export const criarVideo = (corpo) => pedir('/api/criacoes', 'POST', corpo);
 
 export const continuarCriacao = (jobId) => pedir(`/api/criacoes/${jobId}/continuar`, 'POST', {});
 
+// O vídeo longo (7.8): as histórias de vários episódios do canal, a compilação
+// dos cortes e os cortes de um projeto para escolher.
+export const lerHistorias = (canalId) => pedir(`/api/canais/${canalId}/historias`);
+
+export const criarCompilacao = (corpo) => pedir('/api/compilacoes', 'POST', corpo);
+
+export const refazerCompilacao = (jobId) => pedir(`/api/compilacoes/${jobId}/refazer`, 'POST', {});
+
+export const lerCortesDoProjeto = (jobId) => pedir(`/api/jobs/${jobId}/cortes`);
+
 // A amostra da voz vem em WAV: devolve um endereço que o <audio> toca.
 export async function ouvirVoz(canalId, voz, instrucao) {
   let res;

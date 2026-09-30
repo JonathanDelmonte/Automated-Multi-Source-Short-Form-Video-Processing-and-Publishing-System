@@ -228,3 +228,73 @@ def test_a_montagem_que_falha_diz_o_erro(ffmpeg, tmp_path):
     with pytest.raises(RuntimeError, match="a montagem falhou"):
         montagem.montar([str(tmp_path / "nao-existe.png")], [1.0], _voz(tmp_path, 1.0),
                         str(tmp_path / "x.mp4"))
+
+
+# --------------------------------------------------------------------------- #
+# O episodio longo (etapa 7.8)
+# --------------------------------------------------------------------------- #
+
+def test_o_episodio_sai_deitado(ffmpeg, tmp_path):
+    saida = str(tmp_path / "episodio.mp4")
+    montagem.montar(_imagens(tmp_path, 2), [1.0, 1.0], _voz(tmp_path, 2.0), saida,
+                    video_args=["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"],
+                    largura=montagem.LARGURA_HORIZONTAL, altura=montagem.ALTURA_HORIZONTAL)
+    assert _medidas(ffmpeg, saida) == (1920, 1080)
+
+
+def test_o_grafo_deitado_amplia_pela_saida():
+    cmd = montagem.comando(["a.png"], [2.0], "voz.wav", "x.mp4", largura=1920, altura=1080)
+    grafo = cmd[cmd.index("-filter_complex") + 1]
+    assert "scale=2880:1620" in grafo and "s=1920x1080" in grafo
+
+
+def _wav(caminho, taxa, segundos, amostra=b"\x01\x00"):
+    with wave.open(str(caminho), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(taxa)
+        w.writeframes(amostra * int(taxa * segundos))
+    return str(caminho)
+
+
+def test_os_blocos_da_narracao_viram_um_wav_com_pausa(tmp_path):
+    a = _wav(tmp_path / "a.wav", 24000, 1.0)
+    b = _wav(tmp_path / "b.wav", 24000, 2.0)
+    saida = str(tmp_path / "narracao.wav")
+    segundos = montagem.juntar_wavs([a, b], saida, pausa_s=0.5)
+    assert segundos == pytest.approx(3.5, abs=0.01)
+    with wave.open(saida) as w:
+        assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 24000)
+        dados = w.readframes(w.getnframes())
+    # A pausa e silencio de verdade, entre os dois blocos.
+    assert dados[24000 * 2:36000 * 2] == b"\x00" * 24000
+    assert not os.path.exists(saida + ".tmp")
+    with pytest.raises(ValueError):
+        montagem.juntar_wavs([], saida)
+
+
+def test_um_bloco_noutra_taxa_e_convertido(ffmpeg, tmp_path):
+    a = _wav(tmp_path / "a.wav", 24000, 1.0)
+    b = _wav(tmp_path / "b.wav", 16000, 1.0)
+    saida = str(tmp_path / "narracao.wav")
+    segundos = montagem.juntar_wavs([a, b], saida, pausa_s=0.5)
+    assert segundos == pytest.approx(2.5, abs=0.05)
+    with wave.open(saida) as w:
+        assert w.getframerate() == 24000
+
+
+def test_a_legenda_deitada_encolhe_a_letra_e_alarga_o_bloco():
+    import template
+    base = template.kwargs_de_legenda({"captions": {"preset": "karaoke_fill"}})
+    deitada = montagem.legenda_horizontal(base)
+    assert deitada["fontsize"] == round(base["fontsize"] * 0.55)
+    assert deitada["max_chars"] == round(base["max_chars"] * 2.2)
+    assert deitada["max_duration"] == pytest.approx(base["max_duration"] * 2.2)
+    assert deitada["margin_v"] == montagem.MARGEM_HORIZONTAL
+    # O resto do preset (cor, fonte, efeito) e o mesmo.
+    assert deitada["highlight_color"] == base["highlight_color"]
+    assert deitada["font_name"] == base["font_name"]
+    assert base["fontsize"] == 44          # o original nao muda
+    for preset in template.PRESETS_DE_LEGENDA:
+        k = montagem.legenda_horizontal(template.kwargs_de_legenda({"captions": {"preset": preset}}))
+        assert 12 <= k["fontsize"] <= 30 and k["max_chars"] <= 48 and k["max_duration"] <= 4.0

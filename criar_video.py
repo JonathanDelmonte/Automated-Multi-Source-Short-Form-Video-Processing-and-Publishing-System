@@ -27,6 +27,20 @@ O pedido vem de `criacao.json`, escrito pelo `app.py` (`/api/criacoes`): o
 estilo (uma copia, para que editar o estilo no meio nao mude um video em
 andamento), a ideia, o idioma e as imagens dos personagens, ja copiadas para
 `referencias/`.
+
+**O episodio longo (7.8) e o mesmo job**, com `"formato": "longo"` no pedido:
+horizontal (1920x1080), de 2 a 10 minutos, com o numero de cenas que a
+duracao pede (`estilos.cenas_do_longo`). Muda o que o tamanho obriga:
+
+- o roteiro traz os `capitulos` (as marcas na barra do YouTube, que vao na
+  descricao) e o `resumo`, que o proximo episodio da mesma historia le para
+  continuar de onde este parou (`historia` no pedido);
+- a narracao sai em BLOCOS de ~2,5 minutos, um arquivo por bloco
+  (`narracao_bloco_NN.wav`), juntos no fim com uma pausa entre eles: uma
+  chamada so faria a voz degradar, e o bloco pronto nao e pedido de novo numa
+  retomada -- cada um e uma chamada da cota do dia;
+- a legenda encolhe para o quadro deitado (`montagem.legenda_horizontal`);
+- o video vai so para o YouTube (`formato: "longo"` no metadata).
 """
 from __future__ import annotations
 
@@ -37,6 +51,7 @@ import sys
 import time
 from typing import List, Optional
 
+import capitulos
 import estilos
 import job_metrics
 import midia_ia
@@ -45,6 +60,8 @@ import montagem
 ARQUIVO_DO_PEDIDO = "criacao.json"
 ARQUIVO_DO_ROTEIRO = "roteiro.json"
 ARQUIVO_DA_VOZ = "narracao.wav"
+#: Um arquivo por bloco da narracao do episodio longo, de 1 em diante.
+ARQUIVO_DO_BLOCO = "narracao_bloco_{:02d}.wav"
 ARQUIVO_DA_TRANSCRICAO = "narracao_transcricao.json"
 ARQUIVO_DA_LEGENDA = "legenda.ass"
 #: Nome neutro: o caminho entra num filtro do ffmpeg, e apostrofo de titulo ali
@@ -64,7 +81,7 @@ class CriacaoFalhou(RuntimeError):
 # O roteiro, pela cascata de texto
 # --------------------------------------------------------------------------- #
 
-def _schema():
+def _schema(longo: bool = False):
     from pydantic import BaseModel
 
     class Cena(BaseModel):
@@ -78,7 +95,47 @@ def _schema():
         hashtags: List[str]
         cenas: List[Cena]
 
-    return Roteiro
+    if not longo:
+        return Roteiro
+
+    class Capitulo(BaseModel):
+        titulo: str
+        cena: int
+
+    class Episodio(BaseModel):
+        titulo: str
+        descricao: str
+        hashtags: List[str]
+        cenas: List[Cena]
+        capitulos: List[Capitulo]
+        resumo: str
+
+    return Episodio
+
+
+def formato_do(pedido: Optional[dict]) -> str:
+    return "longo" if (pedido or {}).get("formato") == "longo" else "curto"
+
+
+def episodio_do_pedido(pedido: Optional[dict]) -> Optional[dict]:
+    """Os numeros do episodio longo (7.8) -- `{duracao_s, cenas, historia}` --,
+    ou None no video curto. A duracao volta para dentro dos limites; as cenas
+    sao as que o `app.py` gravou (e conferiu a cota), ou as da duracao."""
+    if formato_do(pedido) != "longo":
+        return None
+    try:
+        duracao = int(pedido.get("duracao_s") or estilos.DURACAO_LONGA_MIN)
+    except (TypeError, ValueError):
+        duracao = estilos.DURACAO_LONGA_MIN
+    duracao = max(estilos.DURACAO_LONGA_MIN, min(estilos.DURACAO_LONGA_MAX, duracao))
+    try:
+        cenas = int(pedido.get("cenas") or 0)
+    except (TypeError, ValueError):
+        cenas = 0
+    if not estilos.CENAS_LONGAS_MIN <= cenas <= estilos.CENAS_LONGAS_MAX:
+        cenas = estilos.cenas_do_longo(duracao)
+    historia = pedido.get("historia") if isinstance(pedido.get("historia"), dict) else None
+    return {"duracao_s": duracao, "cenas": cenas, "historia": historia}
 
 
 def _chamar_provedor(prompt, schema, provider):
@@ -109,15 +166,24 @@ def _chamar_provedor(prompt, schema, provider):
     return dados, gemini_worker._calculate_cost_analysis(resposta, provider.model)
 
 
-def escrever_roteiro(doc: dict, ideia: str, idioma: str, ja_feitos: list) -> dict:
+def escrever_roteiro(doc: dict, ideia: str, idioma: str, ja_feitos: list,
+                     episodio: Optional[dict] = None) -> dict:
     import llm_cascade
-    prompt = estilos.prompt_do_roteiro(doc, ideia, idioma, ja_feitos)
+    if episodio:
+        prompt = estilos.prompt_do_episodio(doc, ideia, idioma, episodio["duracao_s"],
+                                            episodio["cenas"], episodio.get("historia"),
+                                            ja_feitos)
+    else:
+        prompt = estilos.prompt_do_roteiro(doc, ideia, idioma, ja_feitos)
     try:
-        bruto, custo = llm_cascade.run(prompt, _schema(), call=_chamar_provedor)
+        bruto, custo = llm_cascade.run(prompt, _schema(longo=bool(episodio)),
+                                       call=_chamar_provedor)
     except llm_cascade.AllProvidersFailed as e:
         raise CriacaoFalhou(f"Nenhuma IA de texto escreveu o roteiro: {e}")
     job_metrics.add_llm(custo)
     try:
+        if episodio:
+            return estilos.ler_roteiro(bruto, doc, alvo=episodio["cenas"], longo=True)
         return estilos.ler_roteiro(bruto, doc)
     except estilos.EstiloInvalido as e:
         raise CriacaoFalhou(f"O roteiro veio incompleto: {e}")
@@ -153,6 +219,9 @@ def arquivo_da_cena(pasta: str, i: int) -> Optional[str]:
 
 def gerar_imagens(pasta: str, pedido: dict, roteiro: dict) -> List[str]:
     doc = pedido["estilo"]
+    deitada = formato_do(pedido) == "longo"
+    medidas = ({"largura": midia_ia.LARGURA_HORIZONTAL, "altura": midia_ia.ALTURA_HORIZONTAL}
+               if deitada else {})
     personagens = {p["id"]: p for p in doc.get("personagens") or []}
     refs_prontas = {}
     for pid, relativo in (pedido.get("referencias") or {}).items():
@@ -174,10 +243,10 @@ def gerar_imagens(pasta: str, pedido: dict, roteiro: dict) -> List[str]:
         na_cena = [personagens[pid] for pid in cena.get("personagens") or [] if pid in personagens]
         refs = [refs_prontas[p["id"]] for p in na_cena if p["id"] in refs_prontas]
         com_ref = [p for p in na_cena if p["id"] in refs_prontas]
-        prompt = estilos.prompt_da_cena(doc, cena, com_ref)
+        prompt = estilos.prompt_da_cena(doc, cena, com_ref, horizontal=deitada)
         print(f"🖼️ Cena {i + 1}/{len(cenas)}"
               + (f" com {', '.join(p['nome'] for p in com_ref)}" if com_ref else ""))
-        img = midia_ia.gerar_imagem(prompt, referencias=refs, semente=semente + i)
+        img = midia_ia.gerar_imagem(prompt, referencias=refs, semente=semente + i, **medidas)
         destino = os.path.join(pasta, f"cena_{i + 1:02d}{img.extensao}")
         with open(destino + ".tmp", "wb") as f:
             f.write(img.dados)
@@ -190,18 +259,50 @@ def gerar_imagens(pasta: str, pedido: dict, roteiro: dict) -> List[str]:
     return [arquivo_da_cena(pasta, i) for i in range(len(cenas))]
 
 
-def gerar_voz(pasta: str, pedido: dict, roteiro: dict) -> str:
-    caminho = os.path.join(pasta, ARQUIVO_DA_VOZ)
-    if os.path.isfile(caminho) and os.path.getsize(caminho) > 44:
-        print("🎙️ A narracao ja estava pronta.")
-        return caminho
-    voz = pedido["estilo"].get("voz") or {}
-    audio = midia_ia.narrar(estilos.narracao(roteiro), voz=voz.get("nome") or midia_ia.VOZ_PADRAO,
-                            instrucao=voz.get("instrucao") or "")
+def _gravar_audio(caminho: str, audio) -> None:
     with open(caminho + ".tmp", "wb") as f:
         f.write(audio.wav)
     os.replace(caminho + ".tmp", caminho)
-    print(f"🎙️ Narracao de {audio.segundos:.1f}s na voz {audio.voz} ({audio.modelo}).")
+
+
+def _pronto(caminho: str) -> bool:
+    return os.path.isfile(caminho) and os.path.getsize(caminho) > 44
+
+
+def gerar_voz(pasta: str, pedido: dict, roteiro: dict) -> str:
+    caminho = os.path.join(pasta, ARQUIVO_DA_VOZ)
+    if _pronto(caminho):
+        print("🎙️ A narracao ja estava pronta.")
+        return caminho
+    voz = pedido["estilo"].get("voz") or {}
+    nome, instrucao = voz.get("nome") or midia_ia.VOZ_PADRAO, voz.get("instrucao") or ""
+    if formato_do(pedido) != "longo":
+        audio = midia_ia.narrar(estilos.narracao(roteiro), voz=nome, instrucao=instrucao)
+        _gravar_audio(caminho, audio)
+        print(f"🎙️ Narracao de {audio.segundos:.1f}s na voz {audio.voz} ({audio.modelo}).")
+        return caminho
+    # O episodio longo: um bloco por chamada, e o bloco pronto fica na pasta --
+    # a cota que acabar no terceiro bloco nao custa os dois primeiros amanha.
+    blocos = estilos.blocos_de_narracao(roteiro)
+    arquivos = []
+    for k, bloco in enumerate(blocos):
+        arquivo = os.path.join(pasta, ARQUIVO_DO_BLOCO.format(k + 1))
+        if _pronto(arquivo):
+            print(f"🎙️ Bloco {k + 1}/{len(blocos)} da narracao ja estava pronto.")
+        else:
+            audio = midia_ia.narrar(estilos.texto_do_bloco(roteiro, bloco), voz=nome,
+                                    instrucao=instrucao)
+            _gravar_audio(arquivo, audio)
+            print(f"🎙️ Bloco {k + 1}/{len(blocos)} da narracao: {audio.segundos:.1f}s na voz "
+                  f"{audio.voz} ({audio.modelo}).")
+        arquivos.append(arquivo)
+    segundos = montagem.juntar_wavs(arquivos, caminho)
+    for arquivo in arquivos:
+        try:
+            os.remove(arquivo)
+        except OSError:
+            pass
+    print(f"🎙️ Narracao de {segundos:.1f}s em {len(blocos)} bloco(s).")
     return caminho
 
 
@@ -256,7 +357,7 @@ def transcricao_do_roteiro(roteiro: dict, palavras: list, transcricao: Optional[
 
 
 def gerar_legenda(pasta: str, pedido: dict, transcricao: Optional[dict],
-                  segundos: float) -> Optional[str]:
+                  segundos: float, horizontal: bool = False) -> Optional[str]:
     preset = ((pedido["estilo"].get("legenda") or {}).get("preset")) or "karaoke_fill"
     if preset == "nenhuma" or not palavras_de(transcricao):
         return None
@@ -265,6 +366,8 @@ def gerar_legenda(pasta: str, pedido: dict, transcricao: Optional[dict],
     spec = {"captions": {"preset": preset}}
     kwargs = template.kwargs_de_legenda(spec)
     kwargs["margin_v"] = template.margem_vertical(spec)
+    if horizontal:
+        kwargs = montagem.legenda_horizontal(kwargs)
     caminho = os.path.join(pasta, ARQUIVO_DA_LEGENDA)
     if not subtitles.generate_ass(transcricao, 0.0, segundos, caminho, **kwargs):
         return None
@@ -276,8 +379,22 @@ def texto_do_post(roteiro: dict) -> str:
     return " ".join(p for p in (roteiro.get("descricao") or "", tags) if p).strip()
 
 
+def capitulos_do_episodio(roteiro: dict, inicios: List[float], total_s: float) -> list:
+    """Os capitulos do roteiro no tempo do video: cada um comeca quando a cena
+    dele comeca. Ja dentro das regras do YouTube (`capitulos.validos`)."""
+    pares = []
+    for c in roteiro.get("capitulos") or []:
+        try:
+            k = int(c.get("cena"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= k < len(inicios):
+            pares.append((inicios[k], c.get("titulo")))
+    return capitulos.validos(pares, total_s)
+
+
 def metadata(pedido: dict, roteiro: dict, arquivo: str, segundos: float,
-             transcricao: Optional[dict]) -> dict:
+             transcricao: Optional[dict], inicios: Optional[List[float]] = None) -> dict:
     texto = texto_do_post(roteiro)
     curto = {
         "start": 0.0, "end": round(segundos, 3),
@@ -288,10 +405,27 @@ def metadata(pedido: dict, roteiro: dict, arquivo: str, segundos: float,
         "criacao": {"estilo_id": pedido.get("estilo_id"), "ideia": pedido.get("ideia") or "",
                     "cenas": len(roteiro.get("cenas") or [])},
     }
+    geral = {"titulo": roteiro["titulo"], "arquivo": arquivo, "canal_id": pedido.get("canal_id")}
+    if formato_do(pedido) == "longo":
+        # O episodio (7.8) vai so para o YouTube: a descricao e a dele, com os
+        # capitulos, e o titulo diz a historia e o numero do episodio.
+        lista = capitulos_do_episodio(roteiro, inicios or [], segundos)
+        del curto["video_description_for_tiktok"], curto["video_description_for_instagram"]
+        curto["video_title_for_youtube_short"] = estilos.titulo_do_episodio(
+            roteiro.get("historia"), roteiro.get("episodio"), roteiro["titulo"],
+            pedido.get("idioma"))
+        curto["video_description_for_youtube"] = capitulos.na_descricao(
+            roteiro.get("descricao") or "", lista, pedido.get("idioma"),
+            roteiro.get("hashtags") or [])
+        curto["formato"] = "longo"
+        curto["capitulos"] = [{"inicio": t, "titulo": n} for t, n in lista]
+        curto["criacao"].update({"formato": "longo", "historia": roteiro.get("historia"),
+                                 "episodio": roteiro.get("episodio")})
+        geral.update({"formato": "longo", "historia": roteiro.get("historia"),
+                      "episodio": roteiro.get("episodio")})
     return {"shorts": [curto],
             "transcript": transcricao or {"language": pedido.get("idioma") or "", "segments": []},
-            "criacao": {"titulo": roteiro["titulo"], "arquivo": arquivo,
-                        "canal_id": pedido.get("canal_id")}}
+            "criacao": geral}
 
 
 def criar(pasta: str) -> str:
@@ -302,21 +436,35 @@ def criar(pasta: str) -> str:
         raise CriacaoFalhou("O pedido da criacao (criacao.json) nao esta na pasta do projeto.")
     doc = estilos.normalizar(pedido["estilo"])
     pedido["estilo"] = doc
+    episodio = episodio_do_pedido(pedido)
+    longo = episodio is not None
 
     with job_metrics.stage("c1_roteiro"):
         caminho_do_roteiro = os.path.join(pasta, ARQUIVO_DO_ROTEIRO)
         roteiro = _ler_json(caminho_do_roteiro)
         if roteiro is None:
-            print("✍️ Escrevendo o roteiro...")
+            print("✍️ Escrevendo o roteiro" + (f" de um episodio de {episodio['duracao_s'] // 60} "
+                                               f"minutos..." if longo else "..."))
             roteiro = escrever_roteiro(doc, pedido.get("ideia") or "",
                                        estilos.nome_do_idioma(pedido.get("idioma")),
-                                       pedido.get("ja_feitos") or [])
+                                       pedido.get("ja_feitos") or [], episodio)
+            if longo:
+                # A historia e o numero vao com o roteiro para o banco no fim
+                # do job: e dali que o proximo episodio le o resumo deste.
+                roteiro["formato"] = "longo"
+                historia = episodio.get("historia") or {}
+                if historia.get("nome"):
+                    roteiro["historia"] = historia["nome"]
+                    roteiro["episodio"] = int(historia.get("episodio") or 1)
             _gravar_json(caminho_do_roteiro, roteiro)
         else:
             print("✍️ O roteiro ja estava pronto.")
         print(f"   \"{roteiro['titulo']}\" -- {len(roteiro['cenas'])} cenas")
         for i, cena in enumerate(roteiro["cenas"]):
             print(f"   {i + 1}. {cena['fala']}")
+        if longo and roteiro.get("capitulos"):
+            print("   Capitulos: " + "; ".join(f"{c['titulo']} (cena {c['cena'] + 1})"
+                                                for c in roteiro["capitulos"]))
 
     with job_metrics.stage("c2_imagens"):
         imagens = gerar_imagens(pasta, pedido, roteiro)
@@ -332,7 +480,7 @@ def criar(pasta: str) -> str:
                                                 palavras_de(ouvida))
         transcricao = transcricao_do_roteiro(roteiro, palavras, ouvida,
                                              pedido.get("idioma") or "")
-        legenda = gerar_legenda(pasta, pedido, transcricao, segundos)
+        legenda = gerar_legenda(pasta, pedido, transcricao, segundos, horizontal=longo)
         if legenda is None and ((doc.get("legenda") or {}).get("preset") != "nenhuma"):
             print("⚠️ O video sai sem legenda.")
 
@@ -349,12 +497,18 @@ def criar(pasta: str) -> str:
         legendado = f"subtitled_{int(time.time())}_{arquivo}" if legenda else None
         temporario = os.path.join(pasta, f"montando_{arquivo}")
         temporario_legendado = os.path.join(pasta, "montando_legendado.mp4") if legenda else None
-        print(f"🎞️ Montando {len(imagens)} cenas em {segundos:.1f}s...")
+        medidas = ({"largura": montagem.LARGURA_HORIZONTAL,
+                    "altura": montagem.ALTURA_HORIZONTAL} if longo else {})
+        print(f"🎞️ Montando {len(imagens)} cenas em {segundos:.1f}s"
+              + (" (horizontal, 1920x1080)..." if longo else "..."))
         montagem.montar(imagens, duracoes, voz, temporario, legenda=legenda,
                         saida_legendada=temporario_legendado,
                         video_args=ffmpeg_utils.video_encode_args(ffmpeg_utils.QUALITY_FAST),
                         video_args_legendada=ffmpeg_utils.video_encode_args(ffmpeg_utils.QUALITY),
-                        audio_args=ffmpeg_utils.audio_encode_args())
+                        audio_args=ffmpeg_utils.audio_encode_args(),
+                        # Minutos de video numa maquina sem placa passam da meia
+                        # hora de folga do video curto.
+                        timeout=max(1800.0, segundos * 6), **medidas)
         entregues = [(temporario, arquivo)] + ([(temporario_legendado, legendado)]
                                                if legenda else [])
         for origem, nome in entregues:
@@ -362,14 +516,15 @@ def criar(pasta: str) -> str:
             os.replace(origem, destino)
             ffmpeg_utils.mark_ai_generated(destino, "imagens, voz e roteiro gerados por IA")
 
+    inicios = [sum(duracoes[:k]) for k in range(len(duracoes))]
     _gravar_json(os.path.join(pasta, f"{BASE}_metadata.json"),
-                 metadata(pedido, roteiro, arquivo, segundos, transcricao))
+                 metadata(pedido, roteiro, arquivo, segundos, transcricao, inicios))
     print(f"CLIP_READY 0 {legendado or arquivo}")
     return legendado or arquivo
 
 
 def main(argv: Optional[list] = None) -> int:
-    parser = argparse.ArgumentParser(description="Cria um video curto por IA na pasta de um job.")
+    parser = argparse.ArgumentParser(description="Cria um video por IA na pasta de um job.")
     parser.add_argument("--pasta", required=True)
     args = parser.parse_args(argv)
     pasta = os.path.abspath(args.pasta)

@@ -84,6 +84,9 @@ class RenderedClip:
     title: str = ""
     duration_s: float = 0.0
     clip_id: Optional[str] = None
+    # O video longo e horizontal (7.8: o episodio de IA e a compilacao dos
+    # cortes) vai so para o YouTube: e para la que ele foi feito.
+    longo: bool = False
 
 
 @dataclass(frozen=True)

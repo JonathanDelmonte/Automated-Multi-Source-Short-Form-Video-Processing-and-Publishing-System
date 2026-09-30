@@ -1,5 +1,6 @@
 """A montagem do video de IA (etapa 7.7, ADR-013): as imagens das cenas com
-movimento lento, a narracao e a legenda, num ffmpeg so, em 1080x1920.
+movimento lento, a narracao e a legenda, num ffmpeg so, em 1080x1920 -- ou em
+1920x1080 no episodio longo (7.8), que e a mesma montagem deitada.
 
 - **Cada cena dura o tempo da propria fala.** O tempo vem da narracao
   transcrita (o whisper da o tempo de cada palavra), e nao de uma conta de
@@ -30,7 +31,12 @@ import unicodedata
 from typing import Optional, Sequence
 
 LARGURA, ALTURA = 1080, 1920
+#: O episodio longo (7.8) e horizontal, para o YouTube.
+LARGURA_HORIZONTAL, ALTURA_HORIZONTAL = 1920, 1080
 QUADROS_POR_SEGUNDO = 30
+#: A pausa entre dois blocos de narracao do episodio: cai entre duas cenas,
+#: onde a voz ja respiraria.
+PAUSA_ENTRE_BLOCOS_S = 0.6
 #: A imagem entra maior que a saida para o movimento nao tremer.
 AMPLIACAO = 1.5
 #: Quanto a camera anda numa cena (15%): perceptivel sem enjoar.
@@ -182,11 +188,12 @@ def _sem_cena_relampago(duracoes: list) -> list:
 
 
 def filtro_da_cena(indice: int, entrada: int, segundos: float,
-                   movimento: Optional[str] = None) -> str:
+                   movimento: Optional[str] = None, largura: int = LARGURA,
+                   altura: int = ALTURA) -> str:
     """O grafo de uma cena: cobre o quadro (corta o que sobra), amplia e anda.
     Devolve o rotulo `[vN]`."""
     quadros = max(1, int(round(segundos * QUADROS_POR_SEGUNDO)))
-    grande_l, grande_a = int(LARGURA * AMPLIACAO), int(ALTURA * AMPLIACAO)
+    grande_l, grande_a = int(largura * AMPLIACAO), int(altura * AMPLIACAO)
     movimento = movimento or MOVIMENTOS[indice % len(MOVIMENTOS)]
     passo = f"{MOVIMENTO}*on/{quadros}"
     if movimento == "aproximar":
@@ -201,7 +208,7 @@ def filtro_da_cena(indice: int, entrada: int, segundos: float,
         x, y = f"(iw-iw/zoom)*(1-on/{quadros})", "ih/2-(ih/zoom/2)"
     return (f"[{entrada}:v]scale={grande_l}:{grande_a}:force_original_aspect_ratio=increase,"
             f"crop={grande_l}:{grande_a},setsar=1,"
-            f"zoompan=z='{z}':x='{x}':y='{y}':d={quadros}:s={LARGURA}x{ALTURA}"
+            f"zoompan=z='{z}':x='{x}':y='{y}':d={quadros}:s={largura}x{altura}"
             f":fps={QUADROS_POR_SEGUNDO},setsar=1,format=yuv420p[v{indice}]")
 
 
@@ -217,7 +224,8 @@ def _saida(mapa: str, audio: int, video_args: Optional[list], audio_args: Option
 def comando(imagens: Sequence[str], duracoes: Sequence[float], audio: str, saida: str,
             legenda: Optional[str] = None, video_args: Optional[list] = None,
             audio_args: Optional[list] = None, saida_legendada: Optional[str] = None,
-            video_args_legendada: Optional[list] = None) -> list:
+            video_args_legendada: Optional[list] = None, largura: int = LARGURA,
+            altura: int = ALTURA) -> list:
     """O comando do ffmpeg da montagem inteira.
 
     Com `legenda` e `saida_legendada`, saem dois arquivos do mesmo grafo: o
@@ -230,7 +238,8 @@ def comando(imagens: Sequence[str], duracoes: Sequence[float], audio: str, saida
         cmd += ["-i", img]
     cmd += ["-i", audio]
     voz = len(imagens)
-    partes = [filtro_da_cena(i, i, d) for i, d in enumerate(duracoes)]
+    partes = [filtro_da_cena(i, i, d, largura=largura, altura=altura)
+              for i, d in enumerate(duracoes)]
     juntas = "".join(f"[v{i}]" for i in range(len(imagens)))
     partes.append(f"{juntas}concat=n={len(imagens)}:v=1:a=0[vc]")
     queimar = (f"ass=filename='{_escapar(legenda)}':"
@@ -254,12 +263,97 @@ def montar(imagens: Sequence[str], duracoes: Sequence[float], audio: str, saida:
            legenda: Optional[str] = None, video_args: Optional[list] = None,
            audio_args: Optional[list] = None, timeout: float = 1800,
            saida_legendada: Optional[str] = None,
-           video_args_legendada: Optional[list] = None) -> None:
+           video_args_legendada: Optional[list] = None, largura: int = LARGURA,
+           altura: int = ALTURA) -> None:
     """Roda a montagem. Levanta RuntimeError com o fim do erro do ffmpeg."""
     cmd = comando(imagens, duracoes, audio, saida, legenda, video_args, audio_args,
-                  saida_legendada, video_args_legendada)
+                  saida_legendada, video_args_legendada, largura, altura)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     saidas = [saida] + ([saida_legendada] if legenda and saida_legendada else [])
     if r.returncode != 0 or any(not os.path.exists(a) or os.path.getsize(a) < 1024
                                 for a in saidas):
         raise RuntimeError(f"a montagem falhou: {(r.stderr or '').strip()[-600:]}")
+
+
+# --------------------------------------------------------------------------- #
+# O episodio longo (7.8): a narracao em blocos e a legenda deitada
+# --------------------------------------------------------------------------- #
+
+def juntar_wavs(entradas: Sequence[str], saida: str,
+                pausa_s: float = PAUSA_ENTRE_BLOCOS_S) -> float:
+    """Junta os blocos de narracao num WAV so, com uma pausa entre eles, e
+    devolve a duracao.
+
+    Os blocos vem todos do mesmo modelo de voz, entao o formato bate e a
+    juncao e so encostar as amostras (o modulo `wave`, sem processo). Se um
+    bloco veio noutro formato (o modelo de reserva, com outra taxa), quem junta
+    e o ffmpeg, que converte todos para o do primeiro."""
+    import wave
+    if not entradas:
+        raise ValueError("nenhum bloco de narracao")
+    formatos, quadros = [], []
+    for caminho in entradas:
+        with wave.open(caminho, "rb") as w:
+            formatos.append((w.getnchannels(), w.getsampwidth(), w.getframerate()))
+            quadros.append(w.readframes(w.getnframes()))
+    canais, largura, taxa = formatos[0]
+    temporario = saida + ".tmp"
+    if all(f == formatos[0] for f in formatos):
+        silencio = b"\x00" * (int(round(pausa_s * taxa)) * canais * largura)
+        with wave.open(temporario, "wb") as w:
+            w.setnchannels(canais)
+            w.setsampwidth(largura)
+            w.setframerate(taxa)
+            for i, bloco in enumerate(quadros):
+                if i:
+                    w.writeframes(silencio)
+                w.writeframes(bloco)
+    else:
+        _juntar_com_ffmpeg(entradas, temporario, pausa_s, canais, taxa)
+    os.replace(temporario, saida)
+    with wave.open(saida, "rb") as w:
+        return w.getnframes() / float(w.getframerate() or 1)
+
+
+def _juntar_com_ffmpeg(entradas: Sequence[str], saida: str, pausa_s: float,
+                       canais: int, taxa: int) -> None:
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    for caminho in entradas:
+        cmd += ["-i", caminho]
+    layout = "mono" if canais == 1 else "stereo"
+    partes, rotulos = [], []
+    for i in range(len(entradas)):
+        pausa = f",apad=pad_dur={pausa_s:g}" if i < len(entradas) - 1 else ""
+        partes.append(f"[{i}:a]aresample={taxa},aformat=sample_fmts=s16:"
+                      f"channel_layouts={layout}{pausa}[a{i}]")
+        rotulos.append(f"[a{i}]")
+    partes.append(f"{''.join(rotulos)}concat=n={len(entradas)}:v=0:a=1[voz]")
+    cmd += ["-filter_complex", ";".join(partes), "-map", "[voz]", "-c:a", "pcm_s16le",
+            "-f", "wav", saida]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0 or not os.path.exists(saida):
+        raise RuntimeError(f"a juncao da narracao falhou: {(r.stderr or '').strip()[-400:]}")
+
+
+#: A legenda no video horizontal. O ASS mede a letra pela ALTURA do quadro
+#: (`PlayResY` 288), entao o preset do Short num 1920x1080 sairia com a letra
+#: do Short -- uns 13% da altura, grande demais para minutos de video. Aqui ela
+#: cai para uns 7%, e o bloco leva mais texto, porque a linha e mais larga.
+ESCALA_DA_LETRA_HORIZONTAL = 0.55
+ESCALA_DO_BLOCO_HORIZONTAL = 2.2
+#: ~7% da altura: acima da barra do player, que cobre o pe do video.
+MARGEM_HORIZONTAL = 20
+
+
+def legenda_horizontal(kwargs: dict) -> dict:
+    """Os argumentos do `subtitles.generate_ass` de um preset, para o quadro
+    deitado."""
+    k = dict(kwargs)
+    k["fontsize"] = max(12, int(round(float(k.get("fontsize") or 16)
+                                      * ESCALA_DA_LETRA_HORIZONTAL)))
+    k["max_chars"] = min(48, int(round(float(k.get("max_chars") or 20)
+                                       * ESCALA_DO_BLOCO_HORIZONTAL)))
+    k["max_duration"] = min(4.0, round(float(k.get("max_duration") or 2.0)
+                                       * ESCALA_DO_BLOCO_HORIZONTAL, 2))
+    k["margin_v"] = MARGEM_HORIZONTAL
+    return k

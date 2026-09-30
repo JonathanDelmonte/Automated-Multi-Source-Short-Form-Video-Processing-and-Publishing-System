@@ -124,6 +124,19 @@ class TestODocumentoManda:
         assert r.status_code == 400
         assert "karaoke_fill" in r.json()["detail"]
 
+    def test_no_video_longo_a_legenda_deita(self, job, espiao):
+        """O episodio de IA (7.8) e horizontal: o preset do Short sairia com a
+        letra do Short, que o ASS mede pela altura."""
+        import montagem
+        jid, d = job
+        meta = json.loads((d / "base_metadata.json").read_text())
+        meta["shorts"][0]["formato"] = "longo"
+        (d / "base_metadata.json").write_text(json.dumps(meta))
+        _post({"job_id": jid, "clip_index": 0,
+               "template": {"captions": {"preset": "karaoke_fill"}}})
+        assert espiao["ass_kwargs"]["fontsize"] == round(44 * montagem.ESCALA_DA_LETRA_HORIZONTAL)
+        assert espiao["ass_kwargs"]["margin_v"] == montagem.MARGEM_HORIZONTAL
+
     def test_sem_template_nada_muda(self, job, espiao):
         jid, _ = job
         r = _post({"job_id": jid, "clip_index": 0, "style": "karaoke",

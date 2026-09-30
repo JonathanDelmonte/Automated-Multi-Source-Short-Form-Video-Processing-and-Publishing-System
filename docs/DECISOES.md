@@ -900,3 +900,21 @@ o código fez:
 As contas da consequência, refeitas com o código: uma imagem vertical custa de
 105 a 115 neurons (conforme quantos personagens a cena leva), então os 8.000
 neurons do dia reservados às imagens dão umas 70 — uns 8 vídeos de 8 cenas.
+
+**Nota da 7.8 (30-set-2026): o episódio longo, na mesma decisão.** O vídeo longo
+reusa tudo o que está acima, deitado, e três coisas mudam porque o tamanho obriga:
+- **A voz sai em blocos**, e não "uma chamada por vídeo" (item 4). Uma narração
+  de vários minutos numa chamada só é o que o Gemini TTS faz pior: a voz acelera,
+  muda e corta. O episódio é narrado em blocos de ~2.200 caracteres (uns 2 minutos
+  e meio), que quebram entre duas cenas e são juntados no fim com uma pausa curta;
+  cada bloco é uma chamada da cota de voz do dia, e o bloco pronto fica na pasta.
+  Um episódio de 10 minutos gasta umas 4 chamadas.
+- **A imagem é 1344x768**, as mesmas medidas trocadas: custa os mesmos neurons
+  que a vertical. Com uma imagem a cada 15 segundos de fala, um episódio de 10
+  minutos tem 40 cenas — cabe na cota de imagem de um dia, e é o teto (`DURACAO_LONGA_MAX`).
+- **A montagem é a mesma (item 6), em 1920x1080**, e a legenda encolhe para o
+  quadro deitado: o ASS mede a letra pela altura, e o preset do Short num quadro
+  deitado sairia com a letra de um Short.
+
+A compilação dos cortes, o outro caminho da 7.8, não usa IA nenhuma: é o ffmpeg
+juntando trechos que já existem, e fica fora desta decisão.

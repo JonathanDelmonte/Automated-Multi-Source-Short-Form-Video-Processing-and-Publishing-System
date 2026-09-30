@@ -162,6 +162,9 @@ export function AuthProvider({ children }) {
     seriesNoMotor: config.series === true,
     // O motor sabe criar vídeo por IA (7.7): o de antes responde 404 no /api/criacoes.
     criacaoNoMotor: config.criacao === true,
+    // O motor sabe fazer vídeo longo (7.8): o de antes ignora o `formato` e faria
+    // um vídeo curto no lugar do episódio, sem erro nenhum.
+    videoLongoNoMotor: config.video_longo === true,
     configCarregada,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,

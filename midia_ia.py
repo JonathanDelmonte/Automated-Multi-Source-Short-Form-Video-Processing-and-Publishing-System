@@ -46,6 +46,9 @@ MODELOS_VOZ_RESERVA = ("gemini-2.5-flash-preview-tts",)
 #: 9:16, perto de 1 megapixel: 4 blocos de 512x512 na conta do Cloudflare. A
 #: montagem leva a 1080x1920, e o movimento lento esconde a ampliacao.
 LARGURA, ALTURA = 768, 1344
+#: O episodio longo (7.8) e deitado: as mesmas medidas trocadas, entao a mesma
+#: conta de blocos -- a imagem horizontal custa o mesmo que a vertical.
+LARGURA_HORIZONTAL, ALTURA_HORIZONTAL = ALTURA, LARGURA
 #: O Workers AI so aceita referencia de ate 512x512, e no maximo 4.
 LADO_DA_REFERENCIA = 512
 MAX_REFERENCIAS = 4

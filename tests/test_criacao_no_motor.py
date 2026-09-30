@@ -376,3 +376,147 @@ class TestABarra:
 
     def test_o_motor_diz_que_sabe_criar(self, ambiente):
         assert _chama("GET", "/api/config").json()["criacao"] is True
+
+
+class TestOEpisodio:
+    """O episodio longo (7.8): o mesmo `/api/criacoes`, com `formato: longo`."""
+
+    _pronto = TestCriar._pronto
+
+    def _pedido(self, ambiente, job_id):
+        return json.loads((ambiente["saida"] / job_id / "criacao.json").read_text(encoding="utf-8"))
+
+    def test_o_episodio_vira_um_job_com_a_duracao_e_as_cenas(self, ambiente):
+        canal, estilo, pid = self._pronto(ambiente)
+        r = _chama("POST", "/api/criacoes", {"channel_id": canal["id"], "formato": "longo",
+                                             "duracao_min": 3, "ideia": "a Lulu no mar"})
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+        assert "episodio" not in r.json()                  # avulso: sem numero
+        pedido = self._pedido(ambiente, job_id)
+        assert (pedido["formato"], pedido["duracao_s"], pedido["cenas"]) == ("longo", 180, 12)
+        assert pedido["historia"] is None
+        assert app_module.jobs[job_id]["kind"] == "criacao"
+        assert "Episódio na fila: 3 minutos, 12 cenas" in app_module.jobs[job_id]["logs"][0]
+        lista = _chama("GET", "/api/jobs").json()["jobs"]
+        assert lista[0]["criacao"]["formato"] == "longo" and lista[0]["title"] == "a Lulu no mar"
+
+    @pytest.mark.parametrize("corpo,trecho", [
+        ({"duracao_min": 1}, "de 2 a 10 minutos"),
+        ({"duracao_min": 11}, "de 2 a 10 minutos"),
+        ({"duracao_min": "x"}, "quantos minutos"),
+        ({}, "quantos minutos"),
+        ({"duracao_min": 3, "historia": "x" * 81}, "no máximo 80"),
+        ({"duracao_min": 3, "formato": "enorme"}, "curto ou longo"),
+    ])
+    def test_o_pedido_torto_do_episodio_e_400(self, ambiente, corpo, trecho):
+        canal, estilo, pid = self._pronto(ambiente)
+        r = _chama("POST", "/api/criacoes", {"channel_id": canal["id"], "formato": "longo",
+                                             **corpo})
+        assert r.status_code == 400 and trecho in r.json()["detail"], r.text
+        assert ambiente["fila"] == []
+
+    def _terminar(self, ambiente, job_id, titulo, resumo, historia, episodio):
+        """O que o `criar_video.py` deixaria na pasta, e o fim do job no banco."""
+        pasta = ambiente["saida"] / job_id
+        roteiro = {"titulo": titulo, "descricao": "d", "hashtags": [], "resumo": resumo,
+                   "formato": "longo", "historia": historia, "episodio": episodio,
+                   "capitulos": [], "cenas": [{"fala": "Era uma vez.", "imagem": "x",
+                                               "personagens": []}]}
+        (pasta / "roteiro.json").write_text(json.dumps(roteiro), encoding="utf-8")
+        (pasta / "criacao_clip_1.mp4").write_bytes(b"\x00" * 64)
+        (pasta / "criacao_metadata.json").write_text(json.dumps({"shorts": [{
+            "start": 0, "end": 1.0, "video_title_for_youtube_short": titulo,
+            "formato": "longo"}], "transcript": {"language": "pt", "segments": []}}))
+        job = app_module.jobs[job_id]
+        job["status"] = "completed"
+        job["result"] = {"clips": [{"start": 0, "end": 1.0, "clip_index": 0,
+                                    "video_title_for_youtube_short": titulo,
+                                    "video_url": f"/videos/{job_id}/criacao_clip_1.mp4"}]}
+        asyncio.run(app_module._fechar_job_no_banco(job_id))
+
+    def test_a_historia_numera_os_episodios_e_espera_o_anterior(self, ambiente):
+        canal, estilo, pid = self._pronto(ambiente)
+        base = {"channel_id": canal["id"], "formato": "longo", "duracao_min": 2}
+        r = _chama("POST", "/api/criacoes", {**base, "historia": "A  Lulu na floresta"})
+        assert r.status_code == 200 and r.json()["episodio"] == 1
+        primeiro = r.json()["job_id"]
+        assert self._pedido(ambiente, primeiro)["historia"] == \
+            {"nome": "A Lulu na floresta", "episodio": 1, "anteriores": []}
+        assert "Episódio 1 de “A Lulu na floresta” na fila" in \
+            app_module.jobs[primeiro]["logs"][0]
+
+        # O segundo nao sai antes de o primeiro terminar: ele continua do resumo.
+        r = _chama("POST", "/api/criacoes", {**base, "historia": "a lulu na FLORESTA"})
+        assert r.status_code == 400 and "O episódio 1 de “A Lulu na floresta” ainda não" in \
+            r.json()["detail"]
+
+        self._terminar(ambiente, primeiro, "A chegada", "A Lulu chegou e fez um amigo.",
+                       "A Lulu na floresta", 1)
+        r = _chama("POST", "/api/criacoes", {**base, "historia": "a lulu na FLORESTA"})
+        assert r.status_code == 200 and r.json()["episodio"] == 2
+        segundo = r.json()["job_id"]
+        # A grafia fica a da historia; os anteriores vao com titulo e resumo.
+        assert self._pedido(ambiente, segundo)["historia"] == {
+            "nome": "A Lulu na floresta", "episodio": 2,
+            "anteriores": [{"episodio": 1, "titulo": "A chegada",
+                            "resumo": "A Lulu chegou e fez um amigo."}]}
+        historias = _chama("GET", f"/api/canais/{canal['id']}/historias").json()["historias"]
+        assert historias == [{"nome": "A Lulu na floresta", "episodios": 2,
+                              "ultimo": {"episodio": 2, "job_id": segundo, "titulo": "",
+                                         "pronto": False}}]
+        # Sem ideia, a lista chama o episodio pela historia e pelo numero.
+        lista = {j["job_id"]: j for j in _chama("GET", "/api/jobs").json()["jobs"]}
+        assert lista[segundo]["title"] == "A Lulu na floresta - Episódio 2"
+        # Outra historia no mesmo canal comeca do 1, sem esperar ninguem.
+        r = _chama("POST", "/api/criacoes", {**base, "historia": "O Bento no mar"})
+        assert r.status_code == 200 and r.json()["episodio"] == 1
+
+    def test_a_cota_do_episodio_conta_as_cenas_da_duracao(self, ambiente, monkeypatch):
+        canal, estilo, pid = self._pronto(ambiente)
+        # A ficha da Lulu ja gastou uma imagem; sobram umas 10.
+        monkeypatch.setenv("CLOUDFLARE_IMAGE_NEURONS_DAILY", "1250")
+        base = {"channel_id": canal["id"], "formato": "longo"}
+        r = _chama("POST", "/api/criacoes", {**base, "duracao_min": 3})
+        assert r.status_code == 400 and "o vídeo tem 12 cenas" in r.json()["detail"]
+        assert _chama("POST", "/api/criacoes", {**base, "duracao_min": 2}).status_code == 200
+
+    def test_o_teto_de_voz_conta_os_blocos_do_episodio(self, ambiente, monkeypatch):
+        canal, estilo, pid = self._pronto(ambiente)
+        monkeypatch.setenv("GEMINI_TTS_CALLS_DAILY", "2")
+        base = {"channel_id": canal["id"], "formato": "longo"}
+        r = _chama("POST", "/api/criacoes", {**base, "duracao_min": 10})
+        assert r.status_code == 400 and "precisa de 4 chamadas de voz" in r.json()["detail"]
+        assert _chama("POST", "/api/criacoes", {**base, "duracao_min": 2}).status_code == 200
+
+    def test_continuar_o_episodio_conta_os_blocos_que_faltam(self, ambiente, monkeypatch):
+        canal, estilo, pid = self._pronto(ambiente)
+        job_id = _chama("POST", "/api/criacoes", {"channel_id": canal["id"], "formato": "longo",
+                                                  "duracao_min": 2}).json()["job_id"]
+        pasta = ambiente["saida"] / job_id
+        roteiro = {"titulo": "t", "descricao": "", "hashtags": [], "cenas": [
+            {"fala": "x" * 1500, "imagem": "x", "personagens": []} for _ in range(8)]}
+        (pasta / "roteiro.json").write_text(json.dumps(roteiro), encoding="utf-8")
+        for i in range(1, 9):
+            (pasta / f"cena_{i:02d}.png").write_bytes(_png())
+        # 8 cenas de 1500 caracteres: 8 blocos; os dois primeiros ja estao na pasta.
+        for k in (1, 2):
+            (pasta / f"narracao_bloco_{k:02d}.wav").write_bytes(b"\x00" * 100)
+        app_module.jobs[job_id]["status"] = "failed"
+        monkeypatch.setenv("GEMINI_TTS_CALLS_DAILY", "5")
+        r = _chama("POST", f"/api/criacoes/{job_id}/continuar")
+        assert r.status_code == 400 and "Faltam 6 chamadas de voz" in r.json()["detail"]
+        monkeypatch.setenv("GEMINI_TTS_CALLS_DAILY", "6")
+        assert _chama("POST", f"/api/criacoes/{job_id}/continuar").status_code == 200
+
+    def test_a_tela_sabe_do_episodio_antes_do_clique(self, ambiente, monkeypatch):
+        canal, estilo, pid = self._pronto(ambiente)
+        dados = _chama("GET", f"/api/canais/{canal['id']}/estilo").json()
+        assert dados["catalogo"]["episodio"] == {"duracao_s": [120, 600], "segundos_por_cena": 15,
+                                                 "cenas": [8, 40]}
+        assert dados["pode_criar_episodio"] is None
+        # A cota do episodio e conferida pela duracao, na tela: aqui nao.
+        monkeypatch.setenv("CLOUDFLARE_IMAGE_NEURONS_DAILY", "300")
+        dados = _chama("GET", f"/api/canais/{canal['id']}/estilo").json()
+        assert dados["pode_criar"] and dados["pode_criar_episodio"] is None
+        assert _chama("GET", "/api/config").json()["video_longo"] is True

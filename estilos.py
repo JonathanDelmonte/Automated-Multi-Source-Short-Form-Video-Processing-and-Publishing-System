@@ -65,6 +65,27 @@ MAX_PERSONAGENS = 4
 DURACAO_MIN, DURACAO_MAX = 20, 90
 CENAS_MIN, CENAS_MAX = 3, 14
 
+# O episodio longo (etapa 7.8): a mesma maquina, em video horizontal de varios
+# minutos para o YouTube. A duracao e escolhida em cada episodio, e nao no
+# estilo: o estilo diz COMO o canal conta (visual, personagens, voz, tom), e
+# cabe um Short e um episodio no mesmo canal.
+DURACAO_LONGA_MIN, DURACAO_LONGA_MAX = 120, 600
+#: Uma imagem a cada ~15 s de fala. O movimento lento segura a cena, e a conta
+#: fecha com a cota: ~70 imagens por dia dao um episodio de 10 minutos (40
+#: cenas) com folga.
+SEGUNDOS_POR_CENA_LONGA = 15
+CENAS_LONGAS_MIN, CENAS_LONGAS_MAX = 8, 40
+#: Quanta fala vai numa chamada de voz (~2,5 minutos). A narracao de um
+#: episodio inteiro numa chamada so e o que o Gemini TTS faz pior -- a voz
+#: acelera, muda e corta em falas de varios minutos --, e cada chamada e uma da
+#: cota baixa do dia: blocos desse tamanho equilibram as duas coisas.
+CARACTERES_POR_BLOCO = 2200
+HISTORIA_MAX = 80
+RESUMO_MAX = 600
+#: Quantos episodios anteriores o roteiro le por inteiro (titulo e resumo). Os
+#: mais antigos entram so pela contagem: o pedido nao cresce sem fim.
+ANTERIORES_NO_ROTEIRO = 8
+
 LIMITES_DE_TEXTO = {"publico": 200, "tom": 200, "instrucoes": 1200}
 NOME_MAX = 40
 DESCRICAO_MAX = 400
@@ -259,7 +280,8 @@ def prompt_do_personagem(doc: dict, personagem: dict) -> str:
             f"Style: {visual_em_texto(doc)}. Avoid: {evitar_em_texto(doc)}.")
 
 
-def prompt_da_cena(doc: dict, cena: dict, personagens_na_cena: list) -> str:
+def prompt_da_cena(doc: dict, cena: dict, personagens_na_cena: list,
+                   horizontal: bool = False) -> str:
     """O pedido de imagem de uma cena. Os personagens vao na ordem das
     referencias ("image 0 is ..."), que e como o FLUX.2 as enxerga."""
     partes = [cena.get("imagem") or ""]
@@ -267,9 +289,59 @@ def prompt_da_cena(doc: dict, cena: dict, personagens_na_cena: list) -> str:
         quem = "; ".join(f"image {i} shows {p['nome']} ({p.get('descricao') or 'as in the reference'})"
                          for i, p in enumerate(personagens_na_cena))
         partes.append(f"Keep each character exactly as in the reference images: {quem}.")
-    partes.append(f"Vertical 9:16 composition. Style: {visual_em_texto(doc)}.")
+    enquadramento = "Horizontal 16:9 composition" if horizontal else "Vertical 9:16 composition"
+    partes.append(f"{enquadramento}. Style: {visual_em_texto(doc)}.")
     partes.append(f"Avoid: {evitar_em_texto(doc)}.")
     return " ".join(p for p in partes if p)
+
+
+def cenas_do_longo(duracao_s) -> int:
+    """Quantas cenas (imagens) tem um episodio desta duracao."""
+    try:
+        segundos = float(duracao_s)
+    except (TypeError, ValueError):
+        segundos = DURACAO_LONGA_MIN
+    return max(CENAS_LONGAS_MIN, min(CENAS_LONGAS_MAX,
+                                     int(round(segundos / SEGUNDOS_POR_CENA_LONGA))))
+
+
+def nome_da_historia(texto) -> str:
+    """O nome de uma historia de varios episodios, limpo: uma linha, sem espaco
+    sobrando, no teto. Vazio quando nao ha historia."""
+    return re.sub(r"\s+", " ", str(texto or "")).strip()[:HISTORIA_MAX].rstrip()
+
+
+def chave_da_historia(texto) -> str:
+    """Duas grafias do mesmo nome ("A Lulu" e "a  lulu") sao a mesma historia."""
+    return nome_da_historia(texto).casefold()
+
+
+_EPISODIO = {"pt": "Episódio", "en": "Episode", "es": "Episodio"}
+#: O teto de titulo do YouTube.
+TITULO_MAX = 100
+
+
+def titulo_do_episodio(historia, episodio, titulo: str, idioma: Optional[str] = None) -> str:
+    """O titulo do video: "Historia - Episódio N: titulo" quando o episodio e
+    de uma historia (quem chega pelo YouTube sabe em que ponto esta), e o
+    titulo do roteiro quando e avulso. O titulo do roteiro e o que encolhe
+    para caber nos 100 caracteres do YouTube -- a historia e o numero ficam."""
+    titulo = re.sub(r"\s+", " ", str(titulo or "")).strip()
+    nome = nome_da_historia(historia)
+    try:
+        numero = int(episodio)
+    except (TypeError, ValueError):
+        numero = 0
+    if not nome or numero < 1:
+        return titulo[:TITULO_MAX].rstrip()
+    palavra = _EPISODIO.get((idioma or "pt").strip().lower()[:2], _EPISODIO["pt"])
+    cabeca = f"{nome} - {palavra} {numero}"
+    if not titulo:
+        return cabeca[:TITULO_MAX]
+    sobra = TITULO_MAX - len(cabeca) - 2
+    if sobra < 10:
+        return cabeca[:TITULO_MAX]
+    return f"{cabeca}: {titulo[:sobra].rstrip()}"
 
 
 def palavras_por_duracao(segundos: int) -> int:
@@ -292,15 +364,10 @@ def nome_do_idioma(codigo: Optional[str]) -> str:
     return _IDIOMAS.get(c) or _IDIOMAS.get(c.split("-")[0]) or codigo.strip()
 
 
-def prompt_do_roteiro(doc: dict, ideia: str, idioma: str = "pt-BR",
-                      ja_feitos: Optional[list] = None) -> str:
-    """O pedido do roteiro, para a cascata de texto. A resposta segue o schema
-    `criar_video.Roteiro`."""
+def _linhas_do_estilo(doc: dict) -> list:
+    """O que o estilo diz ao roteiro, igual no video curto e no episodio."""
     personagens = doc.get("personagens") or []
-    linhas = [
-        f"Voce escreve roteiros de videos curtos verticais (TikTok, Reels, Shorts) em {idioma}.",
-        f"Formato: {FORMATOS.get(doc.get('formato'), FORMATOS['livre'])}.",
-    ]
+    linhas = [f"Formato: {FORMATOS.get(doc.get('formato'), FORMATOS['livre'])}."]
     if doc.get("publico"):
         linhas.append(f"Publico: {doc['publico']}.")
     if doc.get("tom"):
@@ -311,15 +378,27 @@ def prompt_do_roteiro(doc: dict, ideia: str, idioma: str = "pt-BR",
         linhas.append("Personagens fixos (use os nomes exatamente assim):")
         for p in personagens:
             linhas.append(f"- {p['nome']}: {p.get('descricao') or 'sem descricao'}")
+    return linhas
+
+
+_LINHA_DAS_CENAS = (
+    "Para cada cena: `fala` e o que o narrador diz (frases curtas, sem indicacao de cena, "
+    "sem emoji); `imagem` descreve a imagem da cena EM INGLES, concreta e visual (quem, "
+    "fazendo o que, onde, enquadramento), sem texto escrito na imagem; `personagens` lista "
+    "os nomes dos personagens fixos que aparecem nela.")
+
+
+def prompt_do_roteiro(doc: dict, ideia: str, idioma: str = "pt-BR",
+                      ja_feitos: Optional[list] = None) -> str:
+    """O pedido do roteiro, para a cascata de texto. A resposta segue o schema
+    `criar_video.Roteiro`."""
+    linhas = [f"Voce escreve roteiros de videos curtos verticais (TikTok, Reels, Shorts) em {idioma}."]
+    linhas += _linhas_do_estilo(doc)
     linhas.append(
         f"Duracao: cerca de {doc.get('duracao_s', 60)} segundos de fala, ou seja, umas "
         f"{palavras_por_duracao(doc.get('duracao_s', 60))} palavras de narracao no total, "
         f"divididas em exatamente {doc.get('cenas', 8)} cenas.")
-    linhas.append(
-        "Para cada cena: `fala` e o que o narrador diz (frases curtas, sem indicacao de cena, "
-        "sem emoji); `imagem` descreve a imagem da cena EM INGLES, concreta e visual (quem, "
-        "fazendo o que, onde, enquadramento), sem texto escrito na imagem; `personagens` lista "
-        "os nomes dos personagens fixos que aparecem nela.")
+    linhas.append(_LINHA_DAS_CENAS)
     linhas.append(
         "A primeira fala prende a atencao nos primeiros 2 segundos. A ultima fecha a historia.")
     linhas.append(
@@ -332,41 +411,145 @@ def prompt_do_roteiro(doc: dict, ideia: str, idioma: str = "pt-BR",
     return "\n".join(linhas)
 
 
-def ler_roteiro(bruto: dict, doc: dict) -> dict:
+def prompt_do_episodio(doc: dict, ideia: str, idioma: str, duracao_s: int, cenas: int,
+                       historia: Optional[dict] = None,
+                       ja_feitos: Optional[list] = None) -> str:
+    """O pedido do roteiro de um episodio longo (7.8). Alem das cenas, pede os
+    `capitulos` (as marcas na barra do YouTube) e o `resumo`, que e o que o
+    proximo episodio da mesma historia le para continuar de onde este parou.
+
+    `historia` e `{"nome", "episodio", "anteriores": [{"episodio", "titulo",
+    "resumo"}]}`, ou None para um episodio avulso."""
+    minutos = max(1, int(round(duracao_s / 60)))
+    palavras = palavras_por_duracao(duracao_s)
+    linhas = [f"Voce escreve roteiros de episodios de video longo e horizontal para o YouTube, "
+              f"em {idioma}."]
+    linhas += _linhas_do_estilo(doc)
+    linhas.append(
+        f"Duracao: cerca de {minutos} minutos de fala, ou seja, umas {palavras} palavras de "
+        f"narracao no total, divididas em exatamente {cenas} cenas de tamanho parecido (umas "
+        f"{max(10, palavras // max(1, cenas))} palavras cada).")
+    linhas.append(_LINHA_DAS_CENAS + " A `imagem` tem no maximo 40 palavras.")
+    linhas.append(
+        "O comeco prende a atencao e diz do que o episodio trata; o meio desenvolve com calma, "
+        "sem repetir; o fim fecha o episodio.")
+    linhas.append(
+        "`capitulos`: de 3 a 8 partes do episodio, na ordem, cada uma com `titulo` (ate 60 "
+        "caracteres, no idioma do video) e `cena` (o numero da cena em que a parte comeca, "
+        "contando da 1; a primeira comeca na cena 1). Cada parte com varias cenas.")
+    linhas.append(
+        "`resumo`: 2 a 4 frases com o que aconteceu neste episodio, para quem for escrever o "
+        "proximo.")
+    linhas.append(
+        "Tambem: `titulo` (ate 90 caracteres, no idioma do video), `descricao` (2 a 4 frases) "
+        "e `hashtags` (3 a 5, sem espaco).")
+    anteriores = [a for a in (historia or {}).get("anteriores") or [] if isinstance(a, dict)]
+    if historia and historia.get("nome"):
+        numero = int(historia.get("episodio") or len(anteriores) + 1)
+        if anteriores:
+            linhas.append(f"Esta e a historia \"{historia['nome']}\". Episodios anteriores, do "
+                          "primeiro ao mais recente:")
+            lidos = anteriores[-ANTERIORES_NO_ROTEIRO:]
+            fora = len(anteriores) - len(lidos)
+            if fora:
+                linhas.append(f"(antes destes, mais {fora} episodio(s))")
+            for a in lidos:
+                resumo = a.get("resumo") or "sem resumo"
+                linhas.append(f"- Episodio {a.get('episodio')}, \"{a.get('titulo') or ''}\": "
+                              f"{resumo}")
+            linhas.append(
+                f"Este e o episodio {numero}: continue de onde o anterior parou, com os mesmos "
+                "personagens e o que ja aconteceu. Nao reconte tudo -- no maximo uma frase de "
+                "lembranca no comeco -- e nao repita o que ja aconteceu.")
+        else:
+            linhas.append(
+                f"Este e o episodio 1 da historia \"{historia['nome']}\": apresente o mundo e os "
+                "personagens, e termine deixando vontade de ver o proximo.")
+    if ja_feitos and not anteriores:
+        lista = "; ".join(t for t in ja_feitos[-30:] if t)
+        linhas.append(f"Nao repita estes temas, que o canal ja fez: {lista}.")
+    padrao = "continue a historia" if anteriores else "invente uma nova, no estilo do canal"
+    linhas.append(f"Ideia deste episodio: {ideia or padrao}.")
+    return "\n".join(linhas)
+
+
+def _texto_de_uma_linha(valor, maximo: int) -> str:
+    return re.sub(r"\s+", " ", str(valor or "")).strip()[:maximo]
+
+
+def ler_roteiro(bruto: dict, doc: dict, alvo: Optional[int] = None,
+                longo: bool = False) -> dict:
     """O roteiro que a cascata devolveu, conferido: cenas com fala, os nomes de
     personagem trocados pelos ids do estilo (nome desconhecido sai), e o numero
-    de cenas dentro do que o estilo aceita. Levanta `EstiloInvalido` se nao ha
-    o que narrar."""
+    de cenas dentro do pedido (`alvo`; sem ele, o do estilo). Levanta
+    `EstiloInvalido` se nao ha o que narrar.
+
+    No episodio longo (`longo`), guarda tambem os `capitulos` (`[{"cena",
+    "titulo"}]`, a cena contada do 0) e o `resumo`. O capitulo e marcado na
+    cena ANTES de juntar as cenas a mais, para que a marca ande junto com a
+    cena em que ele comeca."""
+    import capitulos as _capitulos
     if not isinstance(bruto, dict):
         raise EstiloInvalido("o roteiro veio vazio")
     por_nome = {p["nome"].casefold(): p["id"] for p in doc.get("personagens") or []}
+    marcas = {}
+    if longo:
+        for c in bruto.get("capitulos") or []:
+            if not isinstance(c, dict):
+                continue
+            try:
+                numero = int(c.get("cena"))
+            except (TypeError, ValueError):
+                continue
+            nome = _capitulos.titulo(c.get("titulo"))
+            if nome and numero not in marcas:
+                marcas[numero] = nome
     cenas = []
-    for c in bruto.get("cenas") or []:
+    pendente = None
+    for numero, c in enumerate(bruto.get("cenas") or [], start=1):
         if not isinstance(c, dict):
+            pendente = pendente or marcas.get(numero)
             continue
         fala = re.sub(r"\s+", " ", str(c.get("fala") or "")).strip()
         if not fala:
+            # A cena sem fala sai; o capitulo que comecava nela passa a seguinte.
+            pendente = pendente or marcas.get(numero)
             continue
         ids = []
         for nome in c.get("personagens") or []:
             pid = por_nome.get(str(nome).strip().casefold())
             if pid and pid not in ids:
                 ids.append(pid)
-        cenas.append({"fala": fala, "imagem": str(c.get("imagem") or "").strip()[:900],
-                      "personagens": ids[:MAX_PERSONAGENS]})
+        cena = {"fala": fala, "imagem": str(c.get("imagem") or "").strip()[:900],
+                "personagens": ids[:MAX_PERSONAGENS]}
+        marca = pendente or marcas.get(numero)
+        pendente = None
+        if longo and marca:
+            cena["capitulo"] = marca
+        cenas.append(cena)
     if not cenas:
         raise EstiloInvalido("o roteiro veio sem nenhuma fala")
-    cenas = juntar_cenas(cenas, int(doc.get("cenas") or CENAS_MAX))
+    cenas = juntar_cenas(cenas, int(alvo or doc.get("cenas") or CENAS_MAX))
     hashtags = []
     for h in bruto.get("hashtags") or []:
         tag = re.sub(r"[^\w]", "", str(h).lstrip("#"))
         if tag and tag.casefold() not in {x.casefold() for x in hashtags}:
             hashtags.append(tag)
-    titulo = re.sub(r"\s+", " ", str(bruto.get("titulo") or "")).strip()[:100]
-    return {"titulo": titulo or cenas[0]["fala"][:90],
-            "descricao": re.sub(r"\s+", " ", str(bruto.get("descricao") or "")).strip()[:500],
-            "hashtags": hashtags[:5],
-            "cenas": cenas}
+    titulo = _texto_de_uma_linha(bruto.get("titulo"), 100)
+    roteiro = {"titulo": titulo or cenas[0]["fala"][:90],
+               "descricao": _texto_de_uma_linha(bruto.get("descricao"), 500 if not longo else 1500),
+               "hashtags": hashtags[:5],
+               "cenas": cenas}
+    if longo:
+        # O primeiro capitulo comeca no comeco do video (e o que o YouTube pede):
+        # se o roteiro o marcou mais adiante, a marca volta para a cena 1.
+        marcadas = [k for k, c in enumerate(cenas) if c.get("capitulo")]
+        if marcadas and marcadas[0] != 0:
+            cenas[0]["capitulo"] = cenas[marcadas[0]].pop("capitulo")
+        roteiro["capitulos"] = [{"cena": k, "titulo": c.pop("capitulo")}
+                                for k, c in enumerate(cenas) if c.get("capitulo")]
+        roteiro["resumo"] = _texto_de_uma_linha(bruto.get("resumo"), RESUMO_MAX)
+    return roteiro
 
 
 def juntar_cenas(cenas: list, alvo: int) -> list:
@@ -375,20 +558,64 @@ def juntar_cenas(cenas: list, alvo: int) -> list:
     Cada cena e uma imagem da cota do dia, e a tela conferiu a cota pelo numero
     do estilo: o modelo que escreve 11 cenas quando se pediram 8 nao pode
     gastar 3 imagens a mais. Cortar as ultimas perderia o fim da historia;
-    juntar mantem toda a fala, com a imagem da primeira das duas."""
+    juntar mantem toda a fala, com a imagem da primeira das duas. A marca de
+    capitulo (episodio longo) fica com a primeira das duas; se so a segunda
+    tinha, ela passa a comecar na primeira."""
     cenas = [dict(c) for c in cenas]
-    alvo = max(1, min(int(alvo), CENAS_MAX))
+    alvo = max(1, min(int(alvo), max(CENAS_MAX, CENAS_LONGAS_MAX)))
     while len(cenas) > alvo:
-        i = min(range(len(cenas) - 1),
+        # Nao junta duas cenas que abrem capitulos diferentes, enquanto houver
+        # outro par: o capitulo de uma delas sumiria.
+        pares = [k for k in range(len(cenas) - 1)
+                 if not (cenas[k].get("capitulo") and cenas[k + 1].get("capitulo"))]
+        i = min(pares or range(len(cenas) - 1),
                 key=lambda k: len(cenas[k]["fala"]) + len(cenas[k + 1]["fala"]))
         a, b = cenas[i], cenas.pop(i + 1)
         a["fala"] = f"{a['fala']} {b['fala']}"
         a["personagens"] = (a["personagens"] + [p for p in b["personagens"]
                                                 if p not in a["personagens"]])[:MAX_PERSONAGENS]
         a["imagem"] = a["imagem"] or b["imagem"]
+        if not a.get("capitulo") and b.get("capitulo"):
+            a["capitulo"] = b["capitulo"]
     return cenas
 
 
 def narracao(roteiro: dict) -> str:
     """O texto que a voz le: as falas, uma por paragrafo (a pausa entre cenas)."""
     return "\n\n".join(c["fala"] for c in roteiro.get("cenas") or [])
+
+
+def blocos_de_narracao(roteiro: dict, maximo: Optional[int] = None) -> list:
+    """As cenas agrupadas em blocos de fala (listas de indices), um bloco por
+    chamada de voz.
+
+    O bloco nunca parte uma cena: a pausa entre dois blocos cai entre duas
+    cenas, onde ja haveria uma. Os blocos saem de tamanho parecido (um ultimo
+    bloco de uma frase seria uma chamada da cota do dia por quase nada), e uma
+    cena maior que o teto vai sozinha."""
+    falas = [c.get("fala") or "" for c in roteiro.get("cenas") or []]
+    if not falas:
+        return []
+    maximo = max(200, int(maximo or CARACTERES_POR_BLOCO))
+    total = sum(len(f) for f in falas) + 2 * (len(falas) - 1)
+    quantos = max(1, -(-total // maximo))
+    alvo = total / quantos
+    blocos, atual, tamanho = [], [], 0
+    for k, fala in enumerate(falas):
+        acrescimo = len(fala) + (2 if atual else 0)
+        if atual and tamanho + acrescimo > maximo:
+            blocos.append(atual)
+            atual, tamanho, acrescimo = [], 0, len(fala)
+        atual.append(k)
+        tamanho += acrescimo
+        if tamanho >= alvo and len(blocos) < quantos - 1:
+            blocos.append(atual)
+            atual, tamanho = [], 0
+    if atual:
+        blocos.append(atual)
+    return blocos
+
+
+def texto_do_bloco(roteiro: dict, bloco: list) -> str:
+    cenas = roteiro.get("cenas") or []
+    return "\n\n".join(cenas[k]["fala"] for k in bloco if 0 <= k < len(cenas))

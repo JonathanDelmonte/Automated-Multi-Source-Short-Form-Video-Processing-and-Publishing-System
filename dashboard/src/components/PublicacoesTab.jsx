@@ -10,7 +10,8 @@ import ConexaoDaConta from './ConexaoDaConta';
 import { DRIVERS, ORDEM_DAS_PLATAFORMAS, PLATAFORMAS } from '../lib/plataformas';
 import { usePainel } from '../lib/painel';
 import {
-  caminhoDaAgenda, caminhoDoPacote, canalDoDestino, corpoDoDestino, plataformasDoPacote,
+  aceitaVideoLongo, caminhoDaAgenda, caminhoDoPacote, canalDoDestino, corpoDoDestino,
+  cortesNoPacote, diasDoPacote, plataformasDoPacote,
 } from '../lib/publicacoes';
 import { janelasEmTexto } from '../lib/receita.js';
 import { useAplicativos } from '../lib/aplicativo';
@@ -40,6 +41,9 @@ export default function PublicacoesTab({
   // O projeto é uma série em partes (7.6)? Então só agenda: "publicar agora"
   // soltaria todas as partes juntas, e a série sai na ordem, uma por janela.
   serie = false,
+  // O projeto é um vídeo longo (7.8: o episódio de IA ou a compilação)? Ele vai
+  // só para o YouTube: a tela diz, e a conta avulsa só pode ser do YouTube.
+  longo = false,
 }) {
   const { canais } = usePainel();
   const mostra = (secao) => secoes.includes(secao);
@@ -147,20 +151,33 @@ export default function PublicacoesTab({
   const publicar = () => enviar('/api/publicar', 'Não deu para publicar.');
   const agendar = () => enviar('/api/agendar', 'Não deu para agendar.');
 
-  const maisRecente = dias[0];
+  // Os dias do pacote da plataforma escolhida: o vídeo longo (7.8) só vai no
+  // do YouTube, e a contagem de cada botão é a daquele pacote.
+  const diasComPacote = diasDoPacote(dias, pacotePara);
+  const maisRecente = diasComPacote[0];
   // Na página de um canal, só o que é dele: as contas dele como destino, e a
   // fila das publicações que saíram (ou vão sair) por elas.
-  const contasDestino = contasDoCanal
+  const contasDoLugar = contasDoCanal
     ? (contas || []).filter((c) => contasDoCanal.includes(c.id))
     : (contas || []);
   const filaVisivel = fila.filter((p) =>
     (!contasDoCanal || contasDoCanal.includes(p.account?.id))
     && (!status || [].concat(status).includes(p.status)));
+  // Uma série (7.6): a da tela do projeto, ou a escolhida na lista da Agenda.
+  const escolhidoNaLista = projetos.find((j) => j.job_id === envio.job_id);
+  const ehSerie = serie || !!escolhidoNaLista?.serie;
+  const ehLongo = longo || !!(escolhidoNaLista
+    && (escolhidoNaLista.compilacao || escolhidoNaLista.criacao?.formato === 'longo'));
+  // O vídeo longo (7.8) só vai para o YouTube: a conta que não o aceita não é
+  // destino dele, e o canal inteiro vale pelas contas que aceitam -- um canal
+  // só de TikTok não é destino de um vídeo longo.
+  const serveDeDestino = (c) => !ehLongo || aceitaVideoLongo(c);
+  const contasDestino = contasDoLugar.filter(serveDeDestino);
   // Os canais que servem de destino: os que têm conta ligada. Na página de um
   // canal, só ele.
   const contasPorCanal = {};
   for (const c of contas || []) {
-    if (c.channel_id) (contasPorCanal[c.channel_id] ||= []).push(c);
+    if (c.channel_id && serveDeDestino(c)) (contasPorCanal[c.channel_id] ||= []).push(c);
   }
   const canaisDestino = (canais.canais || []).filter((c) =>
     contasPorCanal[c.id]?.length && (!canal || c.id === canal));
@@ -178,8 +195,6 @@ export default function PublicacoesTab({
   destinoAtual.current = destino;
   const podePublicar = corpoDoDestino(envio.job_id, destino) && !ocupado;
   const destinoEhCanal = destino.startsWith('canal:');
-  // Uma série (7.6): a da tela do projeto, ou a escolhida na lista da Agenda.
-  const ehSerie = serie || !!projetos.find((j) => j.job_id === envio.job_id)?.serie;
   // A agenda que o "agendar" vai seguir: a do canal do destino (7.5) -- o
   // canal inteiro, ou o canal da conta escolhida --, ou a da instalação para
   // uma conta solta. Pedida de novo a cada troca de destino: o texto não pode
@@ -241,18 +256,22 @@ export default function PublicacoesTab({
                 onClick={() => baixarPacote(maisRecente.dia)}
               >
                 <Download size={14} />
-                {maisRecente.dia} · {maisRecente.cortes} corte
-                {maisRecente.cortes === 1 ? '' : 's'}
+                {maisRecente.dia} · {cortesNoPacote(maisRecente, pacotePara)} corte
+                {cortesNoPacote(maisRecente, pacotePara) === 1 ? '' : 's'}
               </button>
-              {dias.slice(1, 5).map((d) => (
+              {diasComPacote.slice(1, 5).map((d) => (
                 <button key={d.dia} className="btn-quiet text-xs"
                         onClick={() => baixarPacote(d.dia)}>
-                  {d.dia} ({d.cortes})
+                  {d.dia} ({cortesNoPacote(d, pacotePara)})
                 </button>
               ))}
             </div>
           ) : (
-            <p className="text-muted text-[13px]">Nenhum corte em disco ainda.</p>
+            <p className="text-muted text-[13px]">
+              {dias.length
+                ? `Nenhum corte para o ${PLATAFORMAS[pacotePara]?.nome || pacotePara} em disco: os vídeos longos vão só para o YouTube.`
+                : 'Nenhum corte em disco ainda.'}
+            </p>
           )}
         </section>
         )}
@@ -374,7 +393,7 @@ export default function PublicacoesTab({
         {mostra('publicar') && (
         <section className="card p-4 space-y-3">
           <h3 className="text-ink text-sm font-medium">publicar</h3>
-          {(projeto ? false : projetos.length === 0) || (canaisDestino.length === 0 && contasDestino.length === 0) ? (
+          {(projeto ? false : projetos.length === 0) || contasDoLugar.length === 0 ? (
             <p className="text-muted text-[13px]">
               {!projeto && projetos.length === 0
                 ? 'Nenhum projeto com cortes ainda.'
@@ -394,8 +413,10 @@ export default function PublicacoesTab({
                     {projetos.map((j) => (
                       <option key={j.job_id} value={j.job_id}>
                         {j.title || j.job_id.slice(0, 8)} ·{' '}
-                        {j.serie ? `série de ${j.clip_count} parte` : `${j.clip_count} corte`}
-                        {j.clip_count === 1 ? '' : 's'}
+                        {/* O vídeo longo (7.8) é um vídeo só, e não "1 corte". */}
+                        {j.compilacao || j.criacao?.formato === 'longo'
+                          ? 'vídeo longo'
+                          : `${j.serie ? `série de ${j.clip_count} parte` : `${j.clip_count} corte`}${j.clip_count === 1 ? '' : 's'}`}
                       </option>
                     ))}
                   </select>
@@ -438,6 +459,14 @@ export default function PublicacoesTab({
                   {ehSerie ? 'agendar a série' : 'agendar'}
                 </button>
               </div>
+              {ehLongo && (
+                <p className="text-ink2 text-[12px] leading-snug" data-longo-so-youtube>
+                  Vídeo longo e horizontal: ele vai só para o YouTube.{' '}
+                  {canaisDestino.length || contasDestino.length
+                    ? 'No canal inteiro, abre só o galho do YouTube — o TikTok e o Instagram ficam de fora.'
+                    : 'Não há conta do YouTube aqui: cadastre uma nas Configurações (ou ligue uma ao canal).'}
+                </p>
+              )}
               {ehSerie && (
                 <p className="text-ink2 text-[12px] leading-snug" data-serie-na-agenda>
                   Numa série, as partes vão para a agenda na ordem, uma por janela. Se uma falhar, as seguintes

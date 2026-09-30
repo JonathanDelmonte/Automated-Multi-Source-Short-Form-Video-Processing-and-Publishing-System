@@ -2,12 +2,12 @@ import React from 'react';
 import { ArrowRight, Film, ListVideo, Scissors, Wand2 } from 'lucide-react';
 import { hrefDe } from '../lib/rota';
 
-// O que dá para criar (etapa 7.1). Os cortes de vídeo real, a série em partes
-// (7.6) e o vídeo criado por IA (7.7) já funcionam; o vídeo longo tem o lugar
-// marcado e diz o que vai fazer, com a etapa do plano em que chega
-// (`docs/PLANO-DA-PLATAFORMA.md`). Cortes de vídeo real e
-// vídeo criado por IA são coisas separadas, e todo canal pode ter os dois
-// (o autor, 26-set-2026).
+// O que dá para criar (etapa 7.1). Os quatro funcionam: os cortes de vídeo
+// real, a série em partes (7.6), o vídeo criado por IA (7.7) e o vídeo longo
+// (7.8). Um tipo que ainda não existe ganha `etapa`, e o cartão diz em que
+// etapa do plano ele chega (`docs/PLANO-DA-PLATAFORMA.md`). Cortes de vídeo
+// real e vídeo criado por IA são coisas separadas, e todo canal pode ter os
+// dois (o autor, 26-set-2026).
 const TIPOS = [
   {
     id: 'cortes',
@@ -31,8 +31,7 @@ const TIPOS = [
     id: 'longo',
     icone: Film,
     titulo: 'Vídeo longo',
-    texto: 'Um vídeo horizontal longo, montado a partir dos cortes ou de um roteiro.',
-    etapa: '7.8',
+    texto: 'Um vídeo horizontal longo para o YouTube: um episódio criado por IA, que pode continuar uma história, ou uma compilação dos seus cortes.',
   },
 ];
 

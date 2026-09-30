@@ -80,13 +80,15 @@ export function fraseDaCota(cota, cenas) {
   return `Hoje ainda cabem ${imagens} imagens na cota grátis: ${quantos} de ${cenas} cenas.`;
 }
 
-// Uma linha que diz como é o vídeo deste estilo.
-export function resumoDoEstilo(spec) {
+// Uma linha que diz como é o vídeo deste estilo. No episódio longo (7.8) a
+// duração e as cenas são as escolhidas na tela, e não as do vídeo curto do
+// estilo: `{ duracao: false }` tira as duas da linha.
+export function resumoDoEstilo(spec, { duracao = true } = {}) {
   if (!spec) return '';
   const partes = [
     nomeDe(FORMATOS, spec.formato),
-    `${spec.duracao_s} s`,
-    `${spec.cenas} cenas`,
+    duracao ? `${spec.duracao_s} s` : null,
+    duracao ? `${spec.cenas} cenas` : null,
     spec.visual?.preset === 'nenhum' ? 'visual descrito' : nomeDe(VISUAIS, spec.visual?.preset),
     `voz ${spec.voz?.nome || 'Kore'}`,
   ];
@@ -147,4 +149,69 @@ export function fraseDaProximaIdeia(proxima) {
   return proxima.daLista
     ? `Próximo vídeo: “${proxima.ideia}”.`
     : `As ideias da lista acabaram: o próximo vídeo é ${proxima.ideia}.`;
+}
+
+// --------------------------------------------------------------------------
+// O episódio longo (etapa 7.8): a mesma máquina, horizontal, de 2 a 10 minutos.
+// Os números são os do motor (`estilos.py`), e o teste compara.
+// --------------------------------------------------------------------------
+
+export const DURACAO_LONGA = { min: 120, max: 600 };
+export const SEGUNDOS_POR_CENA_LONGA = 15;
+export const CENAS_LONGAS = { min: 8, max: 40 };
+export const HISTORIA_MAX = 80;
+
+// Quantas cenas (imagens) tem um episódio desta duração, como o motor conta
+// (`estilos.cenas_do_longo`). `Math.round` do JS arredonda 0,5 para cima e o do
+// Python para o par: nos minutos inteiros da tela (múltiplos de 60 s ÷ 15) a
+// conta nunca cai no meio, e o teste confere todos.
+export function cenasDoLongo(segundos) {
+  const s = Number(segundos);
+  const base = Number.isFinite(s) ? s : DURACAO_LONGA.min;
+  return Math.max(CENAS_LONGAS.min, Math.min(CENAS_LONGAS.max, Math.round(base / SEGUNDOS_POR_CENA_LONGA)));
+}
+
+export function nomeDaHistoria(texto) {
+  return String(texto || '').replace(/\s+/g, ' ').trim();
+}
+
+// O corpo do `POST /api/criacoes` do episódio. Sem história, ele sai avulso.
+export function corpoDoEpisodio({ canalId, ideia, minutos, historia }) {
+  const corpo = { ...corpoDaCriacao({ canalId, ideia }), formato: 'longo', duracao_min: Number(minutos) };
+  const nome = nomeDaHistoria(historia);
+  if (nome) corpo.historia = nome;
+  return corpo;
+}
+
+// O que a cota do dia diz do episódio desta duração, ANTES do clique.
+export function fraseDaCotaDoEpisodio(cota, minutos) {
+  if (!cota) return null;
+  const cenas = cenasDoLongo(Number(minutos) * 60);
+  const imagens = Number(cota.imagens_hoje) || 0;
+  if (imagens >= cenas) {
+    return { ok: true, texto: `Um episódio de ${minutos} minutos tem ${cenas} cenas: hoje cabem ${imagens} imagens na cota grátis.` };
+  }
+  return {
+    ok: false,
+    texto: `Um episódio de ${minutos} minutos tem ${cenas} cenas, e hoje só cabem ${imagens} imagens na cota grátis. `
+      + `Escolha um episódio mais curto, ou crie depois que a cota voltar (${cota.imagem_volta || 'à meia-noite UTC'}).`,
+  };
+}
+
+// A situação da tela do vídeo longo: o site é publicado antes de o programa de
+// quem usa ser atualizado, e um motor de antes da 7.8 faria um vídeo CURTO no
+// lugar do episódio (ele ignora o `formato`).
+export function situacaoDoVideoLongo({ configCarregada, videoLongoNoMotor }) {
+  if (!configCarregada) return 'carregando';
+  return videoLongoNoMotor ? 'pronto' : 'motor-antigo';
+}
+
+// Uma linha sobre a história escolhida: em que episódio ela está.
+export function fraseDaHistoria(historia) {
+  if (!historia) return 'Episódio avulso: não continua nenhuma história.';
+  const ultimo = historia.ultimo || {};
+  if (!ultimo.pronto) {
+    return `O episódio ${ultimo.episodio} de “${historia.nome}” ainda não terminou: termine (ou apague) ele antes do próximo.`;
+  }
+  return `Este será o episódio ${ultimo.episodio + 1} de “${historia.nome}”, continuando de onde o ${ultimo.episodio} parou.`;
 }

@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import MediaInput from '../components/MediaInput';
 import CriarVideoDeIA from '../components/criacao/CriarVideoDeIA';
+import CriarVideoLongo from '../components/longo/CriarVideoLongo';
 import SerieInput from '../components/SerieInput';
 import SeletorDeCanal from '../components/SeletorDeCanal';
 import TiposDeCriacao from '../components/TiposDeCriacao';
 import Modal from '../components/ui/Modal';
-import Pagina, { CabecalhoDaPagina, EmBreve } from '../components/ui/Pagina';
+import Pagina, { CabecalhoDaPagina } from '../components/ui/Pagina';
 import { enviarVideo, guardarMidia } from '../lib/processar';
 import { usePainel } from '../lib/painel';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,12 +27,12 @@ import { hrefDe, ir } from '../lib/rota';
 //
 // `#/criar/ia` (7.7) é o vídeo criado por IA: sem envio nenhum, no estilo
 // salvo no canal. Sem canal não há estilo, então o canal é obrigatório ali.
+//
+// `#/criar/longo` (7.8) é o vídeo horizontal longo: o episódio de IA ou a
+// compilação dos cortes (`?modo=cortes`, e `?projeto=<id>` chega da tela de um
+// projeto com os cortes dele já escolhidos).
 
-const OUTROS = {
-  longo: { titulo: 'Vídeo longo', etapa: '7.8' },
-};
-
-export default function Criar({ tipo = null, canalInicial = null }) {
+export default function Criar({ tipo = null, canalInicial = null, modoInicial = null, projetoInicial = null }) {
   const { apiKey, keysMissing, pedirChave, canais } = usePainel();
   const { configCarregada, seriesNoMotor } = useAuth();
   const [canalId, setCanalId] = useState(canalInicial);
@@ -92,16 +93,20 @@ export default function Criar({ tipo = null, canalInicial = null }) {
     );
   }
 
-  if (OUTROS[tipo]) {
+  if (tipo === 'longo') {
     return (
-      <Pagina largura="media">
-        <a href={hrefDe('/criar')} className="btn-quiet px-3 py-1.5 text-xs w-fit">
+      <Pagina largura="estreita">
+        <a href={hrefDe(`/criar${canalValido ? `?canal=${canalValido}` : ''}`)} className="btn-quiet px-3 py-1.5 text-xs w-fit">
           <ArrowLeft size={14} /> criar
         </a>
-        <CabecalhoDaPagina rotulo="criar" titulo={OUTROS[tipo].titulo} />
-        <EmBreve etapa={OUTROS[tipo].etapa} titulo="Ainda não dá para criar este tipo.">
-          <p>O lugar dele já está aqui para você ver onde vai ficar. O que ele vai fazer está no cartão da tela anterior.</p>
-        </EmBreve>
+        <CabecalhoDaPagina
+          rotulo={canal ? `criar · ${canal.name}` : 'criar'}
+          titulo="Vídeo longo"
+          descricao="Um vídeo horizontal de vários minutos para o YouTube: um episódio criado por IA no estilo do canal, que pode continuar uma história, ou uma compilação dos cortes que você já tem."
+        />
+        {escolhaDoCanal}
+        <CriarVideoLongo canalId={canalValido} modoInicial={modoInicial} projetoInicial={projetoInicial}
+                         aoCriar={() => canais.carregar()} />
       </Pagina>
     );
   }

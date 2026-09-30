@@ -1234,7 +1234,7 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/publicacoes` | A fila: o que subiu e o que espera a mão |
 | POST | `/api/publicacoes/{id}/publicado` | "Já publiquei", com o link do post |
 | POST | `/api/publicacoes/{id}/tentar` | A que falhou volta para a fila (7.6); pular e o DELETE |
-| GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas |
+| GET | `/api/publicacoes/pacote` | O ZIP do dia: cortes + legendas prontas (o video longo so no do YouTube) |
 | GET/POST | `/api/agenda`, `/api/agendar` | A agenda em vigor (`?canal=` a de um canal), e agendar um projeto numa conta ou no canal |
 | GET/POST | `/api/metricas`, `/api/metricas/coletar` | As leituras coletadas (as três plataformas), e "medir agora" |
 | GET | `/api/tempo` | Onde vai o tempo de processamento |
@@ -1258,7 +1258,10 @@ portrait clip cannot reproduce the shrink either.
 | GET/PUT | `/api/canais/{id}/estilo` | O estilo de criacao do canal (7.7), com as listas do editor e a cota do dia |
 | POST | `/api/canais/{id}/estilo/personagens/{pid}/gerar`, `.../imagem` | A imagem de referencia do personagem: gerada ou enviada (data URL) |
 | POST | `/api/canais/{id}/estilo/ouvir` | Uma amostra da voz (WAV), guardada para nao gastar a cota de novo |
-| POST | `/api/criacoes`, `/api/criacoes/{id}/continuar` | Cria um video por IA no estilo do canal; continua o que parou |
+| POST | `/api/criacoes`, `/api/criacoes/{id}/continuar` | Cria um video por IA no estilo do canal (curto, ou o episodio longo com `formato: longo`); continua o que parou |
+| GET | `/api/canais/{id}/historias` | As historias de varios episodios do canal (7.8), para o episodio novo continuar |
+| POST | `/api/compilacoes`, `/api/compilacoes/{id}/refazer` | A compilacao horizontal dos cortes (7.8); monta de novo a que parou |
+| GET | `/api/jobs/{id}/cortes` | Os cortes prontos de um projeto, leves, para escolher na compilacao |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -3028,6 +3031,89 @@ do codigo que ela mudou.
   antes do programa de quem usa ser atualizado.
 - `tests/test_criar_video.py` roda o job de ponta a ponta com o ffmpeg de
   verdade (rede, IA de texto e whisper imitados).
+
+**O video longo** (`capitulos.py`, `compilacao.py`, `compilar_video.py` e o
+formato `longo` do `criar_video.py`; etapa 7.8):
+
+- **Dois caminhos, uma tela** (`#/criar/longo`, `components/longo/`): o episodio
+  criado por IA (a maquina da 7.7, deitada, de 2 a 10 minutos) e a compilacao
+  dos cortes que ja existem. Os dois sao 1920x1080 e **vao so para o YouTube**
+  (`app.PLATAFORMAS_DO_VIDEO_LONGO`; o `lib/publicacoes.js` repete a lista, e ha
+  teste comparando). O corte leva `formato: "longo"` no metadata, o
+  `RenderedClip.longo` carrega isso, e `_fora_do_destino` pula o galho do TikTok
+  e do Instagram: no canal com as tres contas, ele sai so no do YouTube.
+- **O pacote do dia do TikTok e do Instagram nao leva o video longo**
+  (`_vai_no_pacote`), e o `/api/publicacoes/dias` conta por plataforma
+  (`por_plataforma`; `cortes` continua sendo o total, que o painel antigo le).
+  Achado no passeio pelas telas: o botao do pacote do TikTok contava a
+  compilacao, e o ZIP a levaria.
+- **O episodio e o mesmo job da 7.7**, com `formato: "longo"` no pedido
+  (`/api/criacoes` com `duracao_min` e, opcional, `historia`). Uma imagem a
+  cada 15 s de fala (`estilos.cenas_do_longo`, 8 a 40), 1344x768 (as medidas
+  trocadas: os mesmos neurons), e a cota e conferida pela DURACAO antes do job
+  -- as imagens E as chamadas de voz.
+- **A narracao sai em blocos de ~2,5 minutos** (`estilos.blocos_de_narracao`,
+  `CARACTERES_POR_BLOCO`): numa chamada so, a voz do Gemini degrada em falas de
+  varios minutos. O bloco quebra entre cenas, cada um vira
+  `narracao_bloco_NN.wav`, e o `montagem.juntar_wavs` os junta com uma pausa. O
+  bloco pronto nao e pedido de novo numa retomada: cada um e uma chamada da cota.
+- **A historia mora no roteiro guardado** (`creations.script_json`: `historia`,
+  `episodio`, `resumo`), e nao em tabela nova -- `creations` ja existia, e o
+  `create_all` nao acrescenta coluna. O episodio novo le o titulo e o resumo dos
+  anteriores (`ANTERIORES_NO_ROTEIRO`) e continua de onde o ultimo parou.
+  **Enquanto o anterior nao terminou, o proximo e recusado** (o resumo so
+  existe no fim do job), e o numero e dado sob `_TRAVA_DOS_EPISODIOS`: dois
+  cliques nao saem com o mesmo numero. O pedido ja nasce no banco com a
+  historia e o numero (o roteiro preliminar), e e isso que faz o proximo esperar.
+- **Os capitulos seguem as regras do YouTube, ou nao saem**
+  (`capitulos.validos`): o primeiro em 0:00, pelo menos tres, cada um com 10 s.
+  Uma lista fora delas e ignorada inteira pelo YouTube, sem aviso. O capitulo
+  curto sai e o trecho fica com o anterior. No episodio, o roteiro diz em que
+  cena cada um comeca; na compilacao, cada corte com titulo abre um. A lista vai
+  na descricao (`capitulos.na_descricao`), e o painel preve a mesma pela mesma
+  regra (`lib/compilacao.js:capitulosPrevistos`, conferida no `node`).
+- **A compilacao sai da ORIGEM deitada** quando ela ainda esta no disco
+  (`_locate_source`); sem ela (upload que a limpeza levou, video de IA), entra o
+  proprio corte limpo em pe, no meio do quadro, sobre uma copia desfocada dele,
+  e a tela diz isso antes. Um ffmpeg so (`compilacao.comando`): `-ss`/`-t` por
+  entrada, o mesmo grafo por trecho, 0,25 s de escuro de cada lado da emenda, e
+  o `loudnorm` DENTRO do grafo (`_filtro_de_audio`) -- o ffmpeg recusa `-af`
+  num audio que sai de `-filter_complex`. Com legenda, `split` no video e
+  `asplit` no audio: um rotulo so vai a uma saida.
+- **A legenda da compilacao e a transcricao dos projetos**: as palavras de cada
+  corte, no tempo da compilacao (`transcricao_do_plano`), no preset deitado
+  (`montagem.legenda_horizontal`: o ASS mede a letra pela altura, e o preset do
+  Short num quadro deitado sairia com a letra de um Short). Saem o limpo e o
+  legendado do mesmo grafo, como num corte.
+- **O credito das fontes CC BY e resolvido no pedido** (`creditos` no
+  `compilacao.json`) e entra na descricao ao publicar, uma linha por fonte.
+- **`sources.adapter` aceita `compilacao`** (migracao `c5f0a8e2d417`; o
+  `db_acerto` leva o CHECK novo aos bancos que existem).
+- **A compilacao e um job como os outros** (`compilar_video.py --pasta`,
+  estagios `k1_trechos` a `k3_montagem`, `COMPILACAO_STAGES`). A que parou volta
+  do disco como `failed` (`_compilacao_parada`) e **monta de novo inteira**
+  (`POST /api/compilacoes/{id}/refazer`): nada ali gasta cota. Um trecho cujo
+  arquivo sumiu para o job dizendo qual.
+- **Arquivo acima de 64 MB sobe ao YouTube em pedacos, com retomada**
+  (`youtube_api._enviar_em_pedacos`): pedacos de 8 MB, o 308 diz ate onde chegou
+  (`proximo_byte`), e uma queda pergunta onde parou (`bytes */total`) e retoma
+  dali, com espera crescente; cada pedaco que chega zera a conta de quedas. O
+  404/410 e a sessao que expirou: ai a publicacao inteira tenta de novo. O
+  Short continua no PUT unico, o caminho que ja funcionava.
+- **O site novo com o programa velho nao cria video longo**
+  (`/api/config.video_longo`): um motor de antes da 7.8 IGNORA o `formato` do
+  `/api/criacoes` e faria um video curto no lugar do episodio, sem erro nenhum.
+- **No painel**, o destino de publicar um video longo so lista contas do
+  YouTube, e o canal inteiro so vale (e so se rotula) pelas contas dele que
+  aceitam (`serveDeDestino`) -- o rotulo dizia "TikTok, Instagram, YouTube".
+  "Sem destino" continua sendo so "nenhuma conta aqui" (`contasDoLugar`): a
+  lista filtrada nao pode esconder o seletor de projeto da Agenda. Na tela do
+  episodio, a linha do estilo nao diz a duracao do video curto
+  (`resumoDoEstilo(spec, { duracao: false })`).
+- `tests/test_compilacao.py` monta a compilacao com o ffmpeg de verdade, da
+  origem e do corte em pe; `tests/test_criar_video.py` faz um episodio em
+  blocos; `tests/test_painel_do_video_longo.py` roda as regras da tela no
+  `node` contra as do motor.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

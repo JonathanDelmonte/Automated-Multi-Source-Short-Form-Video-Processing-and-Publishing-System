@@ -49,6 +49,11 @@ ESTAGIO_DO_MARCADOR = {
     "c3_voz": "compose",
     "c4_legenda": "transcribe",
     "c5_montagem": "compose",
+    # A compilacao dos cortes (7.8): separar os trechos e ler as fontes; a
+    # legenda vem da transcricao dos projetos; o resto e compor.
+    "k1_trechos": "ingest",
+    "k2_legenda": "transcribe",
+    "k3_montagem": "compose",
 }
 
 

@@ -175,6 +175,12 @@ export function nomeDaHistoria(texto) {
   return String(texto || '').replace(/\s+/g, ' ').trim();
 }
 
+// A mesma do motor (`estilos.chave_da_historia`): "A Lulu" e "a  lulu" são a
+// mesma história -- e um nome "novo" igual ao de uma que existe a continua.
+export function chaveDaHistoria(texto) {
+  return nomeDaHistoria(texto).toLowerCase();
+}
+
 // O corpo do `POST /api/criacoes` do episódio. Sem história, ele sai avulso.
 export function corpoDoEpisodio({ canalId, ideia, minutos, historia }) {
   const corpo = { ...corpoDaCriacao({ canalId, ideia }), formato: 'longo', duracao_min: Number(minutos) };

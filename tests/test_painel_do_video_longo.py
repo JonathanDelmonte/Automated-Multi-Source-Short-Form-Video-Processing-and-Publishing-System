@@ -130,6 +130,14 @@ def test_o_corpo_do_episodio_e_as_frases():
     parada = _js("m.fraseDaHistoria({nome: 'A Lulu', ultimo: {episodio: 3, pronto: false}})",
                  "criacao.js")
     assert "O episódio 3 de “A Lulu” ainda não terminou" in parada
+    # O nome da historia vira a mesma chave nos dois lados: um nome "novo"
+    # igual ao de uma que existe continua aquela, e a tela diz antes.
+    nomes = ["A Lulu", "a  lulu ", " A LULU na Floresta", "Ávila", "o Bento"]
+    assert _js(f"{json.dumps(nomes)}.map(m.chaveDaHistoria)", "criacao.js") == \
+        [estilos.chave_da_historia(n) for n in nomes]
+    tela = _fonte("components", "longo", "CriarEpisodio.jsx")
+    assert "chaveDaHistoria(h.nome) === chaveDaHistoria(nome)" in tela
+    assert "Essa história já existe." in tela
     # A linha do estilo no episodio nao diz a duracao nem as cenas do video
     # CURTO do estilo: as do episodio sao as escolhidas na tela.
     spec = estilos.normalizar({"visual": {"preset": "aquarela"}, "cenas": 6, "duracao_s": 45,

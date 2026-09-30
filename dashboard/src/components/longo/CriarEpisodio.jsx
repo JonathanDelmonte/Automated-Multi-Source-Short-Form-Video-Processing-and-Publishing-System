@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, Loader2, Palette, Wand2 } from 'lucide-react';
 import {
-  DURACAO_LONGA, HISTORIA_MAX, cenasDoLongo, corpoDoEpisodio, fraseDaCotaDoEpisodio,
-  fraseDaHistoria, nomeDaHistoria, resumoDoEstilo,
+  DURACAO_LONGA, HISTORIA_MAX, cenasDoLongo, chaveDaHistoria, corpoDoEpisodio,
+  fraseDaCotaDoEpisodio, fraseDaHistoria, nomeDaHistoria, resumoDoEstilo,
 } from '../../lib/criacao.js';
 import { criarVideo, lerEstilo, lerHistorias } from '../../lib/criacaoNoMotor';
 import { hrefDe, ir } from '../../lib/rota';
@@ -48,8 +48,13 @@ export default function CriarEpisodio({ canalId, aoCriar }) {
   if (tela === null && !erro) return <Loader2 size={18} className="animate-spin text-muted" aria-label="carregando" />;
 
   const spec = tela?.estilo?.spec;
-  const historia = escolha && escolha !== NOVA ? historias.find((h) => h.nome === escolha) : null;
-  const nome = escolha === NOVA ? nomeDaHistoria(nomeNovo) : historia?.nome || '';
+  const nome = escolha === NOVA ? nomeDaHistoria(nomeNovo) : (escolha || '');
+  // Um nome "novo" igual ao de uma história que existe continua aquela: é o
+  // que o motor faz, e a tela diz antes do clique.
+  const jaExiste = escolha === NOVA && nome
+    ? historias.find((h) => chaveDaHistoria(h.nome) === chaveDaHistoria(nome)) : null;
+  const historia = jaExiste
+    || (escolha && escolha !== NOVA ? historias.find((h) => h.nome === escolha) : null);
   const cota = tela ? fraseDaCotaDoEpisodio(tela.cota, minutos) : null;
   const esperando = historia && historia.ultimo && !historia.ultimo.pronto;
   const bloqueio = tela?.pode_criar_episodio
@@ -112,9 +117,11 @@ export default function CriarEpisodio({ canalId, aoCriar }) {
         <p className="flex items-start gap-2 text-[12px] text-muted leading-snug">
           <BookOpen size={13} className="shrink-0 mt-0.5" />
           <span>
-            {escolha === NOVA
-              ? (nome ? `Este será o episódio 1 de “${nome}”.` : 'O episódio 1 apresenta o mundo e os personagens.')
-              : fraseDaHistoria(historia)}
+            {jaExiste
+              ? `Essa história já existe. ${fraseDaHistoria(jaExiste)}`
+              : escolha === NOVA
+                ? (nome ? `Este será o episódio 1 de “${nome}”.` : 'O episódio 1 apresenta o mundo e os personagens.')
+                : fraseDaHistoria(historia)}
           </span>
         </p>
       </div>

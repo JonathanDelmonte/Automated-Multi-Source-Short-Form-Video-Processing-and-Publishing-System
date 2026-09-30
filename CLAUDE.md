@@ -1249,12 +1249,16 @@ portrait clip cannot reproduce the shrink either.
 | GET/POST | `/api/chaves` | As chaves de IA coladas nas Configuracoes (nunca devolve a chave inteira) |
 | GET/POST/PATCH/DELETE | `/api/canais`, `/api/canais/{id}` | Os canais (Fase 7): nome, nicho, avatar, contas ligadas, aprovacao |
 | PUT | `/api/jobs/{id}/canal` | Poe (ou tira) um projeto num canal |
-| GET/PUT | `/api/canais/{id}/receita` | A receita do canal (7.5): de onde vem o video e como editar, com o estoque e a agenda |
+| GET/PUT | `/api/canais/{id}/receita` | A receita do canal (7.5): de onde vem o video e como editar, com o estoque e a agenda; `?tipo=ia` e a receita de IA (7.7) |
 | POST | `/api/canais/{id}/receita/buscar`, `/api/canais/{id}/receita/rodar` | "Buscar agora" e "verificar agora" |
 | GET/POST | `/api/canais/{id}/candidatos`, `/api/candidatos/{id}` | A caixa de entrada de fontes: listar, escolher o proximo, tirar da fila |
 | GET/POST | `/api/aprovacoes`, `/api/aprovacoes/decidir` | A caixa de aprovacao: aprovar (vai para a agenda do canal) ou recusar |
 | GET | `/api/automacao` | O que cada receita esta fazendo, para o Inicio |
 | PUT | `/api/fuso` | O fuso de quem usa, mandado pelo painel (as janelas valem nele) |
+| GET/PUT | `/api/canais/{id}/estilo` | O estilo de criacao do canal (7.7), com as listas do editor e a cota do dia |
+| POST | `/api/canais/{id}/estilo/personagens/{pid}/gerar`, `.../imagem` | A imagem de referencia do personagem: gerada ou enviada (data URL) |
+| POST | `/api/canais/{id}/estilo/ouvir` | Uma amostra da voz (WAV), guardada para nao gastar a cota de novo |
+| POST | `/api/criacoes`, `/api/criacoes/{id}/continuar` | Cria um video por IA no estilo do canal; continua o que parou |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -2955,6 +2959,75 @@ do codigo que ela mudou.
   `SerieInput.motorAntigo`). Um motor de antes da 7.6 IGNORA o campo `serie` do
   `/api/process` e faria cortes comuns escolhidos pela IA, sem erro nenhum -- e o
   site e publicado antes de o programa de quem usa ser atualizado.
+
+**O video criado por IA** (`midia_ia.py`, `estilos.py`, `criacoes.py`,
+`criar_video.py`, `montagem.py`; etapa 7.7, ADR-013):
+
+- **O estilo e do CANAL e e escolhido, nunca deduzido** (decisao do autor,
+  26-set-2026): `estilos.py` e o documento (stdlib pura, campo desconhecido
+  passa, como o template), `creation_styles` guarda um por canal, e nada ali le o
+  nicho -- ha teste. As imagens dos personagens moram em
+  `DATA_DIR/estilos/<id do estilo>/`, com o nome gravado pelo motor
+  (`<pid>-<6hex>.png`); o documento so guarda o NOME, e um nome que nao casa com
+  o padrao vira None (o documento vem do corpo de uma requisicao).
+- **O personagem consistente e a imagem de referencia**, gerada (uma imagem da
+  cota) ou enviada pela pessoa, e aprovada por ela. Toda cena em que ele aparece
+  leva a imagem ao FLUX.2 klein (Workers AI, ate 4 referencias, multipart mesmo
+  sem imagem); a reserva, FLUX.1 schnell, nao aceita referencia, e o log diz.
+  **Personagem sem imagem impede criar** (`_por_que_nao_cria`): um video com ele
+  sairia diferente a cada cena.
+- **A imagem enviada chega em JSON (data URL), nunca multipart**: pedido JSON de
+  outra origem passa pelo preflight do CORS, multipart nao. Mesmo motivo do
+  avatar do canal.
+- **Um video e um job como os outros** (`POST /api/criacoes` -> `criar_video.py
+  --pasta <job>`): os marcadores do `job_metrics` (estagios `c1_roteiro` a
+  `c5_montagem`, `CRIACAO_STAGES` no `app.py`, e a barra escolhe a lista pelo
+  nome do estagio), o `CLIP_READY` e o `<base>_metadata.json` com um item em
+  `shorts`. Por isso fila, cancelar, retomada, tela do projeto, publicacao e
+  agenda valem sem codigo novo. **O metadata e escrito por ultimo**: presente =
+  pronto.
+- **O pedido leva uma COPIA do estilo e das imagens** (`criacao.json`,
+  `referencias/`): editar o estilo no meio nao muda um video em andamento.
+- **Nada e refeito**: roteiro, cada `cena_XX`, a narracao e a transcricao ficam
+  na pasta, e o job retomado (ou o "continuar", `POST
+  /api/criacoes/{id}/continuar`) pula o que ja existe. Cota gratis e o motivo.
+- **A cota e conferida ANTES**: `_por_que_nao_cria` e o `gerar_imagens` recusam
+  quando as imagens que faltam nao cabem hoje (`midia_ia.imagens_que_cabem`, os
+  neurons em `OUTPUT_DIR/.midia_budget.json`, dia UTC para o Cloudflare e do
+  Pacifico para o Gemini). Metade das imagens hoje e o resto amanha deixaria um
+  video parado no meio. O debito e ANTES da chamada e volta quando o erro prova
+  que nada foi gerado.
+- **Roteiro com cenas demais junta as vizinhas mais curtas**
+  (`estilos.juntar_cenas`): cada cena e uma imagem da cota, e cortar as ultimas
+  perderia o fim da historia.
+- **A legenda e o texto do ROTEIRO no tempo da voz** (`montagem.palavras_do_roteiro`,
+  `difflib` sobre as palavras sem acento): o whisper so da o tempo. Ele erra o
+  nome do personagem, e e essa transcricao alinhada que vai ao metadata -- o
+  `/api/subtitle` le dali ao trocar o estilo. Cada palavra sabe a `cena`, e a
+  cena troca de imagem quando a fala dela comeca.
+- **Saem dois arquivos, do mesmo grafo** (`montagem.comando(...,
+  saida_legendada=)`): `criacao_clip_1.mp4` e `subtitled_<ts>_criacao_clip_1.mp4`,
+  como num corte do pipeline. O limpo e o que deixa trocar a legenda sem queimar
+  uma por cima da outra. O movimento das cenas (o `zoompan`, a parte cara) e
+  calculado uma vez so.
+- **O video de IA parado volta do disco como `failed`** (`_criacao_parada`, no
+  `_recover_jobs_from_disk`): sem metadata e sem manifesto ele sumia da lista
+  depois de um reinicio, e a tela dizia "nao existe mais" -- justo no video que
+  so precisa de "continuar".
+- **A receita de IA** (`recipes.kind = 'ia'`, `receitas.normalizar_ia`,
+  `app._cuidar_da_receita_ia`): uma ideia por video, na ordem; acabada a lista,
+  uma nova sobre o tema. Passa pela MESMA porta do painel (`/api/criacoes` por
+  `_chamar_o_motor`, com `receita_id`), e o fim do job (`_ia_depois_do_job`, no
+  `run_job_wrapper`) manda para a caixa de aprovacao ou a agenda do canal, como
+  a de cortes. O estado mora em `recipes.state_json` (`criando`, `feitas`,
+  `puladas`, `hoje`); o que parou continua ate `TENTATIVAS_POR_VIDEO` (3) e
+  depois a ideia e pulada. Salvar a receita devolve as puladas.
+- **Nao repetir o tema**: `creations` guarda ideia, titulo e roteiro, e
+  `criacoes.temas_do_canal` vai no pedido (`ja_feitos`) para o roteiro.
+- `/api/config.criacao` e a marca do motor que sabe criar: o site e publicado
+  antes do programa de quem usa ser atualizado.
+- `tests/test_criar_video.py` roda o job de ponta a ponta com o ffmpeg de
+  verdade (rede, IA de texto e whisper imitados).
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

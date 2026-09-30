@@ -26,9 +26,9 @@ import re
 import unicodedata
 from typing import Optional
 
-#: O que o painel oferece e o motor aceita. `serie` (7.6) e `ia` (7.7) ja
-#: estao no CHECK do banco; aqui, so o que existe.
-TIPOS_ACEITOS = ("cortes",)
+#: O que o painel oferece e o motor aceita. `serie` (7.6) esta no CHECK do
+#: banco, mas nao e receita: a serie e pedida a mao.
+TIPOS_ACEITOS = ("cortes", "ia")
 FONTES = ("busca", "links", "twitch", "pasta")
 #: A duracao do video que a busca procura. `media` e 4 a 20 minutos e `longa`,
 #: mais de 20 -- as faixas da propria busca do YouTube. Curta (menos de 4 min)
@@ -351,3 +351,82 @@ def pronta(spec: dict) -> Optional[str]:
     if precisa_de_direitos(spec) and not spec.get("direitos"):
         return "falta confirmar que você tem os direitos sobre esses vídeos"
     return None
+
+
+# --------------------------------------------------------------------------- #
+# A receita de IA (etapa 7.7)
+# --------------------------------------------------------------------------- #
+
+#: O canal cria videos por IA no estilo DELE (`creation_styles`): o estilo diz
+#: como o video e, e esta receita diz so o que contar e em que ritmo. Quando
+#: postar e se espera aprovacao continuam sendo do canal, como na de cortes.
+PADRAO_IA = {
+    # Uma ideia por video, na ordem. A que ja virou video nao volta.
+    "ideias": [],
+    # Quando as ideias acabam (ou se nao ha nenhuma), o roteiro inventa uma
+    # nova sobre este tema, sem repetir o que o canal ja fez.
+    "tema": "",
+    "ritmo": {"videos_por_dia": 1},
+}
+MAX_IDEIAS = 200
+MAX_IDEIA = 300
+#: Quantas vezes um video que parou continua de onde parou antes de a receita
+#: seguir para a proxima ideia.
+TENTATIVAS_POR_VIDEO = 3
+
+
+def _ideias(valor) -> list:
+    if valor is None:
+        return []
+    if isinstance(valor, str):
+        valor = valor.splitlines()
+    if not isinstance(valor, list):
+        raise ReceitaInvalida("as ideias têm de ser uma lista")
+    limpas = []
+    for bruta in valor:
+        ideia = re.sub(r"\s+", " ", _texto(bruta, "cada ideia", MAX_IDEIA))
+        if ideia and chave_da_ideia(ideia) not in {chave_da_ideia(x) for x in limpas}:
+            limpas.append(ideia)
+    if len(limpas) > MAX_IDEIAS:
+        raise ReceitaInvalida(f"no máximo {MAX_IDEIAS} ideias por receita")
+    return limpas
+
+
+def chave_da_ideia(ideia: str) -> str:
+    """A ideia para comparar: sem acento, sem pontuacao, minuscula."""
+    return re.sub(r"[^a-z0-9]+", " ", _sem_acento(ideia or "").lower()).strip()
+
+
+def normalizar_ia(spec: Optional[dict], base: Optional[dict] = None) -> dict:
+    """A receita de IA completa, como `normalizar` faz com a de cortes."""
+    saida = copy.deepcopy(PADRAO_IA)
+    for origem in (base, spec):
+        if origem is None:
+            continue
+        if not isinstance(origem, dict):
+            raise ReceitaInvalida("a receita tem de ser um objeto")
+        for secao, valor in origem.items():
+            if secao == "ritmo" and valor is not None:
+                if not isinstance(valor, dict):
+                    raise ReceitaInvalida("ritmo tem de ser um objeto")
+                saida["ritmo"].update(valor)
+            elif secao != "ritmo":
+                saida[secao] = copy.deepcopy(valor)
+    saida["ideias"] = _ideias(saida.get("ideias"))
+    saida["tema"] = _texto(saida.get("tema"), "o tema", MAX_TEMA)
+    saida["ritmo"]["videos_por_dia"] = _inteiro(saida["ritmo"].get("videos_por_dia"),
+                                                "vídeos por dia", 1, MAX_VIDEOS_POR_DIA)
+    return saida
+
+
+def proxima_ideia(spec: dict, feitas=(), puladas=()) -> tuple:
+    """`(ideia, da_lista)` do proximo video: a primeira ideia da lista que
+    ainda nao virou video (nem foi pulada); acabadas as ideias, uma nova sobre
+    o tema; sem tema, `("", False)` -- o roteiro inventa no estilo do canal."""
+    usadas = {chave_da_ideia(x) for x in list(feitas) + list(puladas)}
+    for ideia in spec.get("ideias") or []:
+        if chave_da_ideia(ideia) not in usadas:
+            return ideia, True
+    tema = (spec.get("tema") or "").strip()
+    return (f"uma ideia nova sobre {tema}" if tema else ""), False
+

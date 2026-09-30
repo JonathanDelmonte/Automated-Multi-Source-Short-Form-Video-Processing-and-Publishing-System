@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import MediaInput from '../components/MediaInput';
+import CriarVideoDeIA from '../components/criacao/CriarVideoDeIA';
 import SerieInput from '../components/SerieInput';
 import SeletorDeCanal from '../components/SeletorDeCanal';
 import TiposDeCriacao from '../components/TiposDeCriacao';
@@ -22,9 +23,11 @@ import { hrefDe, ir } from '../lib/rota';
 //
 // `#/criar/serie` (7.6) é a série em partes: o mesmo envio, com o documento da
 // série junto. Nenhuma IA escolhe trecho, então ela não pede chave de IA.
+//
+// `#/criar/ia` (7.7) é o vídeo criado por IA: sem envio nenhum, no estilo
+// salvo no canal. Sem canal não há estilo, então o canal é obrigatório ali.
 
 const OUTROS = {
-  ia: { titulo: 'Vídeo criado por IA', etapa: '7.7' },
   longo: { titulo: 'Vídeo longo', etapa: '7.8' },
 };
 
@@ -99,6 +102,23 @@ export default function Criar({ tipo = null, canalInicial = null }) {
         <EmBreve etapa={OUTROS[tipo].etapa} titulo="Ainda não dá para criar este tipo.">
           <p>O lugar dele já está aqui para você ver onde vai ficar. O que ele vai fazer está no cartão da tela anterior.</p>
         </EmBreve>
+      </Pagina>
+    );
+  }
+
+  if (tipo === 'ia') {
+    return (
+      <Pagina largura="estreita">
+        <a href={hrefDe(`/criar${canalValido ? `?canal=${canalValido}` : ''}`)} className="btn-quiet px-3 py-1.5 text-xs w-fit">
+          <ArrowLeft size={14} /> criar
+        </a>
+        <CabecalhoDaPagina
+          rotulo={canal ? `criar · ${canal.name}` : 'criar'}
+          titulo="Vídeo criado por IA"
+          descricao="Roteiro, imagens, narração e legenda de um vídeo curto, no estilo que está salvo no canal. Nada é pago: tudo sai das cotas grátis das suas chaves."
+        />
+        {escolhaDoCanal}
+        <CriarVideoDeIA canalId={canalValido} aoCriar={() => canais.carregar()} />
       </Pagina>
     );
   }

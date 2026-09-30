@@ -15,7 +15,7 @@ export const PROVEDORES = [
     artigo: 'o',
     recomendado: true,
     link: 'https://aistudio.google.com/app/apikey',
-    paraQue: 'Escolhe os melhores momentos, decide o formato de cada corte e faz as miniaturas. É a única que olha as imagens do vídeo.',
+    paraQue: 'Escolhe os melhores momentos, decide o formato de cada corte e faz as miniaturas. É a única que olha as imagens do vídeo, e é a voz dos vídeos criados por IA.',
     campos: [{ variavel: 'GEMINI_API_KEY', exemplo: 'AIza… ou AQ.…' }],
     treina: true,
   },
@@ -70,7 +70,7 @@ export const PROVEDORES = [
     nome: 'Cloudflare',
     artigo: 'a',
     link: 'https://dash.cloudflare.com/profile/api-tokens',
-    paraQue: 'Workers AI: uma cota diária grátis, dividida entre os modelos. Precisa do token e do ID da conta.',
+    paraQue: 'Workers AI: faz as imagens dos vídeos criados por IA e também escreve. Uma cota diária grátis, dividida entre os modelos; precisa do token e do ID da conta.',
     campos: [
       { variavel: 'CLOUDFLARE_API_TOKEN', rotulo: 'token (com permissão Workers AI)' },
       { variavel: 'CLOUDFLARE_ACCOUNT_ID', rotulo: 'ID da conta (na barra lateral do painel da Cloudflare)' },

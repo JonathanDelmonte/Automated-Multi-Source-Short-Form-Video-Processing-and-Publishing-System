@@ -249,9 +249,12 @@ class Source(Base, TenantScoped):
         # `upload` seria mentira na linha: `upload` e arquivo que entrou pelo
         # nosso endpoint, e a diferenca importa -- uma expira em 60 minutos.
         # Ver `sources/direct.py`.
+        # `ia` (7.7): o video criado por IA nao tem video de origem -- a
+        # fonte dele e a ideia, e o `input` guarda o texto dela. Entrou pela
+        # migracao `b8d4f1a2c9e3` e, num banco que ja existe, pelo `db_acerto`.
         CheckConstraint(
             "adapter in ('youtube','youtube-channel','twitch-vod','twitch-live',"
-            "'gdrive','upload','direct')", name="ck_sources_adapter"),
+            "'gdrive','upload','direct','ia')", name="ck_sources_adapter"),
         CheckConstraint("duration_ms is null or duration_ms >= 0",
                         name="ck_sources_duration_nao_negativa"),
         Index("ix_sources_tenant_id_id", "tenant_id", "id", unique=True),
@@ -983,6 +986,66 @@ class SeriesPlaylistItem(Base, TenantScoped):
     )
 
 
+# --------------------------------------------------------------------------- #
+# 22-23. video criado por IA (Fase 7, etapa 7.7)
+# --------------------------------------------------------------------------- #
+
+class CreationStyle(Base, TenantScoped):
+    """O estilo de criacao de um canal: o documento de `estilos.py` --
+    personagens com a imagem de referencia, visual, voz, ritmo e legenda. Um
+    por canal: e a "secao de video de IA" dele, e todo video dali segue o
+    estilo. As imagens dos personagens moram em disco
+    (`DATA_DIR/estilos/<id>/`), e o documento guarda so o nome do arquivo."""
+    __tablename__ = "creation_styles"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    channel_id: Mapped[str] = mapped_column(ID, nullable=False)
+    spec_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_creation_styles_tenant"),
+        ForeignKeyConstraint(["tenant_id", "channel_id"],
+                             ["channels.tenant_id", "channels.id"],
+                             ondelete="CASCADE", name="fk_creation_styles_channel"),
+        UniqueConstraint("tenant_id", "channel_id", name="uq_creation_styles_tenant_channel"),
+        Index("ix_creation_styles_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+class Creation(Base, TenantScoped):
+    """Um video criado por IA: o job que o fez, a ideia e o roteiro. E daqui
+    que a automacao le os temas ja feitos para nao repetir.
+
+    `channel_id` sem FK, de proposito: apagar o canal solta os projetos dele
+    (7.1), e o registro do que o projeto foi fica. Com FK composta, o "set
+    null" apagaria tambem o `tenant_id`."""
+    __tablename__ = "creations"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(ID, nullable=False)
+    channel_id: Mapped[str | None] = mapped_column(ID, nullable=True)
+    idea: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    script_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_creations_tenant"),
+        ForeignKeyConstraint(["tenant_id", "job_id"], ["jobs.tenant_id", "jobs.id"],
+                             ondelete="CASCADE", name="fk_creations_job"),
+        UniqueConstraint("tenant_id", "job_id", name="uq_creations_tenant_job"),
+        Index("ix_creations_tenant_id_id", "tenant_id", "id", unique=True),
+        Index("ix_creations_tenant_channel", "tenant_id", "channel_id"),
+    )
+
+
 #: Toda tabela do schema menos `tenants`, que E o tenant. O teste de estrutura
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
@@ -991,4 +1054,5 @@ TENANT_SCOPED_TABLES = (
     "channels", "channel_accounts", "channel_jobs",
     "channel_settings", "recipes", "candidates", "source_licenses", "clip_approvals",
     "series", "series_parts", "series_playlists", "series_playlist_items",
+    "creation_styles", "creations",
 )

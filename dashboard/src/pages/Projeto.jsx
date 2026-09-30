@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Activity, AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, ListVideo, Loader2, Plus, Send, Terminal } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, Download, FolderOpen, ListVideo, Loader2, Play, Plus, Send, Terminal, Wand2 } from 'lucide-react';
 import ResultCard from '../components/ResultCard';
 import ProcessingAnimation from '../components/ProcessingAnimation';
 import ClipEditor from '../components/ClipEditor';
@@ -13,6 +13,7 @@ import { seloDaIA } from '../lib/seloDaIA';
 import { midiaDoProjeto } from '../lib/processar';
 import { comCorteTrocado, corteDoIndice, indiceDoCorte, naOrdemDaTela } from '../lib/cortes';
 import { textoDaSerie } from '../lib/serie';
+import { continuarCriacao } from '../lib/criacaoNoMotor';
 import { usePainel } from '../lib/painel';
 import { hrefDe } from '../lib/rota';
 
@@ -78,6 +79,12 @@ export default function Projeto({ jobId }) {
   // A série em partes (7.6), quando o projeto é uma: nome, partes, as que
   // faltaram. Vem do `/api/status`; motor anterior não manda.
   const [serie, setSerie] = useState(null);
+  // O vídeo criado por IA (7.7), quando o projeto é um: a ideia e o título.
+  // Não há vídeo de origem para mostrar, e quem falhou pode continuar de onde
+  // parou (o roteiro, as imagens e a voz prontos ficam na pasta).
+  const [criacao, setCriacao] = useState(null);
+  const [continuando, setContinuando] = useState(false);
+  const [erroAoContinuar, setErroAoContinuar] = useState(null);
   const [publicando, setPublicando] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -118,6 +125,7 @@ export default function Projeto({ jobId }) {
     if (data.result) setResults(data.result);
     if ('channel_id' in data) setCanalId(data.channel_id || null);
     if ('serie' in data) setSerie(data.serie || null);
+    if ('criacao' in data) setCriacao(data.criacao || null);
     setStage(data.stage_index
       ? { label: data.stage_label, index: data.stage_index, total: data.stage_total }
       : null);
@@ -151,6 +159,7 @@ export default function Projeto({ jobId }) {
         const data = await pollJob(jobId);
         if (data.result) setResults(data.result);
         if ('serie' in data) setSerie(data.serie || null);
+        if ('criacao' in data) setCriacao(data.criacao || null);
         if (data.stage_index) {
           setStage({ label: data.stage_label, index: data.stage_index, total: data.stage_total });
         }
@@ -201,6 +210,19 @@ export default function Projeto({ jobId }) {
       setCancelling(false);
     }
   }, [jobId, cancelling]);
+
+  const continuar = useCallback(async () => {
+    setContinuando(true);
+    setErroAoContinuar(null);
+    const r = await continuarCriacao(jobId);
+    setContinuando(false);
+    if (!r.ok) {
+      setErroAoContinuar(r.erro);
+      return;
+    }
+    setStage(null);
+    setStatus('processing');
+  }, [jobId]);
 
   const handleCopyLogs = useCallback(async () => {
     try {
@@ -311,7 +333,8 @@ export default function Projeto({ jobId }) {
   };
 
   const doCanal = canalId ? canais.porId[canalId] : null;
-  const novoHref = hrefDe(`/criar/${serie ? 'serie' : 'cortes'}${canalId ? `?canal=${canalId}` : ''}`);
+  const tipoDoNovo = criacao ? 'ia' : serie ? 'serie' : 'cortes';
+  const novoHref = hrefDe(`/criar/${tipoDoNovo}${canalId ? `?canal=${canalId}` : ''}`);
   const editando = editingClip !== null ? corteDoIndice(results?.clips, editingClip) : null;
   const reenquadrando = reframingClip !== null ? corteDoIndice(results?.clips, reframingClip) : null;
   const faltando = serie?.faltando || [];
@@ -361,7 +384,9 @@ export default function Projeto({ jobId }) {
             </p>
             <div className="flex flex-wrap justify-center gap-2 pt-1">
               <a href={hrefDe('/projetos')} className="btn-ghost px-4 py-2 text-sm">ver os projetos</a>
-              <a href={novoHref} className="btn-primary px-4 py-2 text-sm"><Plus size={15} /> criar cortes</a>
+              <a href={novoHref} className="btn-primary px-4 py-2 text-sm">
+                <Plus size={15} /> {criacao ? 'criar outro vídeo' : 'criar cortes'}
+              </a>
             </div>
           </div>
         </div>
@@ -381,12 +406,26 @@ export default function Projeto({ jobId }) {
           <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2">
             <h2 className="text-sm font-medium text-ink lowercase flex items-center gap-2">
               <Activity className={`text-brass ${status === 'processing' ? 'animate-pulse' : ''}`} size={18} />
-              análise ao vivo
+              {criacao ? 'criação' : 'análise ao vivo'}
             </h2>
             <span className={selo.classe}>{selo.texto}</span>
           </div>
 
-          {midia && (
+          {criacao && (
+            // Um vídeo de IA não tem vídeo de origem: no lugar da prévia, a
+            // ideia (e o título, quando o roteiro já saiu).
+            <div className="mb-4 rounded-input border border-rule2 p-3 space-y-1" data-criacao>
+              <p className="flex items-center gap-2 text-sm text-ink min-w-0">
+                <Wand2 size={15} className="text-brass shrink-0" />
+                <span className="truncate">{criacao.titulo || 'vídeo criado por IA'}</span>
+              </p>
+              <p className="text-[12px] text-muted leading-snug">
+                {criacao.ideia ? `Ideia: ${criacao.ideia}` : 'Ideia nova, inventada no estilo do canal.'}
+              </p>
+            </div>
+          )}
+
+          {midia && !criacao && (
             <ProcessingAnimation
               media={midia}
               isComplete={status === 'complete'}
@@ -499,7 +538,7 @@ export default function Projeto({ jobId }) {
         <div className={`${status === 'complete' ? 'w-full md:w-[70%] lg:w-[75%]' : 'w-full md:w-[45%] lg:w-[40%]'} md:h-full flex flex-col shrink-0 md:shrink card p-3.5 sm:p-6 transition-all duration-700 ease-in-out`}>
           <div className="mb-4 sm:mb-6 shrink-0 space-y-3">
             <h2 className="font-display uppercase tracking-wide text-lg sm:text-xl text-ink flex flex-wrap items-center gap-2">
-              <span className="mr-auto">{serie ? 'partes' : 'cortes'}</span>
+              <span className="mr-auto">{criacao ? 'vídeo' : serie ? 'partes' : 'cortes'}</span>
               {results?.clips?.length > 0 && (
                 <span className="readout bg-paper3 px-2.5 py-1 rounded-full">
                   {serie && serie.partes && serie.partes !== results.clips.length
@@ -613,10 +652,24 @@ export default function Projeto({ jobId }) {
             ) : status === 'processing' ? (
               <div className="h-full min-h-[140px] flex flex-col items-center justify-center text-muted space-y-3 text-center px-4">
                 <Loader2 size={28} className="animate-spin text-brass" />
-                <p className="text-sm lowercase">esperando os cortes…</p>
+                <p className="text-sm lowercase">{criacao ? 'fazendo o vídeo…' : 'esperando os cortes…'}</p>
                 <p className="text-xs text-muted/80 max-w-[26ch] leading-snug">
-                  Eles aparecem aqui um a um, conforme cada um termina.
+                  {criacao
+                    ? 'Roteiro, imagens, narração e montagem: ele aparece aqui quando ficar pronto.'
+                    : 'Eles aparecem aqui um a um, conforme cada um termina.'}
                 </p>
+              </div>
+            ) : status === 'error' && criacao ? (
+              <div className="h-full min-h-[120px] flex flex-col items-center justify-center text-center gap-2.5 px-4" data-continuar-criacao>
+                <p className="text-danger">O vídeo parou no meio.</p>
+                <p className="text-muted text-xs max-w-[40ch]">
+                  O log ao lado diz onde. O roteiro, as imagens e a narração que já saíram ficam guardados: continuar
+                  não gasta a cota de novo com eles.
+                </p>
+                <button type="button" className="btn-primary px-4 py-2 text-sm" onClick={continuar} disabled={continuando}>
+                  {continuando ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} continuar de onde parou
+                </button>
+                {erroAoContinuar && <p className="text-sm text-danger max-w-[44ch]">{erroAoContinuar}</p>}
               </div>
             ) : status === 'error' ? (
               <div className="h-full min-h-[120px] flex flex-col items-center justify-center text-center gap-2 px-4">

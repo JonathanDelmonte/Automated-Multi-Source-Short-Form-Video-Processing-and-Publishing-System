@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, Check, Languages, Loader2, Plus, ShieldCheck,
 import AgendaDoCanal from '../components/AgendaDoCanal';
 import AutomacaoDoCanal from '../components/automacao/AutomacaoDoCanal';
 import CalendarioDosCanais from '../components/CalendarioDosCanais';
+import EstiloDoCanal from '../components/criacao/EstiloDoCanal';
 import ConexaoDaConta from '../components/ConexaoDaConta';
 import PainelDeAnalises from '../components/analises/PainelDeAnalises';
 import FormularioDoCanal from '../components/FormularioDoCanal';
@@ -235,12 +236,18 @@ function ConteudoDaAba({ aba, canal, subaba }) {
   switch (aba) {
     case 'criar':
       return (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <TiposDeCriacao canalId={canal.id} />
-          <p className="text-muted text-[13px] leading-snug">
-            O estilo dos vídeos criados por IA fica salvo aqui, no canal, e quem o configura é você: ele
-            nunca é deduzido do nicho.
-          </p>
+          <div className="space-y-3" id="estilo">
+            <div>
+              <h2 className="font-display uppercase tracking-wide text-lg text-ink">o estilo dos vídeos de IA</h2>
+              <p className="text-muted text-[13px] leading-snug mt-1">
+                Fica salvo aqui, no canal, e quem o configura é você: ele nunca é deduzido do nicho. É o que faz um
+                vídeo sair parecido com o outro.
+              </p>
+            </div>
+            <EstiloDoCanal key={canal.id} canal={canal} />
+          </div>
         </div>
       );
     case 'automacao':

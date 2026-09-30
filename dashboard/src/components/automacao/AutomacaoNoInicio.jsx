@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Bot, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Bot, ShieldCheck, Wand2 } from 'lucide-react';
 import AvatarDoCanal from '../ui/AvatarDoCanal';
 import { lerAutomacao } from '../../lib/automacao';
 import { usePainel } from '../../lib/painel';
@@ -48,14 +48,18 @@ export default function AutomacaoNoInicio() {
         {ligadas.map((r) => {
           const canal = canais.porId[r.channel_id];
           if (!canal) return null;
+          // Um canal pode ter as duas receitas ligadas (7.7): a de cortes e a de IA.
+          const ia = r.kind === 'ia';
+          const Icone = ia ? Wand2 : Bot;
           return (
-            <a key={`receita-${r.channel_id}`} href={hrefDe(`/canais/${r.channel_id}/automacao`)}
+            <a key={`receita-${r.channel_id}-${r.kind || 'cortes'}`} href={hrefDe(`/canais/${r.channel_id}/automacao`)}
                className="card p-4 flex items-center gap-3 group hover:border-rule2 transition-colors min-w-0">
               <AvatarDoCanal canal={canal} size={36} />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm text-ink truncate">{canal.name}</span>
                 <span className="block text-xs text-muted truncate">
-                  <Bot size={12} className="inline -mt-0.5 mr-1" />
+                  <Icone size={12} className="inline -mt-0.5 mr-1" />
+                  {ia ? 'vídeos de IA: ' : ''}
                   {r.situacao || 'receita ligada; esperando a primeira volta do motor'}
                 </span>
               </span>

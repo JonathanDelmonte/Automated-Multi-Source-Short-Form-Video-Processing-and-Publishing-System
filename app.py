@@ -25,6 +25,9 @@ import calibracao
 import analises
 import series
 import playlists_youtube
+import estilos
+import midia_ia
+import criacoes
 import template as template_doc
 import db
 import db_models
@@ -32,6 +35,7 @@ import db_seed
 import re
 import sys
 import uuid
+import base64
 import subprocess
 import threading
 import json
@@ -54,7 +58,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 import recut
@@ -757,6 +761,13 @@ def _recover_jobs_from_disk():
             continue
         json_files = glob.glob(os.path.join(job_path, "*_metadata.json"))
         if not json_files:
+            # Um video de IA que parou (7.7): sem metadata e sem manifesto, e a
+            # pasta com o que ja saiu. Some da lista, e a tela do projeto diria
+            # "nao existe mais", justo no video que so precisa de "continuar".
+            if (os.path.isfile(os.path.join(job_path, ARQUIVO_DA_CRIACAO))
+                    and not os.path.isfile(os.path.join(job_path, _RESUME_FILE))):
+                jobs[job_id] = _criacao_parada(job_path)
+                recovered += 1
             continue
         if (os.path.isfile(os.path.join(job_path, _RESUME_FILE))
                 and series.incompleta(job_path)):
@@ -885,6 +896,18 @@ PIPELINE_STAGES = [
 ]
 _STAGE_ORDER = {nome: i for i, (nome, _) in enumerate(PIPELINE_STAGES)}
 
+#: Os estagios do video criado por IA (7.7), na ordem. Os nomes sao os do
+#: `criar_video.ESTAGIOS`, e ha teste comparando. A barra escolhe a lista pelo
+#: nome do estagio: os dois conjuntos nao se cruzam.
+CRIACAO_STAGES = [
+    ("c1_roteiro", "escrevendo o roteiro"),
+    ("c2_imagens", "desenhando as cenas"),
+    ("c3_voz", "gravando a narração"),
+    ("c4_legenda", "sincronizando a legenda"),
+    ("c5_montagem", "montando o vídeo"),
+]
+_CRIACAO_ORDER = {nome: i for i, (nome, _) in enumerate(CRIACAO_STAGES)}
+
 #: Importado, nao redigitado: o produtor do marcador e o `job_metrics`, e duas
 #: copias da mesma string divergem no dia em que uma delas mudar.
 _STAGE_MARKER = job_metrics.STAGE_MARKER
@@ -900,16 +923,19 @@ def _stage_view(job) -> dict:
     vira decoracao. `stage_index` de 4 e honesto e ja responde "esta andando?".
     """
     nome = (job or {}).get('stage')
+    criacao = nome in _CRIACAO_ORDER or (job or {}).get('kind') == 'criacao'
+    lista, ordem = ((CRIACAO_STAGES, _CRIACAO_ORDER) if criacao
+                    else (PIPELINE_STAGES, _STAGE_ORDER))
     if not nome:
         return {"stage": None, "stage_label": None,
-                "stage_index": 0, "stage_total": len(PIPELINE_STAGES)}
-    i = _STAGE_ORDER.get(nome)
-    rotulo = dict(PIPELINE_STAGES).get(nome, nome)
+                "stage_index": 0, "stage_total": len(lista)}
+    i = ordem.get(nome)
+    rotulo = dict(lista).get(nome, nome)
     return {
         "stage": nome,
         "stage_label": rotulo,
         "stage_index": (i + 1) if i is not None else 0,
-        "stage_total": len(PIPELINE_STAGES),
+        "stage_total": len(lista),
     }
 
 
@@ -1513,6 +1539,8 @@ async def run_job_wrapper(job_id):
         # O corte que uma receita mandou fazer (7.5): os cortes vao para a
         # caixa de aprovacao do canal, ou direto para a agenda dele.
         await _automacao_depois_do_job(job_id)
+        # O video que a receita de IA mandou criar (7.7): mesma caixa, mesma agenda.
+        await _ia_depois_do_job(job_id)
         # A serie que pediu "agendar quando ficar pronta" (7.6).
         await _serie_depois_do_job(job_id)
         # Settle the minute reservation (managed jobs only): commit on success,
@@ -1571,6 +1599,15 @@ def _transcript_do_job(job_id):
         return None
 
 
+def _ler_json_da_pasta(job_id: str, nome: str) -> Optional[dict]:
+    try:
+        with open(os.path.join(OUTPUT_DIR, job_id, nome), encoding="utf-8") as f:
+            dados = json.load(f)
+        return dados if isinstance(dados, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def _serie_do_job(job_id):
     """O resumo da serie em partes (7.6) que o `main.py` gravou no metadata,
     ou None -- projeto de cortes, ou metadata ilegivel."""
@@ -1621,6 +1658,13 @@ async def _fechar_job_no_banco(job_id):
         job_id, clips, transcript=transcript, arquivos=arquivos)
     if gravados:
         print(f"🗃️  {gravados} corte(s) de {job_id} no banco")
+    # O video de IA (7.7): o titulo e o roteiro, que a automacao le para nao
+    # repetir o tema.
+    if _e_criacao(job_id):
+        roteiro = _ler_json_da_pasta(job_id, "roteiro.json")
+        await criacoes.registrar_criacao(
+            job_id, job.get('channel_id'), None,
+            titulo=(roteiro or {}).get("titulo"), roteiro=roteiro)
     # A serie em partes (7.6): qual corte e qual parte. E o que deixa a agenda
     # postar na ordem e a playlist do YouTube montar a serie.
     serie = _serie_do_job(job_id)
@@ -2563,6 +2607,10 @@ async def get_config():
         # e receberia cinco cortes escolhidos pela IA, sem erro nenhum. Sem
         # esta marca, o formulario manda atualizar em vez de enviar.
         "series": True,
+        # Este motor sabe criar video por IA no estilo do canal (7.7). Um motor
+        # anterior responde 404 no `/api/criacoes`; a marca deixa o painel
+        # dizer "atualize" antes, na tela, em vez de depois do clique.
+        "criacao": True,
     }
 
 
@@ -3778,11 +3826,16 @@ def _resumo_do_job(job_id: str, job: dict) -> dict:
     serie = _serie_do_projeto(job_id, job)
     if serie and serie.get("nome"):
         titulo = serie["nome"]
+    # Um video de IA (7.7) ainda sem titulo se chama pela ideia.
+    criacao = _criacao_do_projeto(job_id)
+    if criacao and not titulo:
+        titulo = criacao.get("ideia")
     return {
         "job_id": job_id,
         "status": _presented_status(job_id, job),
         "title": titulo,
         "serie": serie,
+        "criacao": criacao,
         "source_url": _job_source_url(job),
         "clip_count": len(clipes),
         "first_clip_url": capa,
@@ -3928,6 +3981,10 @@ async def get_status(job_id: str, request: Request):
         # A serie em partes (7.6), quando o projeto e uma; e as partes que
         # nao sairam, quando o job acabou com buraco.
         "serie": _serie_com_faltas(job_id, job),
+        # O video criado por IA (7.7): a ideia e, quando o roteiro ja saiu, o
+        # titulo. A tela troca "cortes" por "video" e oferece "continuar de
+        # onde parou" quando ele falha.
+        "criacao": _criacao_do_projeto(job_id, com_titulo=True),
         **_stage_view(job),
     }
 
@@ -7299,16 +7356,19 @@ async def _cuidar_da_receita(recipe_id: str, tenant_id: str, *,
     receita = await automacao.receita_por_id(recipe_id)
     if receita is None or not receita.active:
         return "a receita está desligada"
-    try:
-        spec = receitas.normalizar(receita.spec_json)
-    except receitas.ReceitaInvalida as e:
-        return f"a receita está inválida: {e}"
-    falta = receitas.pronta(spec)
-    if falta:
-        return f"a receita não pode rodar: {falta}"
+    if receita.kind != "ia":
+        try:
+            spec = receitas.normalizar(receita.spec_json)
+        except receitas.ReceitaInvalida as e:
+            return f"a receita está inválida: {e}"
+        falta = receitas.pronta(spec)
+        if falta:
+            return f"a receita não pode rodar: {falta}"
     canal = await canais.obter(receita.channel_id)
     if canal is None:
         return "o canal não existe mais"
+    if receita.kind == "ia":
+        return await _cuidar_da_receita_ia(receita, canal, tenant_id, agora)
 
     atual = await automacao.em_andamento(receita.id)
     if atual is not None:
@@ -7391,13 +7451,20 @@ def _erro_da_automacao(e: Exception) -> HTTPException:
                                 "projeto e tente de novo.")
 
 
-async def _receita_para_a_tela(canal_id: str) -> dict:
-    receita = await automacao.obter_receita(canal_id)
+async def _receita_para_a_tela(canal_id: str, tipo: str = "cortes") -> dict:
+    receita = await automacao.obter_receita(canal_id, tipo)
     if receita is None:
         raise HTTPException(status_code=404, detail="Canal nao encontrado")
     canal = await canais.obter(canal_id)
     estoque = await automacao.estoque_do_canal(canal_id)
-    return {"receita": receita, "estoque": estoque,
+    extra = {}
+    if tipo == "ia":
+        estado = receita["estado"]
+        proxima, da_lista = receitas.proxima_ideia(
+            receita["spec"], estado.get("feitas") or [], estado.get("puladas") or [])
+        extra = {"proxima_ideia": proxima, "proxima_da_lista": da_lista,
+                 "estilo_falta": await _estilo_pronto_para_a_receita(canal_id)}
+    return {"receita": receita, "estoque": estoque, **extra,
             "agenda": {**canal["ajustes"]["agenda_efetiva"],
                        "fuso": fuso_de_quem_usa.descricao(db.tenant_atual())},
             "criancas": canal["ajustes"]["criancas"],
@@ -7407,14 +7474,22 @@ async def _receita_para_a_tela(canal_id: str) -> dict:
             "horas_entre_buscas": automacao.horas_entre_buscas()}
 
 
+def _tipo_da_receita(tipo: Optional[str]) -> str:
+    tipo = (tipo or "cortes").strip().lower()
+    if tipo not in receitas.TIPOS_ACEITOS:
+        raise HTTPException(status_code=400, detail="tipo de receita desconhecido")
+    return tipo
+
+
 @app.get("/api/canais/{canal_id}/receita")
-async def ver_receita(canal_id: str):
+async def ver_receita(canal_id: str, tipo: Optional[str] = None):
     """A receita do canal (a padrao, desligada, quando ainda nao ha), com o
-    estoque e a agenda que ela respeita."""
+    estoque e a agenda que ela respeita. `?tipo=ia` e a receita de IA (7.7)."""
     if not canais.id_valido(canal_id):
         raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    tipo = _tipo_da_receita(tipo)
     try:
-        return await _receita_para_a_tela(canal_id)
+        return await _receita_para_a_tela(canal_id, tipo)
     except HTTPException:
         raise
     except Exception as e:
@@ -7422,14 +7497,30 @@ async def ver_receita(canal_id: str):
 
 
 @app.put("/api/canais/{canal_id}/receita")
-async def salvar_receita(canal_id: str, request: Request):
+async def salvar_receita(canal_id: str, request: Request, tipo: Optional[str] = None):
     """Grava a receita: `{spec, ativa, confirmar_direitos}`."""
     if not canais.id_valido(canal_id):
         raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    tipo = _tipo_da_receita(tipo)
     corpo = await _corpo_json(request)
     ativa = corpo.get("ativa")
     if ativa is not None and not isinstance(ativa, bool):
         raise HTTPException(status_code=400, detail="ativa tem de ser true ou false")
+    if tipo == "ia":
+        try:
+            if ativa:
+                falta = await _estilo_pronto_para_a_receita(canal_id)
+                if falta:
+                    raise HTTPException(status_code=400,
+                                        detail=f"a receita não pode ser ligada: {falta}")
+            salva = await automacao.salvar_receita_ia(canal_id, corpo.get("spec"), ativa=ativa)
+            if salva is None:
+                raise HTTPException(status_code=404, detail="Canal nao encontrado")
+            return await _receita_para_a_tela(canal_id, "ia")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise _erro_da_automacao(e)
     try:
         salva = await automacao.salvar_receita(
             canal_id, corpo.get("spec"), ativa=ativa,
@@ -7443,10 +7534,10 @@ async def salvar_receita(canal_id: str, request: Request):
         raise _erro_da_automacao(e)
 
 
-async def _receita_do_canal(canal_id: str):
+async def _receita_do_canal(canal_id: str, tipo: str = "cortes"):
     if not canais.id_valido(canal_id):
         raise HTTPException(status_code=404, detail="Canal nao encontrado")
-    receita = await automacao.obter_receita(canal_id)
+    receita = await automacao.obter_receita(canal_id, tipo)
     if receita is None:
         raise HTTPException(status_code=404, detail="Canal nao encontrado")
     if not receita["id"]:
@@ -7470,9 +7561,9 @@ async def buscar_agora(canal_id: str):
 
 
 @app.post("/api/canais/{canal_id}/receita/rodar")
-async def rodar_agora(canal_id: str):
+async def rodar_agora(canal_id: str, tipo: Optional[str] = None):
     """"Verificar agora": uma volta da receita deste canal, na hora."""
-    receita = await _receita_do_canal(canal_id)
+    receita = await _receita_do_canal(canal_id, _tipo_da_receita(tipo))
     if not receita["ativa"]:
         raise HTTPException(status_code=400, detail="Ligue a receita primeiro.")
     async with _TRAVA_DA_AUTOMACAO:
@@ -7604,7 +7695,9 @@ async def ver_automacao():
         raise _erro_da_automacao(e)
     return {
         "receitas": [{"channel_id": r.channel_id, "ativa": bool(r.active),
-                      "tipo": ((r.spec_json or {}).get("fonte") or {}).get("tipo"),
+                      "kind": r.kind,
+                      "tipo": ("ia" if r.kind == "ia"
+                               else ((r.spec_json or {}).get("fonte") or {}).get("tipo")),
                       "situacao": (r.state_json or {}).get("situacao"),
                       "ultima_volta": (r.state_json or {}).get("ultima_volta")}
                      for r in linhas],
@@ -8212,6 +8305,576 @@ async def apagar_canal(canal_id: str):
     soltos = await asyncio.to_thread(_soltar_projetos_do_canal, canal_id)
     print(f"🗑️  Canal apagado: {resumo['name']} ({soltos} projeto(s) ficaram sem canal)")
     return {"success": True, **resumo, "projetos_desligados": soltos}
+
+
+# --- O video criado por IA (etapa 7.7, ADR-013) -----------------------------------
+# O estilo mora no canal (`criacoes.py`, `estilos.py`); o video e um job como os
+# outros (`criar_video.py`), com a mesma fila, barra, cancelar, retomada, tela de
+# projeto, publicacao e agenda.
+
+#: Marca, na pasta do job, de que ele e uma criacao (o pedido que o
+#: `criar_video.py` le). E por ela que a lista de projetos, a barra e o
+#: "continuar" reconhecem o tipo -- o dict em memoria some num reinicio.
+ARQUIVO_DA_CRIACAO = "criacao.json"
+
+
+def _e_criacao(job_id: str) -> bool:
+    return bool(_JOB_ID_RE.match(job_id or "")) and os.path.isfile(
+        os.path.join(OUTPUT_DIR, job_id, ARQUIVO_DA_CRIACAO))
+
+
+def _criacao_do_projeto(job_id: str, com_titulo: bool = False) -> Optional[dict]:
+    """O que a lista e a tela mostram de um video criado: a ideia (e, na tela
+    do projeto, o titulo que o roteiro deu). Le o pedido e o roteiro, pequenos;
+    nunca o metadata."""
+    if not _e_criacao(job_id):
+        return None
+    pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_CRIACAO) or {}
+    saida = {"ideia": pedido.get("ideia") or None}
+    if com_titulo:
+        saida["titulo"] = (_ler_json_da_pasta(job_id, "roteiro.json") or {}).get("titulo") or None
+    return saida
+
+
+def _criacao_parada(job_path: str) -> dict:
+    """O registro de um video de IA que parou antes do fim, lido do disco: o
+    que o reinicio apagou da memoria, sem inventar o erro -- o log do job
+    antigo ficou com o processo que morreu."""
+    try:
+        criado = os.path.getmtime(os.path.join(job_path, ARQUIVO_DA_CRIACAO))
+    except OSError:
+        criado = None
+    return {
+        'status': 'failed', 'kind': 'criacao', 'created_at': criado,
+        'logs': LinhasDoLog(["⏸️ Este vídeo parou antes de terminar (a criação falhou, ou o "
+                             "programa foi fechado no meio). O que já saiu está guardado: "
+                             "use \"continuar de onde parou\"."]),
+        'output_dir': job_path, 'user_id': None,
+        'tenant_id': _tenant_do_disco(job_path), 'channel_id': _canal_do_disco(job_path),
+        'result': None,
+    }
+
+
+def _erro_do_estilo(e: Exception) -> HTTPException:
+    if isinstance(e, (criacoes.EstiloError, estilos.EstiloInvalido)):
+        return HTTPException(status_code=400, detail=str(e))
+    if isinstance(e, midia_ia.CotaEsgotada):
+        return HTTPException(status_code=429, detail=str(e))
+    if isinstance(e, (midia_ia.SemChave, midia_ia.ChaveRecusada)):
+        return HTTPException(status_code=400, detail=str(e))
+    if isinstance(e, midia_ia.MidiaIndisponivel):
+        return HTTPException(status_code=503, detail=str(e))
+    return _erro_do_canal(e)
+
+
+def _quando_volta_a_cota_de_imagem() -> str:
+    """A meia-noite UTC no relogio de quem usa (os neurons zeram ali)."""
+    agora = datetime.now(timezone.utc)
+    volta = (agora + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    local = volta.astimezone(fuso_de_quem_usa.tz_do_tenant(db.tenant_atual()))
+    return f"à meia-noite UTC ({local.strftime('%H:%M')} no seu horário)"
+
+
+def _cota_de_midia() -> dict:
+    uso = midia_ia.uso()
+    return {"neurons": round(uso["neurons"], 1), "neurons_por_dia": uso["neurons_por_dia"],
+            "imagens_hoje": midia_ia.imagens_que_cabem(), "vozes_hoje": uso["vozes"],
+            "vozes_por_dia": midia_ia.vozes_por_dia(),
+            "imagem_volta": _quando_volta_a_cota_de_imagem()}
+
+
+def _catalogo_da_criacao() -> dict:
+    """As listas que o editor do estilo mostra -- as mesmas que o motor aceita."""
+    return {
+        "formatos": list(estilos.FORMATOS),
+        "visuais": list(estilos.PRESETS_VISUAIS),
+        "legendas": list(estilos.LEGENDAS),
+        "vozes": [{"nome": nome, "jeito": jeito} for nome, jeito in midia_ia.VOZES],
+        "limites": {"duracao_s": [estilos.DURACAO_MIN, estilos.DURACAO_MAX],
+                    "cenas": [estilos.CENAS_MIN, estilos.CENAS_MAX],
+                    "personagens": estilos.MAX_PERSONAGENS},
+    }
+
+
+def _por_que_nao_cria(estilo: Optional[dict]) -> Optional[str]:
+    """A frase que impede criar agora, ou None. Conferida ANTES do job: sem
+    chave, sem estilo ou sem cota, o job so gastaria o roteiro para falhar."""
+    if estilo is None:
+        return ("Este canal ainda não tem estilo de criação. Configure o estilo na aba "
+                "Criar do canal: é ele que faz um vídeo sair parecido com o outro.")
+    if estilo.get("falta"):
+        return estilo["falta"]
+    if estilo.get("sem_imagem"):
+        nomes = ", ".join(estilo["sem_imagem"])
+        return (f"Falta a imagem de referência de {nomes}. Gere ou envie na aba Criar do "
+                "canal: é ela que mantém o personagem igual de um vídeo para o outro.")
+    disponivel = midia_ia.disponivel()
+    if not disponivel["imagem"]:
+        return ("Falta a chave da Cloudflare (o token e o ID da conta) em Configurações → "
+                "Chaves de IA: é ela que faz as imagens grátis.")
+    if not disponivel["voz"]:
+        return ("Falta a chave do Gemini em Configurações → Chaves de IA: é ela que faz a "
+                "narração grátis.")
+    if not (llm_backend.active() or llm_cascade.has_text_provider()):
+        return "Falta uma IA de texto em Configurações → Chaves de IA: é ela que escreve o roteiro."
+    cenas = int((estilo.get("spec") or {}).get("cenas") or 0)
+    refs = min(2, len((estilo.get("spec") or {}).get("personagens") or []))
+    cabem = midia_ia.imagens_que_cabem(referencias=refs)
+    if cabem < cenas:
+        return (f"A cota grátis de imagem de hoje só dá para {cabem} imagem(ns), e o vídeo tem "
+                f"{cenas} cenas. Ela volta {_quando_volta_a_cota_de_imagem()}.")
+    teto = midia_ia.vozes_por_dia()
+    if teto is not None and midia_ia.uso()["vozes"] >= teto:
+        return (f"O teto de {teto} narrações por dia (GEMINI_TTS_CALLS_DAILY) já foi usado "
+                "hoje. Ele volta à meia-noite do Pacífico.")
+    return None
+
+
+def _copiar_referencias(estilo: dict, pasta: str) -> dict:
+    """As imagens dos personagens vao para a pasta do job: editar o estilo no
+    meio (trocar a imagem de alguem) nao muda um video em andamento."""
+    destino = os.path.join(pasta, "referencias")
+    os.makedirs(destino, exist_ok=True)
+    saida = {}
+    for pid, caminho in criacoes.referencias(estilo["id"], estilo["spec"]).items():
+        shutil.copyfile(caminho, os.path.join(destino, f"{pid}.png"))
+        saida[pid] = f"referencias/{pid}.png"
+    return saida
+
+
+def _comando_da_criacao(pasta: str) -> list:
+    return [sys.executable, "-u", "criar_video.py", "--pasta", pasta]
+
+
+@app.get("/api/canais/{canal_id}/estilo")
+async def ver_estilo(canal_id: str):
+    """O estilo de criacao do canal (null quando ainda nao tem), o padrao de um
+    estilo novo, as listas do editor e o que da para criar hoje."""
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    try:
+        if await canais.obter(canal_id) is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+        estilo = await criacoes.estilo_do_canal(canal_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    return {"estilo": estilo, "padrao": estilos.padrao(), "catalogo": _catalogo_da_criacao(),
+            "midia": midia_ia.disponivel(), "cota": _cota_de_midia(),
+            "pode_criar": _por_que_nao_cria(estilo)}
+
+
+@app.put("/api/canais/{canal_id}/estilo")
+async def salvar_estilo(canal_id: str, request: Request):
+    """Grava o estilo: `{spec}`. A imagem de cada personagem nao vem daqui (so
+    pelas rotas dela); o nome que vier e conferido contra o disco."""
+    corpo = await _corpo_json(request)
+    try:
+        estilo = await criacoes.salvar_estilo(canal_id, corpo.get("spec"))
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    return {"estilo": estilo, "pode_criar": _por_que_nao_cria(estilo)}
+
+
+@app.post("/api/canais/{canal_id}/estilo/personagens/{personagem_id}/gerar")
+async def gerar_personagem(canal_id: str, personagem_id: str, request: Request):
+    """Gera a imagem de referencia do personagem (uma imagem da cota do dia). A
+    pessoa olha: se nao gostar, gera de novo; se gostar, fica."""
+    _exigir_json(request)
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    try:
+        doc, personagem = await criacoes.personagem_e_estilo(canal_id, personagem_id)
+        png = await asyncio.to_thread(criacoes.gerar_ficha, doc, personagem)
+        estilo = await criacoes.guardar_ficha(canal_id, personagem_id, png)
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    print(f"🧑‍🎨 Personagem {personagem['nome']}: imagem de referencia nova")
+    return {"estilo": estilo, "pode_criar": _por_que_nao_cria(estilo), "cota": _cota_de_midia()}
+
+
+@app.post("/api/canais/{canal_id}/estilo/personagens/{personagem_id}/imagem")
+async def enviar_personagem(canal_id: str, personagem_id: str, request: Request):
+    """A imagem do personagem enviada pela pessoa: `{imagem: <data URL>}`. JSON,
+    e nao multipart, pelo mesmo motivo do avatar do canal: pedido JSON de outra
+    origem passa pelo CORS."""
+    corpo = await _corpo_json(request)
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    imagem = corpo.get("imagem")
+    achou = re.match(r"^data:image/(png|jpeg|webp);base64,(.+)$", imagem or "", re.S)
+    if not achou:
+        raise HTTPException(status_code=400, detail="Mande a imagem em PNG, JPEG ou WebP.")
+    try:
+        dados = base64.b64decode(achou.group(2), validate=False)
+        estilo = await criacoes.enviar_personagem(canal_id, personagem_id, dados)
+    except (ValueError, TypeError) as e:
+        if isinstance(e, criacoes.EstiloError):
+            raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="A imagem veio corrompida.")
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    return {"estilo": estilo, "pode_criar": _por_que_nao_cria(estilo)}
+
+
+#: As amostras de voz ja geradas: ouvir de novo a mesma voz com o mesmo tom nao
+#: gasta outra narracao da cota do dia.
+def _pasta_das_amostras() -> str:
+    return os.path.join(criacoes.pasta_de_dados(), "estilos", "amostras")
+
+
+_AMOSTRA = {
+    "pt": "Olá! Esta é a voz do seu canal. Era uma vez uma história que começava assim...",
+    "en": "Hello! This is your channel's voice. Once upon a time, a story began like this...",
+    "es": "¡Hola! Esta es la voz de tu canal. Había una vez una historia que empezaba así...",
+}
+
+
+@app.post("/api/canais/{canal_id}/estilo/ouvir")
+async def ouvir_voz(canal_id: str, request: Request):
+    """Uma amostra curta da voz e do tom, em WAV: `{voz, instrucao}`. Gasta uma
+    narracao da cota do Gemini na primeira vez; a mesma amostra fica guardada."""
+    corpo = await _corpo_json(request)
+    voz = str(corpo.get("voz") or "")
+    if voz not in midia_ia.NOMES_DAS_VOZES:
+        raise HTTPException(status_code=400, detail="Essa voz não existe.")
+    instrucao = re.sub(r"\s+", " ", str(corpo.get("instrucao") or "")).strip()
+    if len(instrucao) > estilos.INSTRUCAO_DE_VOZ_MAX:
+        raise HTTPException(status_code=400, detail="O jeito de falar ficou longo demais.")
+    try:
+        canal = await canais.obter(canal_id) if canais.id_valido(canal_id) else None
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    if canal is None:
+        raise HTTPException(status_code=404, detail="Canal nao encontrado")
+    idioma = (canal.get("language") or "pt").split("-")[0].lower()
+    texto = _AMOSTRA.get(idioma, _AMOSTRA["pt"])
+    chave = hashlib.sha256(f"{voz}\n{instrucao}\n{texto}".encode("utf-8")).hexdigest()[:24]
+    caminho = os.path.join(_pasta_das_amostras(), f"{chave}.wav")
+    if not os.path.isfile(caminho):
+        try:
+            audio = await asyncio.to_thread(midia_ia.narrar, texto, voz=voz, instrucao=instrucao)
+        except Exception as e:
+            raise _erro_do_estilo(e)
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho + ".tmp", "wb") as f:
+            f.write(audio.wav)
+        os.replace(caminho + ".tmp", caminho)
+    with open(caminho, "rb") as f:
+        return Response(content=f.read(), media_type="audio/wav")
+
+
+def _enfileirar_criacao(job_id: str, pasta: str, tenant_id: str, canal_id: Optional[str],
+                        ideia: str, logs: list) -> None:
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    cmd = _comando_da_criacao(pasta)
+    jobs[job_id] = {
+        'status': 'queued', 'kind': 'criacao', 'created_at': time.time(),
+        'logs': LinhasDoLog(logs), 'cmd': cmd, 'env': env, 'output_dir': pasta,
+        'user_id': None, 'reservation_id': None, 'watermark': False,
+        'webhook_url': None, 'webhook_secret': None, 'base_url': None,
+        'tenant_id': tenant_id, 'channel_id': canal_id,
+    }
+    _write_resume_manifest(job_id, cmd, 2, None, None, watermark=False,
+                           tenant_id=tenant_id, env_do_job={})
+    _enqueue_job(job_id, 2)
+
+
+@app.post("/api/criacoes")
+async def criar_video_por_ia(request: Request):
+    """Cria um video curto por IA no estilo do canal: `{channel_id, ideia}`.
+    Sem ideia, o roteiro inventa uma nova, sem repetir os temas do canal."""
+    corpo = await _corpo_json(request)
+    canal_id = str(corpo.get("channel_id") or "").strip()
+    ideia = re.sub(r"\s+", " ", str(corpo.get("ideia") or "")).strip()
+    if len(ideia) > 500:
+        raise HTTPException(status_code=400, detail="A ideia pode ter no máximo 500 caracteres.")
+    if not canais.id_valido(canal_id):
+        raise HTTPException(status_code=400,
+                            detail="Escolha o canal: o estilo do vídeo é o do canal.")
+    try:
+        canal = await canais.obter(canal_id)
+        if canal is None:
+            raise HTTPException(status_code=404, detail="Canal nao encontrado")
+        estilo = await criacoes.estilo_do_canal(canal_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_do_estilo(e)
+    motivo = _por_que_nao_cria(estilo)
+    if motivo:
+        raise HTTPException(status_code=400, detail=motivo)
+    # A receita de IA do canal (7.7) passa pela mesma porta, e diz quem pediu:
+    # e por isso que o fim do job sabe para qual receita voltar.
+    receita_id = corpo.get("receita_id") or None
+    if receita_id is not None:
+        receita = await automacao.receita_por_id(str(receita_id)) \
+            if canais.id_valido(str(receita_id)) else None
+        if receita is None or receita.kind != "ia" or receita.channel_id != canal_id:
+            raise HTTPException(status_code=400, detail="receita_id não é a receita de IA deste canal.")
+
+    tenant_id = db.tenant_atual()
+    job_id = str(uuid.uuid4())
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    os.makedirs(pasta, exist_ok=True)
+    try:
+        referencias = _copiar_referencias(estilo, pasta)
+    except OSError as e:
+        shutil.rmtree(pasta, ignore_errors=True)
+        raise HTTPException(status_code=500,
+                            detail=f"Nao deu para copiar as imagens dos personagens: {e}")
+    pedido = {
+        "estilo": estilo["spec"], "estilo_id": estilo["id"], "canal_id": canal_id,
+        "ideia": ideia, "idioma": canal.get("language") or "pt-BR",
+        "referencias": referencias, "receita_id": receita_id,
+        # Os temas mais recentes primeiro; o roteiro recebe no maximo 30.
+        "ja_feitos": await criacoes.temas_do_canal(canal_id),
+    }
+    source_id = await job_registry.registrar_fonte(
+        adapter="ia", entrada=(f"ia: {ideia}" if ideia else "ia: ideia nova")[:500])
+    if source_id and await job_registry.registrar_job(job_id, source_id):
+        await canais.ligar_job(job_id, canal_id)
+    await criacoes.registrar_criacao(job_id, canal_id, ideia)
+
+    # O pedido na pasta e a fila, SEM `await` entre os dois: uma pasta com o
+    # `criacao.json` e sem manifesto e o que o `_recover_jobs_from_disk` le como
+    # video parado, e uma listagem de projetos no meio o poria na lista como
+    # "falhou" antes de ele comecar.
+    with open(os.path.join(pasta, ARQUIVO_DA_CRIACAO), "w", encoding="utf-8") as f:
+        json.dump(pedido, f, ensure_ascii=False, indent=2)
+    _gravar_tenant_do_job(pasta, tenant_id)
+    _gravar_canal_do_job(pasta, canal_id)
+    print(f"🎨 [criacao] job={job_id} canal={canal['name']} ideia={ideia[:80]!r}")
+    _enfileirar_criacao(job_id, pasta, tenant_id, canal_id, ideia,
+                        [f"Vídeo de IA na fila, no estilo do canal {canal['name']}."])
+    return {"job_id": job_id, "status": "queued"}
+
+
+def _o_que_falta_para_continuar(pasta: str, pedido: dict) -> Optional[str]:
+    """O que impede uma criacao parada de continuar agora: a chave, ou a cota
+    do dia para as imagens que AINDA faltam (as prontas nao contam)."""
+    import criar_video
+    disponivel = midia_ia.disponivel()
+    if not disponivel["imagem"]:
+        return ("Falta a chave da Cloudflare (o token e o ID da conta) em Configurações → "
+                "Chaves de IA: é ela que faz as imagens grátis.")
+    if not disponivel["voz"]:
+        return ("Falta a chave do Gemini em Configurações → Chaves de IA: é ela que faz a "
+                "narração grátis.")
+    estilo = pedido.get("estilo") if isinstance(pedido.get("estilo"), dict) else {}
+    roteiro = _ler_json_da_pasta(os.path.basename(pasta), criar_video.ARQUIVO_DO_ROTEIRO)
+    cenas = len((roteiro or {}).get("cenas") or []) or int(estilo.get("cenas") or 0)
+    faltam = sum(1 for i in range(cenas) if criar_video.arquivo_da_cena(pasta, i) is None)
+    cabem = midia_ia.imagens_que_cabem(referencias=min(2, len(estilo.get("personagens") or [])))
+    if faltam > cabem:
+        return (f"A cota grátis de imagem de hoje só dá para {cabem} imagem(ns), e faltam "
+                f"{faltam}. Ela volta {_quando_volta_a_cota_de_imagem()}.")
+    teto = midia_ia.vozes_por_dia()
+    if (teto is not None and midia_ia.uso()["vozes"] >= teto
+            and not os.path.isfile(os.path.join(pasta, criar_video.ARQUIVO_DA_VOZ))):
+        return (f"O teto de {teto} narrações por dia (GEMINI_TTS_CALLS_DAILY) já foi usado "
+                "hoje. Ele volta à meia-noite do Pacífico.")
+    return None
+
+
+@app.post("/api/criacoes/{job_id}/continuar")
+async def continuar_criacao(job_id: str, request: Request):
+    """Uma criacao que parou (a cota do dia acabou, a rede caiu) volta para a
+    fila e continua do primeiro passo que falta: o roteiro, as imagens e a voz
+    que ja sairam ficam na pasta e nao gastam cota de novo."""
+    _exigir_json(request)
+    if not _e_criacao(job_id):
+        raise HTTPException(status_code=404, detail="Esse vídeo de IA não existe.")
+    pasta = os.path.join(OUTPUT_DIR, job_id)
+    job = jobs.get(job_id) or _job_view_from_disk(job_id) or {
+        'tenant_id': _tenant_do_disco(pasta), 'user_id': None}
+    await _assert_job_owner(request, job)
+    if job_id in _job_processes or (jobs.get(job_id) or {}).get('status') in ('queued', 'processing'):
+        raise HTTPException(status_code=409, detail="Esse vídeo já está sendo feito.")
+    if glob.glob(os.path.join(pasta, "*_metadata.json")):
+        raise HTTPException(status_code=409, detail="Esse vídeo já está pronto.")
+    try:
+        with open(os.path.join(pasta, ARQUIVO_DA_CRIACAO), encoding="utf-8") as f:
+            pedido = json.load(f)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=409, detail="O pedido deste vídeo se perdeu.")
+    falta = _o_que_falta_para_continuar(pasta, pedido)
+    if falta:
+        raise HTTPException(status_code=400, detail=falta)
+    _cancelled_jobs.discard(job_id)
+    _enfileirar_criacao(job_id, pasta, _tenant_do_disco(pasta), _canal_do_disco(pasta),
+                        pedido.get("ideia") or "",
+                        ["▶️ Continuando o vídeo de onde parou."])
+    await job_registry.marcar_job(job_id, status="queued")
+    return {"job_id": job_id, "status": "queued"}
+
+
+async def _estilo_pronto_para_a_receita(canal_id: str) -> Optional[str]:
+    """O que falta no ESTILO para a receita de IA rodar. Chave e cota ficam para
+    cada volta do laco: podem chegar depois de a receita ser ligada."""
+    estilo = await criacoes.estilo_do_canal(canal_id)
+    if estilo is None:
+        return "o canal ainda não tem estilo de criação (aba Criar do canal)"
+    if estilo.get("falta"):
+        return estilo["falta"]
+    if estilo.get("sem_imagem"):
+        return f"falta a imagem de referência de {', '.join(estilo['sem_imagem'])}"
+    return None
+
+
+def _entre_aspas(texto: Optional[str]) -> str:
+    texto = (texto or "").strip()
+    return f"“{texto[:80]}”" if texto else "o vídeo"
+
+
+async def _cuidar_da_receita_ia(receita, canal: dict, tenant_id: str, agora: datetime) -> str:
+    """Uma volta da receita de IA (7.7): um video de cada vez, o estoque do canal
+    manda, e o video que parou continua de onde parou antes da proxima ideia."""
+    try:
+        spec = receitas.normalizar_ia(receita.spec_json)
+    except receitas.ReceitaInvalida as e:
+        return f"a receita está inválida: {e}"
+    falta = await _estilo_pronto_para_a_receita(canal["id"])
+    if falta:
+        return f"a receita não pode rodar: {falta}"
+    estado = dict(receita.state_json or {})
+    criando = estado.get("criando") or None
+    if criando:
+        job_id = str(criando.get("job_id") or "")
+        titulo = _entre_aspas(criando.get("ideia"))
+        job = (jobs.get(job_id) or _job_view_from_disk(job_id)) if _JOB_ID_RE.match(job_id) else None
+        status = (job or {}).get("status")
+        if status in ("queued", "processing"):
+            return f"criando {titulo}"
+        if status == "completed":
+            await _ia_depois_do_job(job_id)
+            return (await automacao.estado_da_receita(receita.id)).get("situacao") or \
+                f"{titulo} ficou pronto"
+        pasta = os.path.join(OUTPUT_DIR, job_id)
+        existe = bool(job_id) and _e_criacao(job_id)
+        tentativas = int(criando.get("tentativas") or 1)
+        if existe and status != "cancelled" and tentativas < receitas.TENTATIVAS_POR_VIDEO:
+            pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_CRIACAO) or {}
+            espera = _o_que_falta_para_continuar(pasta, pedido)
+            if espera:
+                return espera
+            resposta = await _chamar_o_motor("POST", f"/api/criacoes/{job_id}/continuar",
+                                             tenant_id, json={})
+            if resposta.status_code == 200:
+                await automacao.anotar(receita.id, criando={**criando, "tentativas": tentativas + 1})
+                return f"continuando {titulo} de onde parou (tentativa {tentativas + 1})"
+            try:
+                detalhe = resposta.json().get("detail")
+            except ValueError:
+                detalhe = None
+            return f"não consegui continuar {titulo}: {detalhe or resposta.status_code}"
+        motivo = ("foi cancelado" if status == "cancelled" else
+                  "foi apagado" if not existe else
+                  f"parou {tentativas} vezes: " + (_job_error_text((job or {}).get("logs") or [])
+                                                  or "o log do projeto diz o erro"))
+        puladas = list(estado.get("puladas") or [])
+        if criando.get("da_lista") and criando.get("ideia"):
+            puladas.append(criando["ideia"])
+        await automacao.anotar(receita.id, criando=None, puladas=puladas[-200:])
+        print(f"🤖 Automacao ({canal['name']}): {titulo} {motivo[:200]}")
+        return f"{titulo} {motivo[:200]}; a próxima volta cria o seguinte"
+
+    agenda = canal["ajustes"]["agenda_efetiva"]
+    estoque = await automacao.estoque_do_canal(canal["id"], agora)
+    limite = max(1, agenda["por_dia"] * automacao.DIAS_DE_ESTOQUE)
+    if estoque["total"] >= limite:
+        if estoque["esperando_aprovacao"]:
+            return (f"{estoque['esperando_aprovacao']} vídeo(s) esperando a sua aprovação; "
+                    "a receita espera antes de criar mais")
+        return (f"{estoque['agendados']} post(s) na agenda: dá para "
+                f"{automacao.DIAS_DE_ESTOQUE} dias, a receita espera")
+
+    dia = agora.astimezone(fuso_de_quem_usa.tz_do_tenant(tenant_id)).date().isoformat()
+    hoje = estado.get("hoje") or {}
+    feitos_hoje = int(hoje.get("criados") or 0) if hoje.get("dia") == dia else 0
+    if feitos_hoje >= spec["ritmo"]["videos_por_dia"]:
+        return "já criou os vídeos de hoje; volta amanhã"
+
+    ideia, da_lista = receitas.proxima_ideia(spec, estado.get("feitas") or [],
+                                             estado.get("puladas") or [])
+    resposta = await _chamar_o_motor("POST", "/api/criacoes", tenant_id, json={
+        "channel_id": canal["id"], "ideia": ideia, "receita_id": receita.id})
+    try:
+        dados = resposta.json()
+    except ValueError:
+        dados = {}
+    if resposta.status_code == 200 and dados.get("job_id"):
+        await automacao.anotar(
+            receita.id, hoje={"dia": dia, "criados": feitos_hoje + 1},
+            criando={"job_id": dados["job_id"], "ideia": ideia, "da_lista": da_lista,
+                     "tentativas": 1, "desde": agora.isoformat(timespec="seconds")})
+        print(f"🤖 Automacao ({canal['name']}): criando {_entre_aspas(ideia)} "
+              f"-> projeto {dados['job_id']}")
+        return f"criando {_entre_aspas(ideia) if ideia else 'um vídeo novo'}"
+    detalhe = dados.get("detail") if isinstance(dados.get("detail"), str) \
+        else f"HTTP {resposta.status_code}"
+    return detalhe
+
+
+async def _ia_depois_do_job(job_id: str) -> None:
+    """O fim do video que a receita de IA mandou criar: a caixa de aprovacao
+    (canal que pede) ou a agenda do canal, como o corte de uma receita (7.5).
+
+    Idempotente (so age enquanto a receita ainda esta "criando" este job) e
+    nunca levanta. Um video que parou fica para o laco, que continua de onde
+    parou."""
+    try:
+        if not _e_criacao(job_id):
+            return
+        pedido = _ler_json_da_pasta(job_id, ARQUIVO_DA_CRIACAO) or {}
+        receita_id = pedido.get("receita_id")
+        if not receita_id:
+            return
+        job = jobs.get(job_id) or _job_view_from_disk(job_id) or {}
+        status = job.get("status")
+        if status in ("queued", "processing"):
+            return
+        receita = await automacao.receita_por_id(str(receita_id))
+        if receita is None:
+            return
+        estado = dict(receita.state_json or {})
+        criando = estado.get("criando") or {}
+        if criando.get("job_id") != job_id:
+            return
+        ideia = criando.get("ideia")
+        if status != "completed":
+            motivo = _job_error_text(job.get("logs") or []) or (
+                "cancelado" if status == "cancelled" else "o vídeo parou")
+            await automacao.anotar(receita.id, situacao=(
+                f"{_entre_aspas(ideia)} parou: {motivo[:200]}. A próxima volta continua "
+                "de onde parou." if status != "cancelled" else
+                f"{_entre_aspas(ideia)} foi cancelado"))
+            return
+        canal = await canais.obter(receita.channel_id)
+        roteiro = _ler_json_da_pasta(job_id, "roteiro.json") or {}
+        titulo = _entre_aspas(roteiro.get("titulo") or ideia)
+        cortes = await _cortes_do_job(job_id)
+        if not cortes:
+            situacao = f"{titulo} ficou pronto, mas não entrou no banco; ele está nos projetos"
+        elif canal and canal["requires_approval"]:
+            await automacao.criar_aprovacoes(canal["id"], [c.id for c in cortes])
+            situacao = f"{titulo} esperando a sua aprovação"
+        else:
+            indices = [int((c.rubric_json or {}).get("clip_index") or 0) for c in cortes]
+            feito = await _agendar_cortes_no_canal(receita.channel_id, job_id, indices)
+            situacao = feito["aviso"] or f"{titulo} na agenda do canal ({feito['agendados']} post(s))"
+        feitas = list(estado.get("feitas") or [])
+        if criando.get("da_lista") and ideia:
+            feitas.append(ideia)
+        await automacao.anotar(receita.id, criando=None, feitas=feitas[-500:], situacao=situacao,
+                               ultimo_video={"titulo": roteiro.get("titulo") or ideia,
+                                             "job_id": job_id,
+                                             "quando": datetime.now(timezone.utc).isoformat()})
+        print(f"🤖 Automacao: video de IA {job_id} pronto -- {situacao}")
+    except Exception as e:
+        print(f"⚠️  Automacao: o fim do video de IA {job_id} nao foi tratado ({e})")
 
 
 # --- Fila de publicacao (Fase 3, bloco 3.5) ---------------------------------

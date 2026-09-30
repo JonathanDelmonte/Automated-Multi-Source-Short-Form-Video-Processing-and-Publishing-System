@@ -42,6 +42,13 @@ ESTAGIO_DO_MARCADOR = {
     "03_transcribe": "transcribe",
     "04_detect": "detect",
     "05_06_render": "reframe",
+    # O video criado por IA (7.7): escrever o roteiro e a escolha do que dizer,
+    # como a deteccao; a legenda passa pelo whisper; o resto e compor.
+    "c1_roteiro": "detect",
+    "c2_imagens": "compose",
+    "c3_voz": "compose",
+    "c4_legenda": "transcribe",
+    "c5_montagem": "compose",
 }
 
 

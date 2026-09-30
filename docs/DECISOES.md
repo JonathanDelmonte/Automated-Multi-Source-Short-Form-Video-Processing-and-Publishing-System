@@ -796,3 +796,107 @@ com a proteção forçada, para que o caso que falhou tenha teste.
 `Instalar-Virtu-Clips.exe` e o item 2 passa a morar em `%LOCALAPPDATA%\VirtuClips`.
 O AppId continua o mesmo — uma entrada só em "Aplicativos" — e o instalador traz os
 projetos da pasta `Cortes` antiga e apaga o resto dela.
+
+
+---
+
+## ADR-013 — O vídeo de IA sai de imagem com referência, voz do Gemini e montagem local
+
+**Data:** 2026-09-27 · **Status:** aceita (etapa 7.7)
+
+**Contexto.** A 7.7 é o vídeo curto criado por IA: roteiro, cenas, imagens, voz,
+legenda e montagem, "sem nenhum serviço pago", e com o mesmo estilo de um vídeo
+para o outro. O plano mandou começar por uma pesquisa, como a do ADR-011, do que
+há de grátis no mês para imagem, voz e vídeo — e disse que o **personagem
+consistente** entre cenas e episódios é o problema que escolhe a ferramenta.
+
+**Levantamento (27-set-2026).** As páginas oficiais do Google e do Cloudflare
+estão fora do alcance da rede desta sessão; os números abaixo vêm de buscas
+cruzadas (changelogs do Cloudflare, cartões de modelo, fóruns do Google e
+integrações de terceiros que os usam), e o código trata cada um como aposta:
+modelo que sumiu e cota que acabou viram uma linha no log, não um job parado.
+
+*Imagem:*
+
+| Onde | Custo | Limite | Referência (personagem)? |
+|---|---|---|---|
+| Cloudflare Workers AI, **FLUX.2 [klein] 4B** | grátis | 10.000 neurons/dia, divididos com o texto; ~5 por bloco de 512² de entrada e ~26 de saída → ~110 por imagem 9:16, **~80 imagens/dia** | **sim, até 4 imagens** (512²) |
+| Cloudflare Workers AI, FLUX.1 [schnell] | grátis | mesmos neurons; ~4,8 por bloco + 9,6 por passo | não |
+| Cloudflare Workers AI, FLUX.2 [dev] | grátis | ~30 vezes o klein por imagem: poucas por dia | sim |
+| NVIDIA NIM (FLUX.1 schnell, FLUX.2 klein 4B) | grátis (Developer Program) | ~40/min por modelo | a conferir (formato do pedido com referência não confirmado) |
+| Gemini (Flash Image) | **sem cota grátis na API** desde o começo de 2026 | — | sim |
+| FLUX.2 [klein] 4B na placa do autor | grátis | cabe na RTX 3060 quantizado | sim, mas pede `diffusers`, ~8 GB de pesos e reconstruir a imagem |
+
+Os pesos do FLUX.2 [klein] 4B são Apache 2.0 (o 9B não), o que deixa aberta a
+volta para a placa sem trocar de modelo.
+
+*Voz em português do Brasil:*
+
+| Onde | Custo | Observação |
+|---|---|---|
+| **Gemini TTS** (`gemini-3.1-flash-tts-preview`) | grátis, com a `GEMINI_API_KEY` que já existe | cota diária baixa, mas **uma chamada faz a narração inteira**; 30 vozes; o tom se pede em texto ("conte como uma avó carinhosa"); treina com o conteúdo no plano grátis |
+| NVIDIA Magpie TTS Multilingual (Diego, Louise, Isabela) | grátis | por gRPC — dependência nova; fica para depois |
+| Cloudflare (MeloTTS, Aura-2) | grátis | **sem português** |
+| Edge TTS | sem chave | serviço não oficial: fora, pela mesma regra dos gateways sem chave do ADR-011 |
+| Kokoro (local) | grátis, Apache 2.0 | as vozes pt-BR têm a nota mais baixa do próprio catálogo |
+| Piper (local) | grátis | só vozes masculinas em pt-BR, e o repositório novo é GPL |
+
+*Movimento:* vídeo gerado por API (Veo, Kling, Runway) é pago; modelo aberto na
+placa (Wan, LTX) é lento e pesado para a RTX 3060. O Remotion anima de graça, mas
+só existe no Docker (o ajudante não o leva).
+
+**Decisão.**
+
+1. **A criação é um job como os outros.** Um subprocesso (`criar_video.py`)
+   escreve o metadata e o corte, e anuncia estágio e corte pronto pelos mesmos
+   marcadores do `main.py`. Com isso a fila, a barra, o cancelar, a retomada
+   depois de um reinício, a tela do projeto, a publicação e a agenda valem sem
+   uma linha nova.
+2. **Imagem pelo Workers AI, FLUX.2 [klein] 4B com referências**, e FLUX.1
+   [schnell] de reserva (sem referência: a consistência cai para o texto, e o log
+   diz). Só com `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` — as mesmas da
+   cascata de texto. Os neurons do dia são contados em disco, e a criação para
+   ANTES de estourar, dizendo que a cota grátis de imagem de hoje acabou.
+3. **O personagem consistente é uma ficha, feita uma vez.** Cada personagem do
+   estilo ganha uma imagem de referência, que a pessoa gera, olha e aprova (ou
+   gera de novo). Toda cena em que ele aparece leva essa imagem ao modelo, com a
+   mesma descrição em texto. É isso que faz o segundo vídeo sair reconhecível — e
+   é por isso que o estilo mora no canal, e não em cada vídeo.
+4. **Voz pelo Gemini TTS, uma chamada por vídeo**, com a voz e o tom do estilo.
+   Sem outra voz grátis de qualidade em pt-BR sem dependência nova, a cota do dia
+   que acabou faz o vídeo esperar o dia seguinte — a automação tenta de novo, e a
+   tela diz o motivo.
+5. **Legenda pelo tempo de cada palavra da própria narração**: o áudio passa pelo
+   whisper local, e a legenda sai no preset do estilo (os do `template.py`).
+6. **Montagem local no ffmpeg**, 1080x1920: cada cena com movimento lento (o
+   efeito Ken Burns) no tempo da fala dela. Funciona igual no Docker e no
+   ajudante, sem nada novo na imagem.
+7. **Nada pago, nada sem chave.** Quem treina com o conteúdo é dito na tela, como
+   na cascata de texto.
+
+**Consequências.** Um canal que cria todo dia gasta, por vídeo de um minuto, umas
+8 a 12 imagens (~1.000 a 1.300 neurons) e uma chamada de voz — cabem uns 7 vídeos
+por dia de imagem, e a voz decide o resto. Os neurons de imagem e os de texto são
+a mesma cota do Cloudflare. A qualidade da voz é a do Gemini; se a cota dele for
+menor do que parece, o gargalo é ela.
+
+**Revisão se:** o Gemini voltar a dar imagem grátis na API (entra como segundo
+provedor com referência); a NVIDIA oferecer a voz por HTTP (entra como segunda
+voz); aparecer voz local em pt-BR, Apache ou MIT, de qualidade; ou o autor quiser
+a placa trabalhando (o klein 4B local, com a reconstrução da imagem que isso pede).
+
+**Nota da implementação (29-set-2026).** Três coisas que a decisão não previa e
+o código fez:
+- **A legenda é o texto do roteiro, e não o do whisper.** O item 5 dizia "pelo
+  tempo de cada palavra da própria narração", e continua: do whisper vem só o
+  TEMPO. As palavras são as do roteiro, casadas com as ouvidas (`difflib`), porque
+  o whisper erra justamente o nome do personagem, que aparece em toda cena.
+- **Saem o vídeo limpo e o legendado**, do mesmo grafo do ffmpeg, como num corte:
+  sem o limpo, trocar o estilo da legenda queimaria uma por cima da outra.
+- **Personagem sem imagem de referência impede criar.** O item 3 fazia da ficha o
+  caminho; o código a tornou obrigatória, porque um personagem só descrito em
+  texto sai diferente a cada cena — o contrário do "reconhecível" do pronto-quando.
+
+As contas da consequência, refeitas com o código: uma imagem vertical custa de
+105 a 115 neurons (conforme quantos personagens a cena leva), então os 8.000
+neurons do dia reservados às imagens dão umas 70 — uns 8 vídeos de 8 cenas.

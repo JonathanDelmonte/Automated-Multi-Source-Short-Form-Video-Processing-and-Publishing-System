@@ -91,7 +91,10 @@ class TestTenantEmTodaTabela:
                      # 7.6: a serie em partes, qual corte e qual parte, e a
                      # playlist do YouTube de cada serie.
                      "series", "series_parts", "series_playlists",
-                     "series_playlist_items"}
+                     "series_playlist_items",
+                     # 7.7: o estilo de criacao do canal e cada video criado
+                     # por IA.
+                     "creation_styles", "creations"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

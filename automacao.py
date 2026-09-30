@@ -88,23 +88,29 @@ def _iso(quando: Optional[datetime]) -> Optional[str]:
 # A receita
 # --------------------------------------------------------------------------- #
 
-def _receita_json(linha, canal_id: str) -> dict:
-    if linha is None:
-        spec = receitas.normalizar(None)
-        return {"id": None, "channel_id": canal_id, "kind": "cortes", "ativa": False,
-                "spec": spec, "estado": {}, "pronta": receitas.pronta(spec),
-                "precisa_de_direitos": receitas.precisa_de_direitos(spec),
-                "pasta": None, "updated_at": None}
+def _spec_da_receita(kind: str, documento) -> dict:
+    normalizar = receitas.normalizar_ia if kind == "ia" else receitas.normalizar
     try:
-        spec = receitas.normalizar(linha.spec_json)
+        return normalizar(documento)
     except receitas.ReceitaInvalida:
-        spec = receitas.normalizar(None)
+        return normalizar(None)
+
+
+def _receita_json(linha, canal_id: str, kind: str = "cortes") -> dict:
+    kind = linha.kind if linha is not None else kind
+    spec = _spec_da_receita(kind, linha.spec_json if linha is not None else None)
+    ia = kind == "ia"
+    if linha is None:
+        return {"id": None, "channel_id": canal_id, "kind": kind, "ativa": False,
+                "spec": spec, "estado": {}, "pronta": None if ia else receitas.pronta(spec),
+                "precisa_de_direitos": False if ia else receitas.precisa_de_direitos(spec),
+                "pasta": None, "updated_at": None}
     estado = dict(linha.state_json or {})
-    return {"id": linha.id, "channel_id": canal_id, "kind": linha.kind,
+    return {"id": linha.id, "channel_id": canal_id, "kind": kind,
             "ativa": bool(linha.active), "spec": spec, "estado": estado,
-            "pronta": receitas.pronta(spec),
-            "precisa_de_direitos": receitas.precisa_de_direitos(spec),
-            "pasta": _descricao_da_pasta(estado.get("pasta")),
+            "pronta": None if ia else receitas.pronta(spec),
+            "precisa_de_direitos": False if ia else receitas.precisa_de_direitos(spec),
+            "pasta": None if ia else _descricao_da_pasta(estado.get("pasta")),
             "updated_at": _iso(linha.updated_at)}
 
 
@@ -114,14 +120,42 @@ async def _linha_da_receita(t, canal_id: str, kind: str = "cortes"):
     return achadas[0] if achadas else None
 
 
-async def obter_receita(canal_id: str) -> Optional[dict]:
+async def obter_receita(canal_id: str, kind: str = "cortes") -> Optional[dict]:
     """A receita do canal (a padrao, desligada, se ainda nao ha), ou None se o
     canal nao existe."""
     async with db.tenant() as t:
         canal = await t.get(db_models.Channel, canal_id)
         if canal is None:
             return None
-        return _receita_json(await _linha_da_receita(t, canal_id), canal_id)
+        return _receita_json(await _linha_da_receita(t, canal_id, kind), canal_id, kind)
+
+
+async def salvar_receita_ia(canal_id: str, spec: Optional[dict],
+                            ativa: Optional[bool] = None) -> Optional[dict]:
+    """Grava a receita de IA (7.7). Salvar apaga as ideias puladas: quem editou
+    a lista viu o que ficou para tras e decidiu de novo."""
+    async with db.tenant() as t:
+        if await t.get(db_models.Channel, canal_id) is None:
+            return None
+        linha = await _linha_da_receita(t, canal_id, "ia")
+        base = _spec_da_receita("ia", linha.spec_json) if linha is not None else None
+        try:
+            novo = receitas.normalizar_ia(spec, base=base)
+        except receitas.ReceitaInvalida as e:
+            raise AutomacaoError(str(e))
+        ligar = bool(linha.active) if (ativa is None and linha is not None) else bool(ativa)
+        if linha is None:
+            linha = t.add(db_models.Recipe(channel_id=canal_id, kind="ia", active=ligar,
+                                           spec_json=novo, state_json={}))
+        else:
+            linha.spec_json = novo
+            linha.active = ligar
+            linha.updated_at = _agora()
+            estado = dict(linha.state_json or {})
+            if estado.pop("puladas", None) is not None:
+                linha.state_json = estado
+        await t.commit()
+        return _receita_json(linha, canal_id, "ia")
 
 
 async def salvar_receita(canal_id: str, spec: Optional[dict], ativa: Optional[bool] = None,
@@ -196,6 +230,12 @@ async def receitas_ativas() -> list:
 async def receita_por_id(recipe_id: str):
     async with db.tenant() as t:
         return await t.get(db_models.Recipe, recipe_id)
+
+
+async def estado_da_receita(recipe_id: str) -> dict:
+    async with db.tenant() as t:
+        linha = await t.get(db_models.Recipe, recipe_id)
+        return dict(linha.state_json or {}) if linha is not None else {}
 
 
 async def anotar(recipe_id: str, **campos) -> None:

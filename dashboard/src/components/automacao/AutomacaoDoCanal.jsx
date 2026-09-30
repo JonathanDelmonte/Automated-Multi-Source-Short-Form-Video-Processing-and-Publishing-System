@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Baby, Bot, CalendarDays, Inbox, Loader2, Power, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
+import { AlertTriangle, Baby, Bot, CalendarDays, Inbox, Loader2, Power, RefreshCw, ShieldCheck, Wand2, Zap } from 'lucide-react';
 import CaixaDeAprovacao from './CaixaDeAprovacao';
 import CaixaDeEntrada from './CaixaDeEntrada';
 import ReceitaDoCanal from './ReceitaDoCanal';
+import ReceitaDeIA from '../criacao/ReceitaDeIA';
 import { Secao } from '../ui/Pagina';
 import { buscarAgora, lerReceita, listarCandidatos, rodarAgora } from '../../lib/automacao';
 import { janelasEmTexto, rotuloDoOffset } from '../../lib/receita.js';
@@ -34,15 +35,18 @@ function Situacao({ canal, tela, candidatos, aoRodar, rodando, resposta }) {
     <section className="card p-4 sm:p-5 space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
+          {/* Este quadro é o da receita de CORTES; a de IA (7.7) tem o dela,
+              na seção própria. Sem o nome, "receita desligada" em cima de uma
+              receita de IA criando sozinha parecia o canal parado. */}
           <p className="text-ink text-sm font-medium flex items-center gap-2">
             {receita.ativa
-              ? <><span className="w-2 h-2 rounded-full bg-[color:var(--color-ok)] shrink-0" aria-hidden="true" /> receita ligada</>
-              : <><Power size={14} className="text-muted shrink-0" /> receita desligada</>}
+              ? <><span className="w-2 h-2 rounded-full bg-[color:var(--color-ok)] shrink-0" aria-hidden="true" /> receita de cortes ligada</>
+              : <><Power size={14} className="text-muted shrink-0" /> receita de cortes desligada</>}
           </p>
           <p className="text-sm text-ink2 mt-1 leading-snug">
             {receita.ativa
               ? (resposta || estado.situacao || 'Esperando a primeira volta do motor.')
-              : 'Ligue a receita para o canal trabalhar sozinho.'}
+              : 'Ligue a receita de cortes para o canal cortar vídeos sozinho. A de IA, que cria vídeos no estilo do canal, tem o quadro dela mais abaixo.'}
           </p>
           {receita.ativa && estado.ultima_volta && (
             <p className="text-[11px] text-muted mt-1">
@@ -172,6 +176,11 @@ export default function AutomacaoDoCanal({ canal }) {
 
   const receita = tela.receita;
   const pendentes = tela.estoque?.esperando_aprovacao || 0;
+  const receitaDeIA = (
+    <Secao titulo="a receita de IA" icone={Wand2} id="receita-ia">
+      <ReceitaDeIA canal={canal} />
+    </Secao>
+  );
 
   return (
     <div className="space-y-4">
@@ -184,9 +193,16 @@ export default function AutomacaoDoCanal({ canal }) {
         </Secao>
       )}
 
-      <Secao titulo="a receita" icone={Bot}>
+      {/* A receita de IA (7.7): o canal cria vídeos no estilo dele. Divide com
+          a de cortes a agenda, o estoque e a caixa de aprovação do canal. Num
+          canal que nunca configurou cortes, ela vem primeiro. */}
+      {!receita.id && receitaDeIA}
+
+      <Secao titulo="a receita de cortes" icone={Bot}>
         <ReceitaDoCanal key={receita.updated_at || 'nova'} canal={canal} tela={tela} aoSalvar={(dados) => { setTela(dados); carregar(); }} />
       </Secao>
+
+      {receita.id && receitaDeIA}
 
       {receita.id && (
         <Secao titulo="caixa de entrada de fontes" icone={Inbox}>

@@ -130,7 +130,7 @@ caminho de produção.
 | `clip_approvals` | — | **nova** (7.5): os cortes da automação esperando a pessoa — a caixa de aprovação |
 | `series`, `series_parts` | — | **novas** (7.6): a série de um projeto (nome, idioma, duração de cada parte, quantas) e a parte de cada corte — é por ela que o agendador sabe a ordem |
 | `series_playlists`, `series_playlist_items` | — | **novas** (7.6): a playlist de cada série em cada conta do YouTube, e as partes que já entraram nela |
-| `creation_styles`, `creations` | — | **novas** (7.7): o estilo de criação salvo, e o roteiro, as cenas e os arquivos de cada vídeo de IA |
+| `creation_styles`, `creations` | — | **novas** (7.7): o estilo de criação de cada canal (o documento de `estilos.py`; as imagens dos personagens ficam em `DATA_DIR/estilos/`), e cada vídeo de IA — o projeto, a ideia, o título e o roteiro, que é de onde sai o "não repetir o tema" |
 | `devices` | — | **nova** (7.9): os aparelhos da frota |
 
 O projeto também guarda o canal na própria pasta (`.canal`, ao lado do `.tenant`):
@@ -138,7 +138,10 @@ a lista de projetos vem do disco, e o banco falha aberto. Pelo mesmo motivo, a
 origem e a licença da fonte (7.5) moram também na pasta (`.origem.json`): é dali
 que o crédito sai na hora de publicar. E a série (7.6) também: o pedido
 (`serie.json`) e as partes que já ficaram prontas (`serie_progresso.json`), que
-é o que deixa o motor retomar uma série parada no meio sem refazer nada.
+é o que deixa o motor retomar uma série parada no meio sem refazer nada. E o
+vídeo de IA (7.7): o pedido com a cópia do estilo (`criacao.json`), as imagens
+dos personagens (`referencias/`), o roteiro, cada cena, a narração e a legenda —
+é o que o deixa continuar de onde parou sem gastar a cota de novo.
 
 ## As fases
 
@@ -639,6 +642,96 @@ Passo 14.
 minuto no estilo (roteiro, imagem, voz e legenda), sem nenhum serviço pago, e um
 segundo vídeo sai reconhecivelmente no mesmo estilo.
 
+**Andamento** (atualizado a cada parte entregue):
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.7a | pesquisa: o que há de grátis para imagem, voz e vídeo, e o personagem consistente — virou o ADR-013 | feita (27-set) |
+| 7.7b | motor: a mídia grátis (`midia_ia.py`) — imagem pelo Cloudflare com as referências dos personagens, voz pelo Gemini numa chamada por vídeo, a cota do dia contada em disco | feita (27-set) |
+| 7.7c | motor: o estilo de criação do canal (`estilos.py`, `criacoes.py`) — o documento, a tabela, o salvar, e a imagem de referência de cada personagem (gerada ou enviada) | feita (29-set) |
+| 7.7d | motor: a criação como job (`criar_video.py`, `montagem.py`) — roteiro, imagens, voz, legenda e montagem, retomando de onde parou; o pedido no `/api/criacoes` | feita (29-set) |
+| 7.7e | motor: a receita de IA — o canal cria sozinho, com a lista de ideias, o estoque da agenda e a caixa de aprovação | feita (29-set) |
+| 7.7f | painel: o estilo na aba Criar do canal, "Vídeo criado por IA" no Criar, a receita de IA na Automação e o "continuar de onde parou" no projeto | feita (29-set) |
+| 7.7g | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (29-set) |
+
+**Como o vídeo de IA ficou, e por quê** (o levantamento e as escolhas estão no
+ADR-013):
+
+- **O estilo mora no canal e é escolhido campo a campo**: o formato (história,
+  fatos curiosos, explicação ou livre), para quem é, o tom, as regras do canal, a
+  duração (20 a 90 s), quantas cenas (3 a 14), o visual (oito atalhos, como
+  "livro infantil" e "aquarela", mais a descrição e o que nunca aparece), até
+  quatro personagens, a voz (30, com o jeito de cada uma, e o jeito de falar) e a
+  legenda. Nada vem do nicho: um canal infantil e um de finanças nascem com o
+  mesmo estilo padrão, e quem muda é a pessoa.
+- **O personagem consistente é uma imagem de referência, aprovada pela pessoa.**
+  Cada personagem ganha uma imagem, gerada (uma da cota do dia) ou enviada — um
+  desenho dela mesma serve. Ela vai para o modelo em toda cena em que ele
+  aparece, com a mesma descrição em texto; é isso que faz o segundo vídeo sair
+  com a mesma Lulu. Personagem sem imagem impede criar: um vídeo com ele sairia
+  diferente a cada cena.
+- **Um vídeo é um projeto como os outros**: entra na fila, tem a barra (escrevendo
+  o roteiro, desenhando as cenas, gravando a narração, sincronizando a legenda,
+  montando o vídeo), o cancelar, a retomada depois de um reinício, a publicação e
+  a agenda. A ideia é opcional: sem ela, o roteiro inventa uma, e nunca repete o
+  tema de um vídeo que o canal já fez.
+- **A legenda é o texto do roteiro, no tempo da voz.** O whisper só dá o tempo de
+  cada palavra — ele erra justamente o nome do personagem ("Lulú"), e quem
+  escreveu o texto nós sabemos. Cada cena troca de imagem quando a fala dela
+  começa.
+- **Saem dois arquivos**, como num corte: o vídeo limpo e o legendado. É o limpo
+  que deixa trocar o estilo da legenda depois, pela tela do projeto, sem queimar
+  uma legenda por cima da outra.
+- **Nada é refeito**: o roteiro, cada imagem e a narração ficam na pasta do
+  projeto. Um vídeo que parou (a cota do dia acabou, o PC desligou) continua de
+  onde parou pelo botão "continuar de onde parou", sem gastar a cota de novo com o
+  que já saiu. Mesmo depois de o programa reiniciar ele aparece na lista, com o
+  botão.
+- **A cota é conferida antes, nunca no meio**: o motor só começa um vídeo se as
+  imagens dele cabem na cota grátis do dia (cerca de 8 mil neurons do Cloudflare,
+  uns 8 vídeos de 8 cenas), e a tela diz quantos ainda cabem hoje. O roteiro que
+  sai com cenas demais junta as vizinhas mais curtas: cada cena é uma imagem da
+  cota, e nenhuma fala se perde.
+- **A receita de IA** (aba Automação) cria sozinha: uma ideia por vídeo, na ordem
+  da lista; acabada a lista, uma ideia nova sobre o tema. Um vídeo de cada vez;
+  com posts para dois dias na agenda (ou vídeos esperando aprovação), ela espera.
+  O vídeo pronto vai para a caixa de aprovação (canal que pede) ou direto para a
+  agenda do canal, um galho por conta, como os cortes. O que parou continua de
+  onde parou até três vezes; depois a ideia é pulada, e a tela diz qual — salvar
+  a receita de novo a devolve à fila. A receita de cortes e a de IA dividem a
+  agenda, o estoque e a caixa de aprovação do canal.
+- **As chaves são as que já existem**: o token e o ID da conta do Cloudflare
+  (imagens) e a chave do Gemini (voz), nas Configurações → Chaves de IA. A voz do
+  Gemini no plano grátis treina com o conteúdo, como a cascata de texto já diz.
+- **O site novo com o programa antigo não cria vídeo de IA**: a tela pergunta ao
+  programa se ele sabe e, se não souber, manda atualizar antes do clique.
+
+**Para o autor decidir:**
+- O movimento das cenas é o lento, de câmera (aproximar, afastar, deslizar), sobre
+  imagens paradas: vídeo gerado por IA de graça não existe hoje (ADR-013). Se ele
+  quiser animação de verdade, os caminhos são o Remotion (só no Docker) ou um
+  modelo aberto na placa, devagar — é uma escolha dele.
+- A cota do Cloudflare é dividida entre as imagens e a cascata de texto; o motor
+  reserva 2 mil neurons para o texto (`CLOUDFLARE_IMAGE_NEURONS_DAILY`, 8 mil). Se
+  ele não usar o Cloudflare para texto, dá para subir até 10 mil.
+
+**Onde a 7.7 está (29-set-2026).** O "pronto quando" roda nos testes: o job de
+criação de ponta a ponta com o ffmpeg de verdade (`tests/test_criar_video.py`) —
+roteiro, imagens com a referência só nas cenas do personagem, narração, legenda
+com o nome certo e montagem vertical no tempo da voz —, o estilo e o pedido pela
+API (`tests/test_criacao_no_motor.py`) e a receita criando sozinha, agendando e
+seguindo para a próxima ideia (`tests/test_receita_ia.py`). As telas foram
+conferidas com o motor de verdade, um banco de demonstração (o canal da Lulu com
+dois personagens, um vídeo pronto, um parado e a receita ligada; um canal com um
+personagem sem imagem) e um navegador, no computador e no celular. Na
+conferência saíram dois acertos: o vídeo que parou sumia da lista depois de um
+reinício (e a tela dizia "não existe mais", justo no que só precisava de
+"continuar"), e o quadro do topo da Automação dizia "receita desligada" com a
+receita de IA criando. Na revisão do código saiu um terceiro: o Início, com as
+duas receitas ligadas no mesmo canal, mostrava só uma. **O que falta ver no PC do autor**: um vídeo de verdade —
+as imagens do Cloudflare, a voz do Gemini e se o segundo vídeo sai com a mesma
+cara. O roteiro está no `COMO-EXECUTAR.md`, Passo 15.
+
 ### 7.8 — Vídeo longo
 
 A mesma máquina da 7.7, em episódios mais longos para o YouTube: uma novelinha de
@@ -738,7 +831,8 @@ tem pressa: "a gente vai fazendo aos poucos".
 | Prazo das auditorias? | Sem pressa; "quando eu quiser dividir o trabalho, a gente divide" |
 | Quando testar no PC dele? | **No final**, tudo junto: as etapas seguem sem esperar o teste de cada uma (26-set-2026, ao fechar a 7.3) |
 
-Quando a estrutura estiver de pé, o "canal como centro" vira o ADR-013.
+Quando a estrutura estiver de pé, o "canal como centro" vira o ADR-014 (o 013 foi
+para a pesquisa de mídia grátis da 7.7).
 
 ## Ordem e dependências
 
@@ -854,6 +948,13 @@ passo" — a 7.6, as séries em partes. O pedido dela é o da primeira mensagem
 ("pego uma live, colo, e ele divide em vários clipes de um minuto (...) parte 1,
 parte 2"), e o teste continua sendo o do final, pelo roteiro do
 `COMO-EXECUTAR.md`.
+
+**27-set-2026, ao fechar a 7.6:** "siga para o proximo passo" — a 7.7, o vídeo
+curto criado por IA, pelo pedido da primeira mensagem ("vai criar um roteiro
+(...) e vai literalmente criar o vídeo (...) uma historinha, uma novelinha de
+inteligência artificial, (...) um minuto de vídeo, e vai postar") e pela decisão
+de 26-set sobre o estilo salvo no canal. Depois vieram só pedidos de "continue":
+a etapa seguiu sem mudança de rumo, e o teste continua sendo o do final.
 
 ## Fontes
 

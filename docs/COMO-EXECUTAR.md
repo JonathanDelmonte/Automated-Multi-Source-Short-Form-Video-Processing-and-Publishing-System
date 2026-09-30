@@ -1522,6 +1522,84 @@ saiu, e a linha da série na Agenda se ela parou sem você entender por quê.
 
 ---
 
+## Passo 15 — Vídeo criado por IA: a historinha no estilo do canal
+
+O programa escreve o roteiro, desenha as cenas, grava a narração, põe a legenda e
+monta um vídeo vertical de 20 s a 1 min 30 s, **no estilo salvo no canal**. Nada é
+pago: tudo sai das cotas grátis de duas chaves que você já pode ter.
+
+**As chaves** (Configurações → Chaves de IA):
+- **Cloudflare** (o token com permissão *Workers AI* e o ID da conta): faz as
+  imagens. A cota grátis é de uns 8 vídeos de 8 cenas por dia; ela volta à
+  meia-noite UTC (21h em Brasília).
+- **Gemini**: faz a voz, numa chamada por vídeo. No plano grátis, o Google pode
+  usar o que você manda para treinar os modelos (a tela das chaves já avisa).
+
+**O estilo** fica no canal, na aba **Criar** (abaixo dos tipos de vídeo). Tudo é
+escolha sua, nada vem do nicho:
+- o formato (história, fatos curiosos, explicação, livre), para quem é, o tom e as
+  regras do canal ("toda história termina com uma lição sobre amizade");
+- a duração e quantas cenas (cada cena é uma imagem);
+- o visual: um dos atalhos (livro infantil, animação 3D, anime, aquarela,
+  quadrinhos, realista, pixel art) ou "descrevo eu", mais o que nunca aparece;
+- **os personagens** (até 4): nome, como ele é e **a imagem de referência**.
+  **gerar a imagem** faz uma (gasta uma imagem da cota); não gostou, **gerar
+  outra**; ou **enviar uma imagem** sua. É essa imagem que vai em toda cena em que
+  o personagem aparece — é o que faz a Lulu de hoje ser a mesma de amanhã. Sem
+  ela, o programa não cria;
+- a voz (30 vozes, com o jeito de cada uma), o jeito de falar ("conte como uma avó
+  carinhosa") e **ouvir** — a primeira amostra de cada voz gasta uma narração da
+  cota do dia; ouvir de novo não gasta;
+- a legenda (sete estilos, ou sem legenda).
+
+**Um vídeo**: Criar → **Vídeo criado por IA**, escolher o canal, escrever a ideia
+(ou não: sem ideia, o roteiro inventa uma e nunca repete um tema que o canal já
+fez) e **criar o vídeo**. Ele vira um projeto, com a barra dizendo o passo, e dali
+vai para a agenda como qualquer corte.
+
+**Se ele parar no meio** (a cota do dia acabou, o computador desligou), a tela do
+projeto mostra **continuar de onde parou**: o roteiro, as imagens e a narração
+que já saíram ficam guardados e não gastam a cota de novo.
+
+**O canal criando sozinho**: na aba **Automação** do canal, **a receita de IA**.
+Escreva as ideias, uma por linha (cada uma vira um vídeo, na ordem), um tema para
+quando elas acabarem, e quantos vídeos por dia. **ligar a receita de IA** só
+funciona com o estilo pronto. Ela faz um vídeo de cada vez, espera quando a agenda
+já tem posts para dois dias, e manda o vídeo pronto para a caixa de aprovação (se
+o canal revisa antes de postar) ou direto para a agenda.
+
+### Roteiro de teste (7.7)
+
+1. **O estilo.** Num canal (de preferência um novo, "Historinhas da Lulu"), aba
+   Criar: montar o estilo com um personagem (nome e uma descrição bem visual:
+   "coelhinha branca, orelhas compridas, laço vermelho na orelha esquerda"),
+   **salvar o estilo** e **gerar a imagem** dela. Gerar outra até gostar. Ouvir
+   duas ou três vozes e escolher uma.
+2. **O primeiro vídeo.** Criar → Vídeo criado por IA, o canal, uma ideia ("a Lulu
+   aprende a dividir a cenoura") e **criar o vídeo**. Esperar: o log diz cada
+   cena, a narração e a montagem. No fim, assistir: vertical, a voz escolhida, a
+   legenda com o nome da Lulu **escrito certo**, cada imagem trocando quando a fala
+   dela começa.
+3. **O segundo vídeo, com outra ideia** ("a Lulu tem medo do escuro"). A pergunta
+   do "pronto quando": **a Lulu é reconhecivelmente a mesma** nos dois vídeos, e o
+   visual é o mesmo? Mande os dois.
+4. **Trocar a legenda depois.** Na tela do projeto, a legenda do vídeo: trocar o
+   estilo. Ela troca, sem ficar uma legenda por cima da outra.
+5. **Parar no meio.** Durante um vídeo, fechar o programa (ou o Docker) e abrir de
+   novo: o projeto aparece com **continuar de onde parou**. Continuar e conferir no
+   log que as imagens prontas não foram feitas de novo.
+6. **A receita.** Na Automação, três ideias na lista, **ligar a receita de IA** e
+   **verificar agora**: ela cria o primeiro vídeo; quando ele termina, o vídeo vai
+   para a agenda do canal (ou para a caixa de aprovação), e a próxima volta cria o
+   segundo, com a segunda ideia.
+
+**O que me mandar de volta**: os dois vídeos do passo 3 (ou prints de uma cena de
+cada), a voz que você escolheu e se ela soou natural, e o log do projeto de
+qualquer vídeo que não saiu. Se a Lulu mudar de cara entre as cenas, a cena e o
+que ela fazia.
+
+---
+
 ## Armadilhas, todas vindas do código (ou do Windows)
 
 | Sintoma | Causa | Solução |

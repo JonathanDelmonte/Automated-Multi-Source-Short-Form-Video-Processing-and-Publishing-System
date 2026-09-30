@@ -160,6 +160,8 @@ export function AuthProvider({ children }) {
     // O programa sabe fazer série em partes (7.6). Um de antes ignoraria o
     // pedido e faria cortes comuns, em silêncio.
     seriesNoMotor: config.series === true,
+    // O motor sabe criar vídeo por IA (7.7): o de antes responde 404 no /api/criacoes.
+    criacaoNoMotor: config.criacao === true,
     configCarregada,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,

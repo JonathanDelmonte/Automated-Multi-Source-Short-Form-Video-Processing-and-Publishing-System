@@ -34,16 +34,20 @@ async function pedir(caminho, metodo = 'GET', corpo) {
   return { ok: true, data };
 }
 
-export const lerReceita = (canalId) => pedir(`/api/canais/${canalId}/receita`);
+// `tipo` e a receita: a de cortes (7.5) ou a de IA (7.7), uma de cada por canal.
+const daReceita = (canalId, tipo, resto = '') =>
+  `/api/canais/${canalId}/receita${resto}${tipo && tipo !== 'cortes' ? `?tipo=${tipo}` : ''}`;
 
-export const salvarReceita = (canalId, { spec, ativa, confirmarDireitos = false }) =>
-  pedir(`/api/canais/${canalId}/receita`, 'PUT', {
+export const lerReceita = (canalId, tipo = 'cortes') => pedir(daReceita(canalId, tipo));
+
+export const salvarReceita = (canalId, { spec, ativa, confirmarDireitos = false }, tipo = 'cortes') =>
+  pedir(daReceita(canalId, tipo), 'PUT', {
     spec, ativa, confirmar_direitos: confirmarDireitos,
   });
 
 export const buscarAgora = (canalId) => pedir(`/api/canais/${canalId}/receita/buscar`, 'POST');
 
-export const rodarAgora = (canalId) => pedir(`/api/canais/${canalId}/receita/rodar`, 'POST');
+export const rodarAgora = (canalId, tipo = 'cortes') => pedir(daReceita(canalId, tipo, '/rodar'), 'POST');
 
 export const listarCandidatos = (canalId) => pedir(`/api/canais/${canalId}/candidatos`);
 

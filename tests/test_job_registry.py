@@ -335,7 +335,7 @@ class TestParidadeComOApp:
     """Os dois lados da lista de estagios tem de se encontrar."""
 
     def test_todo_marcador_do_pipeline_tem_destino(self):
-        for nome, _rotulo in app_module.PIPELINE_STAGES:
+        for nome, _rotulo in app_module.PIPELINE_STAGES + app_module.CRIACAO_STAGES:
             assert nome in job_registry.ESTAGIO_DO_MARCADOR, (
                 f"o estagio {nome} nao tem traducao para db_models.STAGES -- "
                 "acrescente-o em job_registry.ESTAGIO_DO_MARCADOR")

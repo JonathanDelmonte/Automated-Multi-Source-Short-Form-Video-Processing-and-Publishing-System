@@ -983,8 +983,13 @@ funciona hoje.
 
 **Um achado que muda este documento também:** o Google mudou a cota de envio do
 YouTube. Hoje são 100 envios por dia numa cota só de envio, e não os 6 que a
-Fase 3 calculou (1.600 unidades contra 10.000). O código ainda segura em 6 — erra
-para o lado de segurar — e a correção está na 7.3.
+Fase 3 calculou (1.600 unidades contra 10.000). O código segurava em 6 — errava
+para o lado de segurar — e a 7.3a passou a contar os 100.
+
+**Onde a Fase 7 está (1-out-2026):** a 7.1 e as etapas 7.3 a 7.10 estão feitas,
+cada uma com o "onde está" no plano da plataforma. Falta a 7.2 (a qualidade dos
+cortes), que espera a lista do autor, e o teste no PC dele, que ele pediu para
+fazer no final, tudo junto (`COMO-EXECUTAR.md`, Passos 8 a 18).
 
 ---
 

@@ -28,8 +28,12 @@ import playlists_youtube
 import estilos
 import midia_ia
 import criacoes
+import adb_cliente
 import capitulos
 import compilacao
+import frota
+import frota_aparelho
+import frota_registro
 import plataformas
 import traducao
 import template as template_doc
@@ -2636,6 +2640,9 @@ async def get_config():
         # a compilacao dos cortes. Um motor anterior IGNORA o `formato` do
         # `/api/criacoes` e faria um video curto no lugar do episodio.
         "video_longo": True,
+        # Este motor tem a frota de aparelhos (7.9). Um motor anterior responde
+        # 404 no `/api/frota`, e a pagina diz para atualizar.
+        "frota": True,
     }
 
 
@@ -9915,6 +9922,308 @@ async def colar_token_de_medir(account_id: str, req: TokenIn, request: Request):
         return _erro_de_conexao("gravar", 500)
     print(f"🔗 instagram/{conta.handle} conectado para medir (token colado)", flush=True)
     return {"success": True, "conta": segredo.get("username")}
+
+
+# --- A frota de aparelhos (Fase 7, etapa 7.9, ADR-016) ---------------------------
+
+def _erro_da_frota(e: Exception) -> HTTPException:
+    if isinstance(e, frota.FrotaErro):
+        detalhe = str(e)
+        if getattr(e, "opcoes", None) is not None:
+            return HTTPException(status_code=e.status,
+                                 detail={"mensagem": detalhe, "opcoes": e.opcoes})
+        return HTTPException(status_code=e.status, detail=detalhe)
+    if isinstance(e, frota_aparelho.Ocupado):
+        return HTTPException(status_code=409, detail=str(e))
+    if isinstance(e, adb_cliente.AdbForaDoAr):
+        return HTTPException(status_code=503, detail=str(e))
+    if isinstance(e, adb_cliente.AdbErro):
+        return HTTPException(status_code=502, detail=f"o aparelho respondeu: {e}")
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=400, detail=str(e))
+    return _erro_da_fila(e)
+
+
+async def _frota_ligada() -> None:
+    try:
+        ligada = (await frota.configuracao())["ligada"]
+    except Exception as e:
+        raise _erro_da_fila(e)
+    if not ligada:
+        raise HTTPException(status_code=409, detail="a frota está desligada: ligue-a primeiro")
+
+
+async def _serial_do_aparelho(device_id: str) -> str:
+    try:
+        return (await frota.obter(device_id))["serial"]
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.get("/api/frota")
+async def ver_frota():
+    """A frota: se esta ligada, o servidor do adb, os aparelhos cadastrados e
+    os que o adb ve e ainda nao estao na frota."""
+    try:
+        config = await frota.configuracao()
+        aparelhos = await frota.listar()
+    except Exception as e:
+        raise _erro_da_frota(e)
+    adb = {"alcancado": False}
+    vistos = []
+    if config["ligada"]:
+        adb = await asyncio.to_thread(frota.situacao_do_adb)
+        if adb.get("alcancado"):
+            try:
+                cadastrados = {a["serial"] for a in aparelhos}
+                vistos = [v for v in await asyncio.to_thread(frota.vistos)
+                          if v["serial"] not in cadastrados]
+            except adb_cliente.AdbErro:
+                vistos = []
+        await asyncio.to_thread(frota.varrer_ensinos)
+    return {**config, "adb": adb, "aparelhos": aparelhos, "vistos": vistos,
+            "plataformas": list(plataformas.NO_APARELHO),
+            "limite": {"padrao": db_models.LIMITE_DIARIO_PADRAO,
+                       "maximo": db_models.LIMITE_DIARIO_MAXIMO}}
+
+
+@app.put("/api/frota")
+async def ligar_frota(request: Request):
+    """Liga ou desliga a frota. Ligar pede `entendi: true` -- a pessoa leu que
+    a publicacao automatizada pode custar a conta (ADR-016)."""
+    corpo = await _corpo_json(request)
+    try:
+        resultado = await frota.ligar(bool(corpo.get("ligada")), bool(corpo.get("entendi")))
+    except Exception as e:
+        raise _erro_da_frota(e)
+    print(f"📱 Frota {'ligada' if resultado['ligada'] else 'desligada'}")
+    return resultado
+
+
+@app.post("/api/aparelhos")
+async def criar_aparelho(request: Request):
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    try:
+        aparelho = await frota.criar(corpo)
+    except Exception as e:
+        raise _erro_da_frota(e)
+    print(f"📱 Aparelho na frota: {aparelho['nome']}")
+    return aparelho
+
+
+@app.post("/api/aparelhos/conectar")
+async def conectar_aparelho(request: Request):
+    """`adb connect`: um celular na rede de casa, ou em nuvem."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    try:
+        return await asyncio.to_thread(frota.conectar, str(corpo.get("endereco") or ""))
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.post("/api/aparelhos/parear")
+async def parear_aparelho(request: Request):
+    """O pareamento por codigo do Android 11+ ("Depuracao por Wi-Fi")."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    try:
+        return await asyncio.to_thread(frota.parear, str(corpo.get("endereco") or ""),
+                                       str(corpo.get("codigo") or ""))
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.get("/api/aparelhos/{device_id}")
+async def ver_aparelho(device_id: str, vivo: int = 1):
+    """O aparelho, com o estado ao vivo (bateria, tela, apps) e o que ele fez."""
+    try:
+        aparelho = await frota.obter(device_id)
+    except Exception as e:
+        raise _erro_da_frota(e)
+    if vivo:
+        aparelho["estado"] = await asyncio.to_thread(frota.estado, aparelho["serial"])
+    aparelho["execucoes"] = frota_registro.ultimas(device_id, 20)
+    return aparelho
+
+
+@app.patch("/api/aparelhos/{device_id}")
+async def editar_aparelho(device_id: str, request: Request):
+    corpo = await _corpo_json(request)
+    try:
+        return await frota.editar(device_id, corpo)
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.delete("/api/aparelhos/{device_id}")
+async def apagar_aparelho(device_id: str):
+    try:
+        if not await frota.apagar(device_id):
+            raise HTTPException(status_code=404, detail="aparelho não encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_frota(e)
+    return {"ok": True}
+
+
+@app.get("/api/aparelhos/{device_id}/tela")
+async def tela_do_aparelho(device_id: str):
+    serial = await _serial_do_aparelho(device_id)
+    try:
+        return await asyncio.to_thread(frota.tela, serial)
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.post("/api/aparelhos/{device_id}/toque")
+async def tocar_no_aparelho(device_id: str, request: Request):
+    """O controle remoto: um toque na imagem da tela vira um toque no aparelho."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    serial = await _serial_do_aparelho(device_id)
+    try:
+        return await asyncio.to_thread(frota.tocar, serial, float(corpo.get("x", -1)),
+                                       float(corpo.get("y", -1)))
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.post("/api/aparelhos/{device_id}/tecla")
+async def tecla_no_aparelho(device_id: str, request: Request):
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    serial = await _serial_do_aparelho(device_id)
+    try:
+        return await asyncio.to_thread(frota.tecla, serial, str(corpo.get("tecla") or ""))
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.put("/api/aparelhos/{device_id}/contas")
+async def ligar_conta_no_aparelho(device_id: str, request: Request):
+    """Poe uma conta no aparelho, ou muda o modo e o limite. O automatico pede
+    `consentimento: true` e um roteiro ensinado e ensaiado neste aparelho."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    try:
+        aparelho = await frota.ligar_conta(device_id, corpo)
+    except Exception as e:
+        raise _erro_da_frota(e)
+    conta = next((c for c in aparelho["contas"] if c["account_id"] == corpo.get("account_id")), {})
+    print(f"📱 {aparelho['nome']}: @{conta.get('handle')} no modo {conta.get('modo')}, "
+          f"limite {conta.get('limite')}/dia")
+    return aparelho
+
+
+@app.delete("/api/aparelhos/{device_id}/contas/{account_id}")
+async def soltar_conta_do_aparelho(device_id: str, account_id: str):
+    try:
+        if not await frota.soltar_conta(device_id, account_id):
+            raise HTTPException(status_code=404, detail="a conta não estava neste aparelho")
+        return await frota.obter(device_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.get("/api/aparelhos/{device_id}/execucoes/{execucao}")
+async def fotos_da_execucao(device_id: str, execucao: str):
+    """As telas de uma entrega, ensaio ou post: a resposta para "por que nao
+    saiu?". O aparelho e conferido no banco antes de abrir a pasta dele."""
+    await _serial_do_aparelho(device_id)
+    try:
+        return {"fotos": frota_registro.fotos(device_id, execucao)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/aparelhos/{device_id}/ensino")
+async def comecar_ensino(device_id: str, request: Request):
+    """Comeca a ensinar o app de uma plataforma: o video de teste vai para o
+    app, e a tela aparece no painel com o que da para tocar."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    serial = await _serial_do_aparelho(device_id)
+    try:
+        return await asyncio.to_thread(frota.iniciar_ensino, device_id, serial,
+                                       str(corpo.get("plataforma") or ""),
+                                       corpo.get("componente") or None)
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.get("/api/aparelhos/{device_id}/ensino")
+async def ver_ensino(device_id: str):
+    await _serial_do_aparelho(device_id)
+    try:
+        return await asyncio.to_thread(frota.estado_do_ensino, device_id)
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.post("/api/aparelhos/{device_id}/ensino/{acao}")
+async def acao_no_ensino(device_id: str, acao: str, request: Request):
+    """`tocar` e `publicar` levam `{x, y}` (fracao da imagem); `tecla` leva
+    `{tecla}`; `desfazer` e `salvar` nao levam nada. Salvar grava o roteiro e
+    encerra o ensino; o ensaio vem depois."""
+    await _serial_do_aparelho(device_id)
+    corpo = await _corpo_json(request)
+    try:
+        if acao == "tocar":
+            return await asyncio.to_thread(frota.ensino_tocar, device_id,
+                                           float(corpo.get("x", -1)), float(corpo.get("y", -1)))
+        if acao == "publicar":
+            return await asyncio.to_thread(frota.ensino_publicar, device_id,
+                                           float(corpo.get("x", -1)), float(corpo.get("y", -1)))
+        if acao == "desfazer":
+            return await asyncio.to_thread(frota.ensino_desfazer, device_id)
+        if acao == "tecla":
+            return await asyncio.to_thread(frota.ensino_tecla, device_id,
+                                           str(corpo.get("tecla") or ""))
+        if acao == "salvar":
+            roteiro = await asyncio.to_thread(frota.roteiro_do_ensino, device_id)
+            aparelho = await frota.salvar_roteiro(device_id, roteiro)
+            await asyncio.to_thread(frota.encerrar_ensino, device_id)
+            print(f"📱 {aparelho['nome']}: roteiro do {plataformas.nome(roteiro['plataforma'])} "
+                  f"ensinado ({len(roteiro['passos'])} passos)")
+            return aparelho
+    except Exception as e:
+        raise _erro_da_frota(e)
+    raise HTTPException(status_code=404, detail="ação desconhecida")
+
+
+@app.delete("/api/aparelhos/{device_id}/ensino")
+async def cancelar_ensino(device_id: str):
+    await _serial_do_aparelho(device_id)
+    return {"ok": await asyncio.to_thread(frota.encerrar_ensino, device_id)}
+
+
+@app.post("/api/aparelhos/{device_id}/ensaio")
+async def ensaiar_no_aparelho(device_id: str, request: Request):
+    """Refaz o roteiro ensinado com o video de teste, parando antes de
+    publicar. O resultado aparece no aparelho (`ensaio`)."""
+    await _frota_ligada()
+    corpo = await _corpo_json(request)
+    try:
+        return await frota.ensaiar(device_id, str(corpo.get("plataforma") or ""))
+    except Exception as e:
+        raise _erro_da_frota(e)
+
+
+@app.delete("/api/aparelhos/{device_id}/roteiros/{plataforma}")
+async def apagar_roteiro(device_id: str, plataforma: str):
+    try:
+        if not await frota.apagar_roteiro(device_id, plataforma):
+            raise HTTPException(status_code=404, detail="não há roteiro deste app")
+        return await frota.obter(device_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _erro_da_frota(e)
 
 
 @app.get("/api/publicacoes")

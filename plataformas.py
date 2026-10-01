@@ -51,27 +51,42 @@ class Plataforma:
     video_longo: bool = False
     #: Tem coleta de metricas (7.4).
     medida: bool = False
+    #: Os pacotes do app no Android, o principal primeiro (a frota, 7.9). O
+    #: TikTok tem dois: o `trill` e o mesmo app, distribuido em parte da Asia.
+    apps: tuple = ()
+    #: Qual tela do app recebe o video, quando ele tem mais de uma no
+    #: "compartilhar" (o Instagram tem Reels, Stories e o Direct). Expressao
+    #: sobre o nome da tela, que e perguntado ao aparelho (`frota_aparelho`).
+    tela_preferida: str = ""
+    #: As telas que nunca servem para postar o corte (Stories, mensagens).
+    telas_evitadas: str = ""
 
 
 #: Na ordem da tela: as tres de sempre, e as chinesas na ordem do plano.
 TODAS = (
-    Plataforma("youtube", "YouTube", video_longo=True, medida=True),
-    Plataforma("tiktok", "TikTok", medida=True),
+    Plataforma("youtube", "YouTube", video_longo=True, medida=True,
+               apps=("com.google.android.youtube",), tela_preferida="short|upload"),
+    Plataforma("tiktok", "TikTok", medida=True,
+               apps=("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")),
     # O Instagram limita a 5 hashtags por post desde dez-2025 (eram 30), e a
     # legenda a 2.200 caracteres (7.3d).
-    Plataforma("instagram", "Instagram", texto_max=2200, hashtags_max=5, medida=True),
+    Plataforma("instagram", "Instagram", texto_max=2200, hashtags_max=5, medida=True,
+               apps=("com.instagram.android",), tela_preferida="clips|reel",
+               telas_evitadas="story|stories|direct|chat|message"),
     # Os limites das chinesas sao os das paginas de ajuda e dos guias de quem
     # posta la, em set-2026 (ADR-015). O que nao tem numero publicado fica sem
     # limite: cortar por palpite e pior que deixar o app avisar.
-    Plataforma("douyin", "Douyin", idioma="zh-CN", titulo_max=30, texto_max=1000),
-    Plataforma("kuaishou", "Kuaishou", idioma="zh-CN"),
+    Plataforma("douyin", "Douyin", idioma="zh-CN", titulo_max=30, texto_max=1000,
+               apps=("com.ss.android.ugc.aweme",)),
+    Plataforma("kuaishou", "Kuaishou", idioma="zh-CN", apps=("com.smile.gifmaker",)),
     # O Bilibili e o do video longo na China, e deitado: e para la que ele vai
     # alem do YouTube. O 简介 (a descricao) tem 250 caracteres na maioria das
     # categorias; as tags, ate 10, vao no campo 标签.
     Plataforma("bilibili", "Bilibili", idioma="zh-CN", titulo_max=80, texto_max=250,
-               tags_no_campo=True, tags_max=10, tag_max=20, video_longo=True),
+               tags_no_campo=True, tags_max=10, tag_max=20, video_longo=True,
+               apps=("tv.danmaku.bili",)),
     Plataforma("xiaohongshu", "Xiaohongshu", idioma="zh-CN", titulo_max=20,
-               texto_max=1000),
+               texto_max=1000, apps=("com.xingin.xhs",)),
 )
 
 IDS = tuple(p.id for p in TODAS)
@@ -84,6 +99,8 @@ MEDIDAS = tuple(p.id for p in TODAS if p.medida)
 VIDEO_LONGO = tuple(p.id for p in TODAS if p.video_longo)
 #: As que recebem o texto do post em outro idioma.
 TRADUZIDAS = tuple(p.id for p in TODAS if p.idioma)
+#: As que tem app conhecido no Android: as que a frota sabe abrir (7.9).
+NO_APARELHO = tuple(p.id for p in TODAS if p.apps)
 
 
 def de(plataforma: str) -> Optional[Plataforma]:

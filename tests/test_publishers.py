@@ -422,3 +422,84 @@ class TestContratoSemDependenciaPesada:
                 for nome in nomes:
                     assert nome not in proibidos, \
                         f"{arquivo.name} importa {nome} no topo"
+
+
+# --------------------------------------------------------------------------- #
+# A porta do consentimento (etapa 7.9, ADR-016)
+# --------------------------------------------------------------------------- #
+
+class TestConsentimento:
+    """O plano previa a frota "com a mesma trava: risco acima de zero, entao
+    nunca entra na cascata automatica sem a conta ter pedido". O pedido e o
+    `Account.consentimentos`, e so vale para driver que declara aceita-lo."""
+
+    def _arriscado(self, aceita):
+        class Arriscado(Publisher):
+            id = "arriscado"
+            platforms = ("youtube",)
+            aceita_consentimento = aceita
+
+            def disponivel(self, account):
+                return True
+
+            def cost(self, n):
+                return Cost(risk_score=0.5)
+        return Arriscado
+
+    def test_sem_consentimento_fica_fora(self, monkeypatch):
+        monkeypatch.setattr(publishers, "REGISTRY",
+                            (self._arriscado(True),) + publishers.REGISTRY)
+        assert publishers.resolve("youtube", conta()).id == "manual"
+
+    def test_com_consentimento_entra(self, monkeypatch):
+        monkeypatch.setattr(publishers, "REGISTRY",
+                            (self._arriscado(True),) + publishers.REGISTRY)
+        pedida = conta(consentimentos=frozenset({"arriscado"}))
+        assert publishers.resolve("youtube", pedida).id == "arriscado"
+
+    def test_driver_que_nao_aceita_consentimento_nao_entra_nem_com_ele(self, monkeypatch):
+        monkeypatch.setattr(publishers, "REGISTRY",
+                            (self._arriscado(False),) + publishers.REGISTRY)
+        pedida = conta(consentimentos=frozenset({"arriscado"}))
+        assert publishers.resolve("youtube", pedida).id == "manual"
+
+    def test_o_browser_nao_aceita_consentimento(self, monkeypatch):
+        """Nem o ambiente ligado, nem a preferencia, nem um consentimento."""
+        monkeypatch.setenv("PUBLISHER_BROWSER", "1")
+        pedida = conta(driver_pref="browser", consentimentos=frozenset({"browser"}))
+        assert publishers.resolve("youtube", pedida).id != "browser"
+        assert not getattr(publishers.driver_por_id("browser"), "aceita_consentimento", False)
+
+    def test_preferir_o_automatico_nao_o_torna_elegivel(self):
+        aparelho = publishers.AparelhoDaConta(
+            device_id="d", serial="S", nome="Cel", modo="automatico", limite=3,
+            hoje="2026-10-01", frota_ligada=True,
+            roteiro={"passos": [{"tipo": "publicar"}], "componente": "x/y", "ensaio_ok": True})
+        sem_consentimento = conta(platform="instagram", driver_pref="aparelho-auto",
+                                  aparelho=aparelho)
+        assert publishers.resolve("instagram", sem_consentimento).id == "aparelho"
+        com = conta(platform="instagram", aparelho=aparelho,
+                    consentimentos=frozenset({"aparelho-auto"}))
+        assert publishers.resolve("instagram", com).id == "aparelho-auto"
+
+    def test_o_automatico_declara_risco_e_a_entrega_nao(self):
+        from publishers.aparelho import AparelhoAutoPublisher, AparelhoPublisher
+        assert AparelhoAutoPublisher().cost(1).risk_score > publishers.RISCO_MAXIMO_AUTOMATICO
+        assert AparelhoPublisher().cost(1).risk_score == 0.0
+        assert not publishers.entra_na_cascata(AparelhoAutoPublisher())
+
+    def test_frota_desligada_ou_sem_aparelho_nao_muda_nada(self):
+        desligada = publishers.AparelhoDaConta(device_id="d", serial="S", nome="Cel",
+                                               hoje="2026-10-01", frota_ligada=False)
+        assert publishers.resolve("instagram", conta(platform="instagram")).id == "manual"
+        assert publishers.resolve("instagram", conta(platform="instagram",
+                                                     aparelho=desligada)).id == "manual"
+
+    def test_ensaio_que_nao_passou_volta_a_entrega(self):
+        aparelho = publishers.AparelhoDaConta(
+            device_id="d", serial="S", nome="Cel", modo="automatico", limite=3,
+            hoje="2026-10-01", frota_ligada=True,
+            roteiro={"passos": [{"tipo": "publicar"}], "componente": "x/y", "ensaio_ok": False})
+        com = conta(platform="instagram", aparelho=aparelho,
+                    consentimentos=frozenset({"aparelho-auto"}))
+        assert publishers.resolve("instagram", com).id == "aparelho"

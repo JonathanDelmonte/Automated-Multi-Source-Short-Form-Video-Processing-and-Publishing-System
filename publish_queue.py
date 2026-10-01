@@ -50,11 +50,37 @@ class FilaError(RuntimeError):
 # Contas
 # --------------------------------------------------------------------------- #
 
-def conta_para_driver(linha) -> publishers.Account:
-    """A linha de `accounts` na forma que os drivers leem."""
+def conta_para_driver(linha, aparelho=None) -> publishers.Account:
+    """A linha de `accounts` na forma que os drivers leem.
+
+    `aparelho` e o da frota, quando a conta mora num (7.9). O consentimento
+    para o driver arriscado sai DAQUI, e so daqui: modo automatico no banco
+    exige a hora do consentimento (o CHECK de `device_accounts`), entao modo
+    automatico e consentimento sao a mesma coisa (ADR-016)."""
+    consentimentos = (frozenset({"aparelho-auto"})
+                      if aparelho is not None and aparelho.modo == "automatico"
+                      else frozenset())
     return publishers.Account(
         id=linha.id, platform=linha.platform, handle=linha.handle,
-        credentials_ref=linha.credentials_ref, driver_pref=linha.driver_pref)
+        credentials_ref=linha.credentials_ref, driver_pref=linha.driver_pref,
+        aparelho=aparelho, consentimentos=consentimentos)
+
+
+async def _aparelhos(t) -> dict:
+    """Os aparelhos da frota de cada conta. Falha aberto: com a frota ilegivel,
+    a conta segue pelo caminho de antes -- a fila manual e o piso."""
+    try:
+        import frota
+        return await frota.aparelhos_das_contas(t)
+    except Exception as e:
+        print(f"⚠️  Frota ilegivel ({e}); as contas seguem sem os aparelhos.")
+        return {}
+
+
+async def _conta_do_driver(account_row) -> publishers.Account:
+    async with db.tenant() as t:
+        aparelho = (await _aparelhos(t)).get(account_row.id)
+    return conta_para_driver(account_row, aparelho)
 
 
 def _conexao(linha) -> dict:
@@ -95,8 +121,8 @@ def _conexao(linha) -> dict:
             "tipos": tipos}
 
 
-def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
-    conta = conta_para_driver(linha)
+def _conta_json(linha, canal_id: Optional[str] = None, aparelho=None) -> dict:
+    conta = conta_para_driver(linha, aparelho)
     return {
         "id": linha.id,
         "platform": linha.platform,
@@ -109,6 +135,10 @@ def _conta_json(linha, canal_id: Optional[str] = None) -> dict:
         # O canal a que a conta pertence (Fase 7), ou None se esta solta.
         "channel_id": canal_id,
         "conexao": _conexao(linha),
+        # O aparelho da frota em que ela mora (7.9), ou None.
+        "aparelho": ({"device_id": aparelho.device_id, "nome": aparelho.nome,
+                      "modo": aparelho.modo, "limite": aparelho.limite}
+                     if aparelho is not None else None),
     }
 
 
@@ -120,8 +150,9 @@ async def listar_contas() -> list:
         linhas = await t.all(db_models.Account)
         canal_de = {l.account_id: l.channel_id
                     for l in await t.all(db_models.ChannelAccount)}
+        aparelho_de = await _aparelhos(t)
     linhas = sorted(linhas, key=lambda l: (plataformas.ordem(l.platform), l.handle.lower()))
-    return [_conta_json(l, canal_de.get(l.id)) for l in linhas]
+    return [_conta_json(l, canal_de.get(l.id), aparelho_de.get(l.id)) for l in linhas]
 
 
 #: As plataformas de uma conta: as de `plataformas.py`, que o CHECK do banco
@@ -239,7 +270,7 @@ async def publicar(clip_row, account_row, caminho_do_arquivo: str,
     (ADR-010). O chamador nao escolhe.
     """
     opts = opts or publishers.PublishOptions()
-    conta = conta_para_driver(account_row)
+    conta = await _conta_do_driver(account_row)
     driver = publishers.resolve(account_row.platform, conta)
 
     async with db.tenant() as t:
@@ -329,7 +360,7 @@ async def agendar(clip_row, account_row, quando) -> dict:
         outra = await _repetido_na_plataforma(t, clip_row, account_row)
         if outra:
             raise _recusa_de_repetido(outra)
-        conta = conta_para_driver(account_row)
+        conta = conta_para_driver(account_row, (await _aparelhos(t)).get(account_row.id))
         driver = publishers.resolve(account_row.platform, conta)
         linha = t.add(db_models.Publication(
             clip_id=clip_row.id, account_id=account_row.id,
@@ -461,7 +492,7 @@ async def publicar_reservada(pub_id: str, clip_row, account_row,
     `agendar()`, dias antes. O que resta e chamar o driver e fechar a linha.
     """
     opts = opts or publishers.PublishOptions()
-    conta = conta_para_driver(account_row)
+    conta = await _conta_do_driver(account_row)
     driver = publishers.resolve(account_row.platform, conta)
     clip = publishers.RenderedClip(
         path=caminho_do_arquivo, job_id=clip_row.job_id,
@@ -480,7 +511,7 @@ async def publicar_reservada(pub_id: str, clip_row, account_row,
     finally:
         EM_VOO.discard(pub_id)
     await _fechar(pub_id, status=resultado.status,
-                  remote_id=resultado.remote_id, url=resultado.url)
+                  remote_id=resultado.remote_id, url=resultado.url, driver=driver.id)
     return {"id": pub_id, "driver": driver.id, "status": resultado.status,
             "ok": resultado.ok, "url": resultado.url, "detail": resultado.detail}
 
@@ -502,12 +533,17 @@ async def _registrar_post(t, pub_id: str, url: Optional[str] = None) -> None:
 
 async def _fechar(pub_id: str, status: str,
                   remote_id: Optional[str] = None,
-                  url: Optional[str] = None) -> None:
+                  url: Optional[str] = None,
+                  driver: Optional[str] = None) -> None:
     async with db.tenant() as t:
         linha = await t.get(db_models.Publication, pub_id)
         if linha is None:
             return
         linha.status = status if status in db_models.PUB_STATUSES else "failed"
+        # O driver que DE FATO publicou: o agendado e escolhido no dia de
+        # agendar, e a conta pode ter ido para um aparelho da frota depois.
+        if driver in db_models.DRIVERS:
+            linha.driver = driver
         if remote_id:
             linha.remote_id = remote_id
         if linha.status == "scheduled":
@@ -1008,6 +1044,14 @@ async def listar(status: Optional[str] = None) -> list:
         series_por_id = {s.id: s for s in await t.all(db_models.Series)}
         playlist_de = {(pl.series_id, pl.account_id): pl.playlist_id
                        for pl in await t.all(db_models.SeriesPlaylist)}
+        # O que o aparelho fez com cada corte (7.9): so se ha publicacao dele.
+        da_frota = any(l.driver in ("aparelho", "aparelho-auto") for l in linhas)
+        aparelho_da_conta = ({l.account_id: l.device_id
+                              for l in await t.all(db_models.DeviceAccount)}
+                             if da_frota else {})
+        nome_do_aparelho = ({d.id: d.name for d in await t.all(db_models.Device)}
+                            if da_frota else {})
+    execucoes = _execucoes_da_frota(set(aparelho_da_conta.values()))
 
     saida = []
     for linha in linhas:
@@ -1049,6 +1093,8 @@ async def listar(status: Optional[str] = None) -> list:
             },
             "serie": _serie_da_publicacao(parte_de.get(linha.clip_id), series_por_id,
                                           playlist_de, linha.account_id),
+            "aparelho": _o_que_o_aparelho_fez(linha, conta, aparelho_da_conta,
+                                              nome_do_aparelho, execucoes),
         })
     # A parte parada porque uma anterior, na mesma conta, falhou ou ficou
     # presa subindo (7.6): a fila diz qual, para a pessoa tentar de novo ou
@@ -1061,6 +1107,38 @@ async def listar(status: Optional[str] = None) -> list:
         p["parada"] = paradas.get(p["id"])
     saida.sort(key=lambda p: p.get("created_at") or "", reverse=True)
     return saida
+
+
+def _execucoes_da_frota(aparelhos: set) -> dict:
+    """{(aparelho, corte, @conta): a execucao mais recente}, do historico em
+    disco de cada aparelho (`frota_registro`)."""
+    if not aparelhos:
+        return {}
+    import frota_registro
+    saida = {}
+    for device_id in aparelhos:
+        try:
+            ultimas = frota_registro.ultimas(device_id, frota_registro.MAXIMO)
+        except ValueError:
+            continue
+        for e in ultimas:  # da mais nova para a mais velha: a primeira vence
+            saida.setdefault((device_id, e.get("corte"), e.get("conta")), e)
+    return saida
+
+
+def _o_que_o_aparelho_fez(linha, conta, aparelho_da_conta: dict, nome_do_aparelho: dict,
+                          execucoes: dict) -> Optional[dict]:
+    """O que a fila mostra de uma publicacao que passou por um aparelho: em
+    qual, e o que aconteceu la (entregue, publicado, parou e por que)."""
+    if linha.driver not in ("aparelho", "aparelho-auto") or conta is None:
+        return None
+    device_id = aparelho_da_conta.get(linha.account_id)
+    if device_id is None:
+        return None
+    e = execucoes.get((device_id, linha.clip_id, conta.handle)) or {}
+    return {"device_id": device_id, "nome": nome_do_aparelho.get(device_id),
+            "situacao": e.get("situacao"), "detalhe": e.get("detalhe"),
+            "execucao": e.get("id"), "quando": e.get("fim")}
 
 
 def _serie_da_publicacao(parte, series_por_id: dict, playlist_de: dict,

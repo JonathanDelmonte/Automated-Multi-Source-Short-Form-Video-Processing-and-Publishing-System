@@ -30,6 +30,13 @@ impede um clique errado no painel de virar uma conta banida. O padrao e `auto`
 -- nenhuma preferencia, vale a ordem do registro. Ver a nota em
 `db_models.DRIVER_PREFS` para o motivo de `auto` existir: o default anterior
 (`manual`) transformava toda conta numa decisao que ninguem tomou.
+
+**A porta do consentimento (etapa 7.9, ADR-016).** O plano previa a frota "com
+a mesma trava: risco acima de zero, entao nunca entra na cascata automatica sem
+a conta ter pedido". O pedido e o `Account.consentimentos`, que so o banco
+preenche (`device_accounts.consent_at`, com um CHECK); e so vale para driver
+que declara `aceita_consentimento` -- o `browser` nao declara. O teto continua
+zero para todo o resto, e a preferencia continua sem ampliar nada.
 """
 from __future__ import annotations
 
@@ -42,9 +49,10 @@ from typing import Optional
 # de la deixa o atributo posto para todo mundo.
 from . import pacote, quota
 from .aggregator import AggregatorPublisher
-from .base import (CAPABILITIES, DRIVER_IDS, Account, Cost, DriverDesligado,
-                   PostMeta, PublishOptions, PublishResult, Publisher,
-                   PublisherError, QuotaEsgotada, RenderedClip)
+from .base import (CAPABILITIES, DRIVER_IDS, Account, AparelhoDaConta, Cost,
+                   DriverDesligado, PostMeta, PublishOptions, PublishResult,
+                   Publisher, PublisherError, QuotaEsgotada, RenderedClip)
+from .aparelho import AparelhoAutoPublisher, AparelhoPublisher
 from .browser import BrowserPublisher
 from .manual import ManualPublisher
 from .tiktok_api import TikTokApiPublisher
@@ -61,6 +69,12 @@ RISCO_MAXIMO_AUTOMATICO = 0.0
 # O `manual` e o piso e termina a busca; o `browser` fica depois dele de
 # proposito, para que nem um erro no teto de risco o torne alcancavel.
 REGISTRY: tuple[type[Publisher], ...] = (
+    # A frota (7.9) vem antes das APIs: ligar uma conta a um aparelho e dizer
+    # "esta conta posta por aqui" -- e, antes das auditorias, a API do YouTube
+    # so sobe privado e a do TikTok so `SELF_ONLY`. Conta sem aparelho nao muda
+    # nada: os dois respondem `disponivel()` falso para ela.
+    AparelhoAutoPublisher,
+    AparelhoPublisher,
     YouTubeApiPublisher,
     # O TikTok pela API oficial (etapa 7.3): risco zero como o do YouTube, e
     # antes do agregador e do piso pela mesma razao.
@@ -71,10 +85,10 @@ REGISTRY: tuple[type[Publisher], ...] = (
 )
 
 __all__ = [
-    "Account", "CAPABILITIES", "Cost", "DRIVER_IDS", "DriverDesligado",
+    "Account", "AparelhoDaConta", "CAPABILITIES", "Cost", "DRIVER_IDS", "DriverDesligado",
     "PostMeta", "PublishOptions", "PublishResult", "Publisher",
     "PublisherError", "QuotaEsgotada", "REGISTRY", "RenderedClip",
-    "RISCO_MAXIMO_AUTOMATICO", "capabilities_de", "driver_por_id",
+    "RISCO_MAXIMO_AUTOMATICO", "capabilities_de", "consentiu", "driver_por_id",
     "driver_ids", "entra_na_cascata", "pacote", "quota", "resolve",
 ]
 
@@ -90,6 +104,15 @@ def driver_ids() -> tuple[str, ...]:
 def entra_na_cascata(driver: Publisher) -> bool:
     """Se este driver pode ser escolhido sem intervencao humana."""
     return driver.cost(1).risk_score <= RISCO_MAXIMO_AUTOMATICO
+
+
+def consentiu(account: Account, driver: Publisher) -> bool:
+    """A conta pediu ESTE driver arriscado, e ele aceita ser pedido (ADR-016).
+    Os dois lados precisam ceder: o consentimento vem do banco, e o atributo e
+    do proprio driver -- o `browser` nao o declara, e nenhum consentimento o
+    alcanca."""
+    return (bool(getattr(driver, "aceita_consentimento", False))
+            and driver.id in (account.consentimentos or frozenset()))
 
 
 def driver_por_id(driver_id: str) -> Publisher:
@@ -115,7 +138,7 @@ def resolve(platform: str, account: Account) -> Publisher:
     elegiveis = []
     for cls in REGISTRY:
         driver = cls()
-        if not entra_na_cascata(driver):
+        if not entra_na_cascata(driver) and not consentiu(account, driver):
             continue
         if platform not in driver.platforms:
             continue

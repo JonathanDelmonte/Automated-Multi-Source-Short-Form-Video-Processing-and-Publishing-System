@@ -1,45 +1,107 @@
-import React from 'react';
-import { ShieldAlert, Smartphone } from 'lucide-react';
-import IconePlataforma from '../components/ui/IconePlataforma';
-import Pagina, { CabecalhoDaPagina, EmBreve, Secao } from '../components/ui/Pagina';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Loader2, Power, Smartphone } from 'lucide-react';
+import Pagina, { CabecalhoDaPagina } from '../components/ui/Pagina';
+import AdicionarAparelho from '../components/frota/AdicionarAparelho';
+import AjudaDoAdb from '../components/frota/AjudaDoAdb';
+import CartaoDoAparelho from '../components/frota/CartaoDoAparelho';
+import DetalheDoAparelho from '../components/frota/DetalheDoAparelho';
+import LigarFrota from '../components/frota/LigarFrota';
+import LimitesDaFrota from '../components/frota/LimitesDaFrota';
+import { lerFrota, ligarFrota } from '../lib/frotaNoMotor';
 
-// Frota de aparelhos (etapa 7.9, "phone farm"): celulares ligados ao
-// computador, cada um com as contas de um canal, postando pelo próprio
-// aplicativo. É onde o Instagram mais vai ser usado (o autor, 26-set-2026).
-// Os limites abaixo são do plano, e ficam escritos na tela desde já.
-export default function Frota() {
+// A frota de aparelhos (etapa 7.9, ADR-016): celulares ligados a este
+// computador, pelo cabo, pela rede de casa ou em nuvem, cada um com as contas
+// que moram nele. O padrão é entregar -- o vídeo abre no app e a pessoa toca em
+// publicar --, e o motor só toca no botão numa conta que consentiu, depois de
+// a pessoa ensinar o caminho e um ensaio passar. O Instagram é o que mais vai
+// sair por aqui (o autor, 26-set-2026).
+
+const RECARGA_MS = 10_000;
+
+export default function Frota({ aparelho }) {
+  const [frota, setFrota] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [desligando, setDesligando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    const r = await lerFrota();
+    if (!r.ok) return setErro(r);
+    setErro(null);
+    return setFrota(r.data);
+  }, []);
+
+  useEffect(() => {
+    carregar();
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') carregar();
+    }, RECARGA_MS);
+    return () => clearInterval(id);
+  }, [carregar]);
+
+  if (aparelho) return <DetalheDoAparelho key={aparelho} id={aparelho} frota={frota} aoMudar={carregar} />;
+
+  const ligar = async () => {
+    const r = await ligarFrota(true, true);
+    if (r.ok) await carregar();
+    return r;
+  };
+
+  const desligar = async () => {
+    if (!window.confirm('Desligar a frota? Os aparelhos e as contas ficam guardados, mas nada sai por eles até ligar de novo.')) return;
+    setDesligando(true);
+    await ligarFrota(false);
+    setDesligando(false);
+    carregar();
+  };
+
+  const ligada = frota?.ligada;
+  const online = (frota?.aparelhos || []).length;
+
   return (
-    <Pagina largura="media">
+    <Pagina largura="larga">
       <CabecalhoDaPagina
         rotulo="frota"
         titulo="Frota de aparelhos"
-        descricao="Celulares, físicos ou em nuvem, cada um postando pelos aplicativos das contas de um canal."
+        descricao="Celulares, físicos ou em nuvem, cada um postando pelos aplicativos das contas que moram nele."
+        acoes={ligada ? (
+          <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={desligar} disabled={desligando}>
+            {desligando ? <Loader2 size={13} className="animate-spin" /> : <Power size={13} />} desligar a frota
+          </button>
+        ) : null}
       />
-      <EmBreve
-        etapa="7.9"
-        titulo="O que a frota vai fazer"
-        itens={[
-          'Os aparelhos, físicos ou em nuvem, e o estado de cada um.',
-          'As contas de cada aparelho e o que ele posta, com limite por conta.',
-          'Postar pelo aplicativo na hora da agenda, só nas contas que pedirem: a frota nunca entra sozinha na publicação automática.',
-        ]}
-      >
-        <p className="flex items-center gap-2">
-          <Smartphone size={15} className="shrink-0" />
-          O Instagram é o que mais vai sair por aqui
-          <IconePlataforma platform="instagram" size={15} />
-        </p>
-      </EmBreve>
-      <Secao titulo="os limites, desde já" icone={ShieldAlert}>
-        <p className="text-muted text-[13px] leading-snug">
-          As plataformas proíbem conta falsa e publicação automatizada em massa, e quem paga é a conta.
-        </p>
-        <ul className="space-y-1.5 text-sm text-ink2">
-          <li>Liga só quem quiser, e cada aparelho fica separado dos outros.</li>
-          <li>Cada conta tem limite de posts.</li>
-          <li>Não entra ferramenta para enganar as plataformas: criar contas em massa, disfarçar aparelho ou rede.</li>
-        </ul>
-      </Secao>
+
+      {erro && (
+        <section className="card p-5 text-sm text-ink2" role="alert">
+          {erro.motorAntigo
+            ? 'O programa deste computador é de antes da frota. Atualize-o pelo aviso no topo da página.'
+            : erro.erro}
+        </section>
+      )}
+
+      {!frota && !erro && (
+        <div className="grid place-items-center py-16 text-muted"><Loader2 size={18} className="animate-spin" /></div>
+      )}
+
+      {frota && !ligada && <LigarFrota aoLigar={ligar} />}
+
+      {frota && ligada && (
+        <>
+          <AjudaDoAdb adb={frota.adb} />
+          <section className="space-y-3">
+            <p className="eyebrow flex items-center gap-1.5">
+              <Smartphone size={12} /> {online ? `${online} ${online === 1 ? 'aparelho' : 'aparelhos'} na frota` : 'nenhum aparelho ainda'}
+            </p>
+            {online > 0 && (
+              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))]" data-grade-da-frota>
+                {frota.aparelhos.map((a) => <CartaoDoAparelho key={a.id} aparelho={a} />)}
+              </div>
+            )}
+          </section>
+          {frota.adb?.alcancado && <AdicionarAparelho vistos={frota.vistos || []} aoMudar={carregar} />}
+        </>
+      )}
+
+      {frota && <LimitesDaFrota limite={frota.limite?.maximo} />}
     </Pagina>
   );
 }

@@ -74,7 +74,8 @@ Projetos          todo vídeo processado, de todos os canais
 Agenda            o calendário de todos os canais
 Análises          todos os canais lado a lado
 Ferramentas       YouTube Studio (títulos e miniaturas) e o que vier
-Frota             aparelhos (phone farm) — em breve
+Frota             aparelhos (phone farm): os celulares, as contas de cada um,
+                  o ensino do app, o que cada um fez
 Configurações     chaves de IA, contas conectadas, uso e limites, agente,
                   versões, desempenho do PC
 Ajuda             primeiros passos e respostas curtas
@@ -132,7 +133,7 @@ caminho de produção.
 | `series`, `series_parts` | — | **novas** (7.6): a série de um projeto (nome, idioma, duração de cada parte, quantas) e a parte de cada corte — é por ela que o agendador sabe a ordem |
 | `series_playlists`, `series_playlist_items` | — | **novas** (7.6): a playlist de cada série em cada conta do YouTube, e as partes que já entraram nela |
 | `creation_styles`, `creations` | — | **novas** (7.7): o estilo de criação de cada canal (o documento de `estilos.py`; as imagens dos personagens ficam em `DATA_DIR/estilos/`), e cada vídeo de IA — o projeto, a ideia, o título e o roteiro, que é de onde sai o "não repetir o tema" |
-| `devices` | — | **nova** (7.9): os aparelhos da frota |
+| `fleet_settings`, `devices`, `device_accounts`, `device_scripts` | — | **novas** (7.9): se a frota está ligada, os aparelhos, a conta que mora em cada um (com o modo, o limite do dia e a hora do consentimento) e o caminho do post ensinado em cada app, com o resultado do ensaio |
 
 O projeto também guarda o canal na própria pasta (`.canal`, ao lado do `.tenant`):
 a lista de projetos vem do disco, e o banco falha aberto. Pelo mesmo motivo, a
@@ -840,6 +841,86 @@ separada, porque é a parte de maior risco (ver Limites).
   e com a mesma trava do ADR-010: risco acima de zero, então nunca entra na
   cascata automática sem a conta ter pedido.
 
+**Pronto quando:** um celular, pelo cabo ou pela rede, entra na frota pela tela;
+a conta do Instagram de um canal passa a morar nele; o corte do canal abre no
+app do celular com a legenda pronta, e a pessoa só toca em publicar — ou, numa
+conta que consentiu, depois de a pessoa ensinar o caminho e um ensaio passar, o
+próprio motor toca, dentro do limite do dia; e o painel mostra o que cada
+aparelho fez, com a tela de cada passo.
+
+**Andamento:**
+
+| Parte | O quê | Situação |
+|---|---|---|
+| 7.9a | pesquisa: falar com os aparelhos e o que as plataformas permitem (ADR-016) | feita (1-out) |
+| 7.9b | motor: o cliente do adb e o estado de cada aparelho | feita (1-out) |
+| 7.9c | motor: as tabelas da frota, ligar a frota, os aparelhos e as contas com limite | feita (1-out) |
+| 7.9d | motor: o driver do aparelho — entregar, e o automático com consentimento, ensino e ensaio | feita (1-out) |
+| 7.9e | painel: a página Frota | feita (1-out) |
+| 7.9f | conferir as telas no computador (1280 px) e no celular (390 px), docs, CI | feita (1-out) |
+
+**Como a frota ficou, e por quê (o ADR-016 tem o levantamento):**
+
+- **Nasce desligada, e ligar pede que a pessoa leia os limites.** Eles ficam na
+  página depois de ligada, embaixo dos aparelhos.
+- **O programa fala com o celular pelo adb**, a ferramenta oficial do Google para
+  desenvolvedor de Android, que a pessoa instala uma vez no Windows
+  (`winget install --id Google.PlatformTools`). Pelo cabo, pela rede de casa
+  (com o pareamento por código do Android 11 em diante) ou um celular em nuvem,
+  que é só um endereço. No Docker, quem liga o adb é o `atalhos\celulares.bat`;
+  no ajudante, ele liga sozinho.
+- **O padrão é entregar.** O corte vai para a galeria do celular e o app abre com
+  ele, na tela de postar — o que o "compartilhar" da galeria faria. A legenda
+  fica na fila do painel e num arquivo no celular. Quem toca em publicar é a
+  pessoa, que depois marca "já publiquei" com o link, como no pacote do dia.
+- **O automático é conta por conta, com três travas.** A pessoa consente na hora
+  de ligar (a frase diz que a plataforma pode punir a conta); ensina o caminho
+  uma vez, clicando na tela do celular que aparece no painel — no campo da
+  legenda o motor digita, e no botão de publicar ela marca sem tocar —; e um
+  ensaio refaz tudo com um vídeo de teste e para antes de publicar. Sem o ensaio
+  passando, o vídeo só é entregue. O app atualizou? Volta a entregar até ser
+  ensinado e ensaiado de novo.
+- **O que não é o esperado para, e o motor nunca toca às cegas.** Um botão que
+  não aparece, uma janela que ninguém ensinou, o celular bloqueado: ele guarda a
+  tela, devolve o teclado de antes e deixa o corte esperando a pessoa. Se depois
+  do toque de publicar aparece uma janela, a tela diz "confira no app se saiu".
+- **Limite por conta**: 3 posts por dia de padrão e no máximo 15 — o teto da via
+  oficial do TikTok, a mais apertada das três. Vale também para a entrega.
+- **Um celular, uma conta por app.** Trocar de conta dentro do app seria mais um
+  toque às cegas, e postar na conta errada é pior que não postar.
+- **A legenda com acento e emoji pede o teclado ADBKeyBoard** no celular da frota:
+  o comando de digitar do Android não escreve nenhum dos dois. O motor o liga só
+  durante o post e devolve o teclado de antes.
+- **O que cada aparelho fez fica guardado com a tela de cada passo** (as últimas
+  50 vezes de cada um): é a resposta para "por que não saiu?".
+- **O que a frota não faz, de propósito**: criar ou entrar em contas; curtir,
+  seguir, comentar ou "aquecer" conta; mudar a identidade do celular, proxy ou VPN
+  por aparelho, GPS falso; imitar gente (toque sorteado, digitar devagar);
+  resolver captcha. É o "Limites" deste plano.
+
+**Onde a 7.9 está (1-out-2026).** O "pronto quando" roda nos testes contra um
+servidor de adb de mentira, que fala o protocolo de verdade, e um celular
+simulado com as telas do Instagram: o cliente do adb (`tests/test_adb_cliente.py`),
+o estado e a tela do aparelho (`tests/test_frota_aparelho.py`), o ensino e o
+roteiro — com a janela que ninguém ensinou e o botão noutro idioma
+(`tests/test_frota_roteiro.py`) —, o caminho inteiro pela API do motor (ligar,
+pôr o celular, ligar a conta, ensinar, ensaiar, consentir, publicar, o limite, o
+celular bloqueado, o vizinho que não vê nada: `tests/test_frota.py`), a porta do
+consentimento na cascata (`tests/test_publishers.py`) e as regras da tela no
+`node` contra as do motor (`tests/test_painel_da_frota.py`). As telas foram
+conferidas com o motor de verdade falando com esse adb de mentira, no computador
+e no celular: ligar a frota, pôr dois celulares (um pelo cabo, um pela rede),
+ligar a conta do Instagram, ensinar os três passos clicando na imagem, ensaiar,
+consentir o automático e publicar — e o histórico mostrou as quatro telas do
+post. Na conferência saíram dois acertos: as mensagens do motor chegavam à tela
+sem acento ("botao", "nao"), e o resultado do ensaio repetia "passou" ao lado da
+etiqueta que já dizia isso. **O que falta ver no PC do autor**: tudo o que
+depende de um celular de verdade — o adb do Windows alcançado pelo Docker (o
+`host.docker.internal`, que veio de relato de terceiros e é a primeira coisa a
+confirmar; se não alcançar, o ajudante fala com o adb direto), a tela do
+Instagram lida pelo `uiautomator`, o ADBKeyBoard digitando a legenda e um post de
+verdade. O roteiro está no `COMO-EXECUTAR.md`, Passo 18.
+
 ### 7.10 — Mais plataformas
 
 - **Plataformas chinesas** (Douyin, Kuaishou, Bilibili, Xiaohongshu): o autor as
@@ -1157,6 +1238,12 @@ etapa; duas perguntas ficam para ele, e nenhuma trava o que foi feito:
 - "Pode seguir para o próximo" — a 7.9, a frota de aparelhos, a última entre as
   grandes.
 
+**1-out-2026, ao fechar a 7.9:** a frota seguiu o plano e os limites dele sem
+pergunta nova ao autor — no meio, só o limite de uso, e "continue". Nenhuma
+decisão nova nesta etapa. Das grandes, falta a 7.2 (a qualidade dos cortes), que
+espera a lista dele; e o teste no PC dele continua sendo o do final, tudo junto,
+com o Passo 18 do `COMO-EXECUTAR.md` para a frota.
+
 ## Fontes
 
 As regras externas foram conferidas em 25-set-2026:
@@ -1174,3 +1261,11 @@ As regras externas foram conferidas em 25-set-2026:
   [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) e
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), com a troca de uma
   para a outra no YouTube pesquisada em 26-set-2026 (anotada em `licencas.py`).
+- A frota (7.9, conferidas em 1-out-2026): o [adb](https://developer.android.com/tools/adb)
+  e o [pacote do Google](https://developer.android.com/tools/releases/platform-tools)
+  que a pessoa instala; o teclado [ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard);
+  e o teto de publicação do Instagram pela API,
+  [100 posts em 24 horas](https://developers.facebook.com/docs/instagram-platform/content-publishing/).
+  O do TikTok, "por volta de 15 posts por dia por criador, somando todos os
+  apps", está nas [Content Sharing Guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines),
+  acima.

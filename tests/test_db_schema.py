@@ -94,7 +94,10 @@ class TestTenantEmTodaTabela:
                      "series_playlist_items",
                      # 7.7: o estilo de criacao do canal e cada video criado
                      # por IA.
-                     "creation_styles", "creations"}
+                     "creation_styles", "creations",
+                     # 7.9: a frota -- se esta ligada, os aparelhos, a conta
+                     # de cada um e o roteiro ensinado de cada app.
+                     "fleet_settings", "devices", "device_accounts", "device_scripts"}
         assert set(Base.metadata.tables) == esperadas
 
     def test_tenant_id_e_indexado_em_toda_tabela(self):

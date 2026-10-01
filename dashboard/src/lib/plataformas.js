@@ -74,4 +74,8 @@ export const DRIVERS = {
   aggregator: 'agregador (não configurado)',
   manual: 'fila manual: o corte e a legenda ficam prontos',
   browser: 'navegador (desligado por decisão)',
+  // A frota (7.9): o vídeo abre no app do celular e você toca em publicar; ou,
+  // com o seu consentimento e um ensaio passando, o motor toca.
+  aparelho: 'no celular da frota: o vídeo abre no app e você publica',
+  'aparelho-auto': 'no celular da frota: o motor publica',
 };

@@ -263,7 +263,7 @@ function App() {
     case 'agenda': pagina = <Agenda />; break;
     case 'analises': pagina = <Analises aba={sub} />; break;
     case 'ferramentas': pagina = <Ferramentas ferramenta={sub} />; break;
-    case 'frota': pagina = <Frota />; break;
+    case 'frota': pagina = <Frota aparelho={sub || null} />; break;
     case 'configuracoes': pagina = <Configuracoes parte={sub} />; break;
     case 'ajuda': pagina = <Ajuda />; break;
     default: pagina = <Inicio />;

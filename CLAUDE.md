@@ -98,7 +98,7 @@ herdado do upstream permanece como esta -- nao traduzir em massa.
 | `docs/PLANO-DA-PLATAFORMA.md` | Fase 7 em diante (aprovado em 26-set-2026): a plataforma organizada por canal -- mapa das telas, modelo de dados, etapas 7.1 a 7.10, as decisoes do autor e o registro das conversas com as palavras dele |
 | `docs/PLANO-TECNICO.md` | documento de origem v2: arquitetura, o *que* e o *porque* |
 | `docs/AUDITORIA-VERIFICACAO.md` | verificacao das premissas do plano, com fontes |
-| `docs/DECISOES.md` | ADR-001 a 015 |
+| `docs/DECISOES.md` | ADR-001 a 016 |
 | `docs/OPORTUNIDADES.md` | o que a ferramenta faz alem do plano, o que o plano preve e ela nao faz, e o que preservar ao trocar o frontend |
 | `docs/MAPA-DOS-ESTAGIOS.md` | onde mora cada estagio 01-07, e o desenho CLI+fila do upstream |
 | `docs/COMO-EXECUTAR.md` | passo a passo para rodar na maquina do autor, com as armadilhas |
@@ -1262,6 +1262,14 @@ portrait clip cannot reproduce the shrink either.
 | GET | `/api/canais/{id}/historias` | As historias de varios episodios do canal (7.8), para o episodio novo continuar |
 | POST | `/api/compilacoes`, `/api/compilacoes/{id}/refazer` | A compilacao horizontal dos cortes (7.8); monta de novo a que parou |
 | GET | `/api/jobs/{id}/cortes` | Os cortes prontos de um projeto, leves, para escolher na compilacao |
+| GET/PUT | `/api/frota` | A frota (7.9): ligada ou nao, o adb, os aparelhos e os vistos; ligar pede `entendi` |
+| POST | `/api/aparelhos`, `/api/aparelhos/conectar`, `/api/aparelhos/parear` | Pôr um celular na frota; `adb connect` e o pareamento por codigo (rede ou nuvem) |
+| GET/PATCH/DELETE | `/api/aparelhos/{id}` | O aparelho com o estado ao vivo e o que ele fez; renomear; tirar da frota |
+| GET/POST | `/api/aparelhos/{id}/tela`, `.../toque`, `.../tecla` | A tela ao vivo e o controle remoto |
+| PUT/DELETE | `/api/aparelhos/{id}/contas`, `.../contas/{account_id}` | A conta que mora no aparelho (modo, limite, consentimento) |
+| POST/GET/DELETE | `/api/aparelhos/{id}/ensino`, `.../ensino/{acao}` | Ensinar o caminho do post num app, pela tela |
+| POST/DELETE | `/api/aparelhos/{id}/ensaio`, `.../roteiros/{plataforma}` | Ensaiar o roteiro (para antes de publicar); apagar o roteiro |
+| GET | `/api/aparelhos/{id}/execucoes/{execucao}` | As telas de uma entrega, ensaio ou post |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools (7 ferramentas) |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
 | DELETE | `/api/account` | Erase the account and everything in it (GDPR art. 17) |
@@ -3185,6 +3193,90 @@ etapa 7.10, ADR-015): Douyin, Kuaishou, Bilibili e Xiaohongshu.
   porque a fonte reserva da libass vem do fontconfig, que so conhece as da
   imagem. (A primeira versao desta linha dizia "rebuild de 40 minutos"; estava
   errado.)
+
+**A frota de aparelhos** (`adb_cliente.py`, `frota.py`, `frota_aparelho.py`,
+`frota_roteiro.py`, `frota_limite.py`, `frota_registro.py`,
+`publishers/aparelho.py`; etapa 7.9, ADR-016):
+
+- **O adb e falado pelo protocolo, nao pelo binario** (`adb_cliente.py`, stdlib
+  pura): o servidor do adb na 5037 (`host:devices-l`, `host:connect`,
+  `host:pair`, `host:transport` + `exec:` e `sync:`). Nenhuma dependencia nova e
+  nenhum rebuild. O binario e do Google e de quem usa (`winget install --id
+  Google.PlatformTools`), nunca redistribuido. No Docker o servidor e o do
+  Windows, por `host.docker.internal:5037`, ligado pelo `atalhos/celulares.bat`;
+  no ajudante, `127.0.0.1:5037`, e o motor o liga sozinho (`ligar_servidor`).
+  `ADB_SERVER` sobrescreve.
+  - **O `host.docker.internal` chegar ao loopback do Windows veio de relato de
+    terceiros**, e e a primeira coisa a confirmar no PC do autor. A reserva e o
+    ajudante -- **nunca abrir o adb na rede** (`adb -a`): o servidor do adb nao
+    autentica quem conecta, e qualquer um da rede rodaria comando no celular.
+- **O codigo de saida vem de um marcador** (`; echo "@@vc-rc=$?"`): o `exec:`
+  nao devolve status. `sh_ok` levanta quando nao e zero.
+- **O que vem do painel e validado antes de virar pedido** (`serial_valido`,
+  `endereco_valido`, `codigo_valido`, `aspas`): o serial entra num pedido ao
+  servidor, e o resto vira linha de shell no aparelho.
+- **Dois drivers, separados pelo RISCO** (ADR-010): `aparelho` (risco 0, entrega:
+  termina `scheduled`, como o `manual`) e `aparelho-auto` (risco 0,5: toca em
+  publicar e termina `published`). **A porta do consentimento e
+  `publishers.consentiu`**: driver de risco acima de zero so entra se declara
+  `aceita_consentimento` E o id dele esta em `Account.consentimentos` -- que so o
+  banco preenche (`device_accounts.mode = 'automatico'` exige `consent_at`, num
+  CHECK). O `browser` nao aceita consentimento. Nao trocar por lista de nomes.
+  Os dois vem PRIMEIRO na `REGISTRY`: ligar a conta a um aparelho e dizer "esta
+  conta posta por aqui". Nao entram no `driver_pref`: quem os escolhe e a
+  ligacao com o aparelho.
+- **O automatico tem tres travas, e o painel nao pula nenhuma**: o consentimento
+  (o PUT da conta recusa `automatico` sem `consentimento: true`, e voltar a
+  `entregar` apaga a hora), o roteiro ensinado com a tela de compartilhar do app,
+  e o ensaio passando na MESMA versao do app. Faltou alguma na hora do post --
+  inclusive o ADBKeyBoard, ou o app que atualizou --, vira entrega, com o motivo
+  no detalhe; nunca erro.
+- **O motor nunca toca as cegas** (`frota_roteiro.Executor`): acha cada alvo
+  pela identidade (id, texto, descricao), nunca so pela posicao, e o botao de
+  publicar tem de ter nome ou id (`validar`). Janela que ninguem ensinou, botao
+  que nao aparece em `PRAZO_DO_PASSO_S`, aparelho bloqueado: para, guarda a tela,
+  devolve o teclado e deixa o corte esperando a pessoa. Depois do toque de
+  publicar, "saiu" e o botao sumir com a janela raiz em tela cheia; um dialogo no
+  lugar e `duvida`, que espera a pessoa. **Nada de toque sorteado, digitar
+  devagar ou pausa aleatoria** (ADR-016): imitar gente e disfarce, e o
+  "Limites" do plano recusa.
+- **A legenda e pelo ADBKeyBoard** (`ADB_INPUT_B64` em pedacos de 600 bytes,
+  `ADB_CLEAR_TEXT`): o `input text` do Android nao escreve acento nem emoji.
+  `com_adbkeyboard` devolve o teclado de antes aconteca o que acontecer -- a
+  pessoa nao pode achar o celular com um teclado sem teclas.
+- **O video entra como pelo "compartilhar" da galeria**: o arquivo em
+  `Movies/Virtu Clips`, o scanner da galeria, o `content://` dela e `am start -a
+  SEND`. Qual tela do app recebe e perguntado ao aparelho (`query-activities`) e
+  escolhido por `plataformas.tela_preferida` / `telas_evitadas`; **com mais de
+  uma possivel o motor nao chuta**, e o ensino pede a escolha
+  (`FrotaErro.opcoes`). **Nunca `force-stop` no app.**
+- **Limite por conta, debitado ANTES e devolvido quando nada chegou ao
+  aparelho** (`frota_limite`, no dia de quem usa, `DATA_DIR/frota/limite.json`):
+  3 de padrao e **15 de teto** (`db_models.LIMITE_DIARIO_MAXIMO`, o da via
+  oficial do TikTok; CHECK no banco). Vale para a entrega tambem: um laco que
+  abrisse o app cinquenta vezes seria o defeito que a 7.3a achou no agendador.
+- **Uma trava por aparelho** (`frota_aparelho.ocupar`): ensino, ensaio e post nao
+  se misturam no mesmo celular. **Uma conta mora num aparelho, e um aparelho tem
+  uma conta por plataforma** (uniques em `device_accounts`): trocar de conta
+  dentro do app seria mais um toque as cegas. Pedir a conta noutro aparelho a
+  MOVE.
+- **O que cada aparelho fez mora em disco** (`frota_registro`,
+  `DATA_DIR/frota/<aparelho>/execucoes/`, as ultimas 50), com as telas em JPEG de
+  360 px. **O nome da foto vira caminho**, entao `guardar` o reduz a
+  `[a-z0-9-]`, e so o que casa com `_NOME` e servido ao painel.
+- **As mensagens do motor vao para a tela COM acento** (os erros da API, o
+  detalhe do historico e da fila); comentario e log, sem. A primeira versao saiu
+  inteira sem acento ("botao", "nao"), e a conferencia das telas pegou.
+- **O ensaio roda numa tarefa** e o painel acompanha pelo estado do aparelho
+  (`_ENSAIOS`; `_TAREFAS` guarda a referencia, porque o asyncio so guarda
+  referencia fraca). Nos testes, a tarefa e esperada no MESMO loop do pedido.
+- **Quatro tabelas** (`fleet_settings`, `devices`, `device_accounts`,
+  `device_scripts`; migracao `d9e3a7c1f5b8`), e o CHECK de `publications.driver`
+  ganhou os dois drivers (o `db_acerto` leva a regra aos bancos que existem).
+- **`tests/adb_falso.py` e um servidor de adb de mentira que fala o protocolo de
+  verdade**, com um celular que simula as telas do Instagram: e por ele que o CI
+  ensina, ensaia e publica. O resto -- o `uiautomator` lendo a tela de verdade, o
+  ADBKeyBoard, o `host.docker.internal` -- e o Passo 18 do `COMO-EXECUTAR.md`.
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

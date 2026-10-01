@@ -1721,6 +1721,88 @@ estranha, e — se chegou a postar — o texto que o "copiar link" do app colou.
 
 ---
 
+## Passo 18 — Frota: o celular que posta
+
+A frota é para postar **pelo app do celular** — o caminho do Instagram, que não
+tem API para quem usa o programa no próprio PC. O programa põe o corte no
+celular e abre o app na tela de postar, com a legenda pronta; quem toca em
+publicar é você. Numa conta que você escolher, ele mesmo pode tocar — depois de
+você ensinar o caminho uma vez e de um ensaio passar.
+
+**O que é preciso, uma vez:**
+
+- **O adb**, a ferramenta oficial do Google que fala com o celular. O jeito mais
+  fácil é rodar `atalhos\celulares.bat`: ele procura o adb e, se não achar,
+  pergunta se pode instalar. Ou, no Prompt de Comando:
+
+  ```
+  winget install --id Google.PlatformTools
+  ```
+
+- **No celular, a depuração USB**: **Configurações → Sobre o telefone →** tocar 7
+  vezes em **Número da versão** (aparece "você agora é um desenvolvedor"); depois
+  **Configurações → Opções do desenvolvedor → Depuração USB**. Ligar o cabo no PC
+  e aceitar no celular o aviso "permitir depuração USB" (marque "sempre permitir
+  deste computador").
+- **Só para o automático: o teclado ADBKeyBoard** no celular. O comando de
+  digitar do Android não escreve acento nem emoji, e é por ele que o motor
+  digita a legenda. Baixe o APK na página de versões (Releases) do ADBKeyBoard,
+  no próprio celular, e instale — o Android pede para permitir instalar de fonte
+  desconhecida. Não precisa escolher o teclado: o motor o liga só durante o post e
+  devolve o seu.
+
+**Com o Docker**, o painel fala com o adb do Windows: depois de reiniciar o
+computador, rode `atalhos\celulares.bat` de novo, senão a página Frota diz que
+não alcançou o adb. **Com o ajudante**, nada disso: ele liga o adb sozinho.
+
+### Roteiro de teste (7.9)
+
+1. **Ligar a frota.** No menu, **Frota**: a página mostra os limites (o que a
+   frota não faz) e pede para ligar. Marcar a caixa e **ligar a frota**.
+2. **O adb.** Com o celular no cabo, rodar `atalhos\celulares.bat`: ele lista o
+   celular como `device` (ou `unauthorized`, até você aceitar o aviso no
+   celular). Voltar ao painel: em **vistos pelo adb** aparece o celular. **Se a
+   página disser que não alcançou o adb do Windows** enquanto o `celulares.bat`
+   mostra o celular, é a primeira coisa que preciso saber: é o Docker que não
+   está levando o `host.docker.internal` ao adb. Anote, e siga pelo ajudante,
+   que fala com o adb direto.
+3. **Pôr na frota.** **pôr na frota** no celular. O cartão dele mostra a tela ao
+   vivo; abrindo o aparelho: o modelo, o Android, a bateria e o controle remoto
+   (tocar na imagem toca no celular).
+4. **A conta.** Em **contas neste aparelho**, escolher a conta do Instagram de um
+   canal e **pôr no aparelho**. O modo começa em **você (o vídeo abre no app)**.
+5. **Entregar.** Num projeto do canal, **publicar** na conta do Instagram (ou no
+   canal inteiro). O celular acende, a galeria ganha o vídeo na pasta **Virtu
+   Clips** e o Instagram abre na tela do Reels com ele. Na fila (Agenda), o galho
+   diz o aparelho e "entregue: esperando você publicar". Termine no celular:
+   colar a legenda (está na fila e num `.txt` na pasta Download/Virtu Clips do
+   celular), publicar e marcar **já publiquei** com o link.
+6. **Ensinar** (para o automático). Na página do aparelho, em **ensinar e ensaiar
+   cada app**, **ensinar** no Instagram. A tela do celular aparece com o que dá
+   para tocar contornado. Clique no que você tocaria para postar o vídeo de teste
+   (o **Avançar**, por exemplo); no campo da legenda, clique nele — o motor digita
+   um texto de teste; no botão de publicar, troque para **marcar o botão de
+   publicar** e clique nele — o motor anota sem tocar. **salvar o roteiro**.
+   Depois saia do app no celular sem publicar o vídeo de teste.
+7. **Ensaiar.** **ensaiar**: o motor refaz o caminho com outro vídeo de teste,
+   digita "Ensaio do Virtu Clips: ação, coração e emoji 🎬 #teste" e para no
+   botão de publicar. Tem de sair **o ensaio passou**. Confira no celular que a
+   legenda saiu **com acento e emoji**, e saia do app sem publicar.
+8. **O automático** (só se quiser: é o que a plataforma pode punir). Em **quem
+   toca em publicar**, escolher **o motor**: aparece a frase do consentimento.
+   Marcar e **salvar**. Publicar um corte nessa conta: o motor faz o caminho e
+   toca em publicar. Em **o que ele fez**, o post aparece com a tela de cada
+   passo.
+
+**O que me mandar de volta**: o que o `celulares.bat` mostrou e se o painel viu
+o celular (o passo 2 é a pergunta mais importante); se o Instagram abriu direto
+na tela do Reels; um print da tela do ensino, com os contornos; o resultado do
+ensaio e se a legenda saiu com acento e emoji; e, se ligar o automático, as telas
+de um post em **o que ele fez**. Se algo parar, o texto que aparece no histórico
+e as telas guardadas: são elas que dizem em que passo foi.
+
+---
+
 ## Armadilhas, todas vindas do código (ou do Windows)
 
 | Sintoma | Causa | Solução |
@@ -1754,6 +1836,9 @@ estranha, e — se chegou a postar — o texto que o "copiar link" do app colou.
 | O build leva minutos "transferindo contexto" | `output/` estava sendo copiado a cada build | mesmo conserto acima |
 | Log rolando sem parar com `GET /health/ready 200 OK` | **não é erro**: é o HEALTHCHECK do Dockerfile confirmando que o backend está vivo | nada a fazer; `200 OK` é a resposta certa |
 | A linha do frontend anuncia `localhost:5173` | é a porta dentro do container | no navegador é **5175** (`"5175:5173"` no compose) |
+| A Frota diz que não alcançou o adb do Windows | o adb não está ligado (o computador reiniciou) ou não está instalado | `atalhos\celulares.bat`. Se ele mostra o celular e a página continua sem ver, me avise e use o ajudante (Passo 18) |
+| O celular aparece como "esperando autorizar" | o aviso de depuração USB não foi aceito no celular | destravar o celular, aceitar o aviso e marcar "sempre permitir" |
+| O ensaio diz que o ADBKeyBoard não está instalado | sem ele o motor não digita a legenda com acento e emoji | instalar o ADBKeyBoard no celular (Passo 18); a entrega funciona sem ele |
 
 ---
 

@@ -602,6 +602,14 @@ verdade **e** o autor decidir aceitar o risco de conta. Aí o `browser` deixa de
 ser stub — e continua fora da cascata automática, porque a decisão acima é sobre
 automação, não sobre existir.
 
+**Nota (1-out-2026, ADR-016).** A frota trouxe o primeiro driver arriscado de
+verdade (`aparelho-auto`, risco 0,5), e com ele a porta que o plano previa: risco
+acima de zero entra na cascata **só com o consentimento registrado da conta para
+aquele driver**, e só se o driver declara que aceita consentimento. O teto
+continua zero para todo o resto, o `browser` não aceita consentimento, e a
+preferência da conta continua sem ampliar nada. O `TestBrowserForaDaCascata`
+passa sem mudar uma linha.
+
 ---
 
 ## ADR-011 — Todo provedor gratuito com chave entra na cascata, depois dos dois de sempre
@@ -1025,3 +1033,119 @@ contrário (as `.ttf` não ficam na imagem).
 **Revisão se:** uma dessas plataformas abrir publicação a uma pessoa de fora da
 China; o autor tiver contas lá e quiser números (as contagens públicas do
 Bilibili dá para ler pelo yt-dlp); ou os limites de texto mudarem.
+
+---
+
+## ADR-016 — A frota entrega o vídeo no app; o toque de publicar é ensinado, ensaiado e consentido
+
+**Data:** 2026-10-01 · **Status:** aceita (etapa 7.9)
+
+**Contexto.** A 7.9 do plano: os aparelhos, físicos ou em nuvem, e o estado de
+cada um; as contas de cada aparelho, com limite por conta; e um driver por
+aparelho atrás de `publishers/`, "com a mesma trava do ADR-010: risco acima de
+zero, então nunca entra na cascata automática sem a conta ter pedido". E o
+"Limites": opt-in, isolada, limite por conta, e nada que engane a detecção —
+criar contas em massa, disfarçar aparelho ou rede. A ferramenta de referência
+("POV: you post 10.000 reels a day") é exatamente o que os limites recusam; o
+que sobra dela é o painel de aparelhos e a publicação pelo app.
+
+**Levantamento (1-out-2026).**
+
+- **Falar com o celular é o adb** (Android Debug Bridge), por cabo ou pela rede.
+  Um aparelho "em nuvem" é um endereço de adb (`host:porta`), e o mesmo código
+  serve aos dois. O programa não precisa do binário: o cliente fala com o
+  **servidor do adb** pela porta 5037, num protocolo de texto documentado no
+  próprio adb (`docs/dev/services.md` e `sync.md`: `host:devices-l`,
+  `host:connect`, `host:pair` para o Android 11+, `host:transport`, `exec:` e
+  `sync:`). Cabe na biblioteca padrão, então **nenhuma dependência nova** e
+  nenhuma imagem a reconstruir.
+- **O servidor do adb é do Google, e não é nosso para redistribuir.** Quem usa
+  instala uma vez: `winget install --id Google.PlatformTools` (o pacote do
+  winget, 37.0.1 em out-2026). O ajudante o liga sozinho se o achar; no Docker,
+  o container alcança o adb do Windows por `host.docker.internal`, que o Docker
+  Desktop encaminha ao loopback do Windows — o adb não precisa ficar aberto na
+  rede. Isto vem de relato de terceiros e é a primeira coisa a confirmar no PC
+  do autor.
+- **O vídeo entra no app como entra pelo "compartilhar" da galeria**: o arquivo
+  vai para `Movies/Virtu Clips`, a galeria o indexa, e o app abre com ele pela
+  intenção de compartilhar (`ACTION_SEND`, `video/mp4`). Qual tela do app recebe
+  (o Instagram tem uma para Reels, outra para Stories, outra para o Direct) é
+  perguntado ao aparelho (`cmd package query-activities`), nunca escrito à mão.
+- **Ler a tela é o `uiautomator dump --compressed`.** Sem o `--compressed` ele
+  falha em tela com animação contínua — um vídeo tocando no editor —, que é a
+  tela inteira deste fluxo (relato com a correção confirmada:
+  mobile-next/mobilewright#117).
+- **A legenda não se digita pelo `input text`**: ele não escreve acento nem
+  emoji. O caminho é o teclado ADBKeyBoard (código aberto, GPL-2.0), que quem
+  usa instala no aparelho da frota; o motor o liga só durante o post e devolve o
+  teclado de antes.
+- **O teto de posts.** A via oficial de cada plataforma diz o que ela mesma
+  aceita de publicação automatizada: Instagram, 100 posts em 24 h pela API de
+  publicação; TikTok, por volta de 15 por dia por criador, somando todo app;
+  YouTube, 100 envios por dia (a cota da 7.3). O menor é o do TikTok.
+
+**Decisão.**
+
+1. **Opt-in em dois níveis.** A frota inteira nasce desligada, e ligar pede que
+   a pessoa leia os limites. Depois, cada conta escolhe como posta pelo
+   aparelho.
+2. **Dois drivers, separados pelo risco** (a regra do ADR-010 é sobre a
+   propriedade, não o nome):
+   - `aparelho`, **risco zero**: entrega. O vídeo vai para a galeria do celular,
+     o app abre com ele, e a legenda fica num `.txt` no aparelho e na fila do
+     painel. **Quem toca em publicar é a pessoa**, e a linha termina em
+     `scheduled`, como a do `manual`. É o que o "compartilhar" da galeria faz.
+   - `aparelho-auto`, **risco 0,5**: o motor toca no botão de publicar.
+3. **A trava do ADR-010 ganha a porta que o plano previa** ("sem a conta ter
+   pedido"): driver de risco acima de zero entra na cascata **só com o
+   consentimento registrado da conta para aquele driver**, e só se o driver
+   aceita consentimento — o `browser` não aceita. O banco garante a metade dele
+   (`device_accounts`: modo automático exige a hora do consentimento, num
+   CHECK). A preferência da conta continua não ampliando nada.
+4. **O motor não adivinha a tela do app: a pessoa ensina.** Pelo painel, a tela
+   do celular aparece com o que dá para tocar contornado; ela clica no que
+   tocaria, o motor toca no aparelho e anota o botão (o id, o texto, a
+   descrição). No campo da legenda o motor digita; no botão de publicar ela
+   **marca sem tocar**. Depois um **ensaio** refaz tudo com um vídeo de teste e
+   para antes de publicar. O automático só liga com o ensaio passando, e só na
+   versão do app em que ele passou: o app atualizou, o aparelho volta a entregar
+   até ser ensinado e ensaiado de novo.
+5. **O que não é o esperado para.** Um botão que não aparece, uma janela que
+   ninguém ensinou, o aparelho bloqueado, o app noutra versão: o motor guarda a
+   tela, devolve o teclado e deixa o corte esperando a pessoa. Nunca toca no que
+   não foi ensinado. Depois do toque de publicar, "saiu" é o botão sumir com a
+   tela inteira do app à frente; uma janela no lugar é dúvida, e dúvida espera a
+   pessoa.
+6. **Limite por conta**: 3 por dia de padrão e **15 de teto duro** — o menor das
+   vias oficiais, o do TikTok. Debitado antes, devolvido quando nada aconteceu
+   no aparelho, contado no dia de quem usa. Vale para os dois drivers: o
+   `aparelho` também abre o app, e um laço que abrisse cinquenta vezes seria o
+   mesmo defeito que a 7.3a achou no agendador.
+7. **Cada aparelho separado dos outros**: uma conta mora em um aparelho, e um
+   aparelho tem no máximo uma conta por plataforma — trocar de conta dentro do
+   app seria mais um toque às cegas, e **postar na conta errada é pior que não
+   postar**. Um aparelho faz uma coisa de cada vez (uma trava por aparelho).
+8. **Os aparelhos ligados à conta vêm antes das APIs na cascata.** Ligar uma
+   conta a um aparelho é dizer "esta conta posta por aqui"; e, antes das
+   auditorias, a API do YouTube só sobe privado e a do TikTok só `SELF_ONLY`.
+   Conta sem aparelho não muda nada.
+
+**O que fica de fora, e por quê.** Criar ou logar contas; curtir, seguir,
+comentar ou assistir para "aquecer" conta (é comportamento inautêntico, não
+publicação); mudar a identidade do aparelho, proxy ou VPN por aparelho, GPS
+falso, emulador disfarçado de celular (o "Router" da ferramenta de referência);
+imitar gente — toque em lugar sorteado, digitar devagar, pausa aleatória; resolver
+captcha; instalar app modificado. Tudo isso é disfarce, e é o que o "Limites"
+recusa. O motor toca o que foi ensinado, no ritmo da tela, e não se esconde.
+
+**Consequências.** O automático custa ensinar e ensaiar em cada aparelho e a cada
+atualização do app — é o preço de nunca tocar às cegas. A confirmação de que o
+post saiu é a tela mudar, não um link: o link continua chegando pelo "já
+publiquei", que é o que deixa medir. E o ensino é o primeiro contato com a tela
+real de cada app; o que o ensaio no PC do autor mostrar pode mudar os detalhes
+da leitura da tela.
+
+**Revisão se:** uma plataforma abrir publicação por API que sirva a quem usa (o
+Instagram sem exigir o vídeo num endereço público); o ensaio no PC do autor
+mostrar que o `uiautomator` não lê a tela de algum app; ou o TikTok publicar
+outro teto.

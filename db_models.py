@@ -381,8 +381,10 @@ class Clip(Base, TenantScoped):
 
 #: `tiktok-api` entrou na etapa 7.3. Um banco criado antes recebe o CHECK novo
 #: pelo `db_acerto` no boot; sem ele, a primeira publicacao pelo TikTok morreria
-#: no banco, DEPOIS do upload.
-DRIVERS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api")
+#: no banco, DEPOIS do upload. Os dois da frota (`aparelho` e `aparelho-auto`)
+#: entraram na 7.9 pelo mesmo caminho (migracao `d9e3a7c1f5b8`).
+DRIVERS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api",
+           "aparelho", "aparelho-auto")
 PUB_STATUSES = ("scheduled", "publishing", "published", "failed", "cancelled")
 
 
@@ -1057,6 +1059,149 @@ class Creation(Base, TenantScoped):
     )
 
 
+# --------------------------------------------------------------------------- #
+# 26-29. a frota de aparelhos (Fase 7, etapa 7.9, ADR-016)
+# --------------------------------------------------------------------------- #
+#
+# A regra da Fase 7 de sempre: tudo novo, e nada em tabela que ja existe. A
+# conta de plataforma continua em `accounts`; o que a frota sabe dela (em que
+# aparelho mora, como posta, quanto por dia) mora em `device_accounts`.
+
+class FleetSettings(Base, TenantScoped):
+    """Se a frota esta ligada. **Nasce desligada**: ligar e a pessoa dizer que
+    leu os limites (ADR-016). Um documento por tenant, como os ajustes do
+    canal, para que o proximo campo nao vire migracao."""
+    __tablename__ = "fleet_settings"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_fleet_settings_tenant"),
+        UniqueConstraint("tenant_id", name="uq_fleet_settings_tenant"),
+        Index("ix_fleet_settings_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+#: Como o aparelho chega ao computador: pelo cabo, pela rede de casa, ou e um
+#: celular em nuvem (um endereco de adb na internet).
+DEVICE_KINDS = ("cabo", "rede", "nuvem")
+
+
+class Device(Base, TenantScoped):
+    """Um celular da frota, pelo serial que o servidor do adb da a ele (o do
+    cabo, `ip:porta` na rede, ou o nome do pareamento do Android 11+)."""
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    serial: Mapped[str] = mapped_column(String(200), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="cabo")
+    # `ip:porta` para reconectar quando a rede cai; nulo no cabo.
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_devices_tenant"),
+        UniqueConstraint("tenant_id", "serial", name="uq_devices_tenant_serial"),
+        CheckConstraint("kind in ('cabo','rede','nuvem')", name="ck_devices_kind"),
+        Index("ix_devices_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+#: `entregar`: o video vai para o app e a pessoa toca em publicar (risco zero).
+#: `automatico`: o motor toca, pelo roteiro ensinado e ensaiado (risco 0,5, so
+#: com o consentimento da conta).
+FLEET_MODES = ("entregar", "automatico")
+#: O teto duro de posts por dia por conta: o menor das vias oficiais, o do
+#: TikTok (ADR-016). O padrao e 3, o do agendador.
+LIMITE_DIARIO_PADRAO = 3
+LIMITE_DIARIO_MAXIMO = 15
+
+
+class DeviceAccount(Base, TenantScoped):
+    """Uma conta morando num aparelho. Uma conta, um aparelho; um aparelho, no
+    maximo uma conta por plataforma -- trocar de conta dentro do app seria um
+    toque as cegas, e postar na conta errada e pior que nao postar.
+
+    **O banco guarda metade do consentimento**: modo automatico sem a hora do
+    consentimento nao entra (o CHECK abaixo). A outra metade e a cascata
+    (`publishers.consentiu`)."""
+    __tablename__ = "device_accounts"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    device_id: Mapped[str] = mapped_column(ID, nullable=False)
+    account_id: Mapped[str] = mapped_column(ID, nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="entregar")
+    daily_limit: Mapped[int] = mapped_column(Integer, nullable=False,
+                                             default=LIMITE_DIARIO_PADRAO)
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_device_accounts_tenant"),
+        ForeignKeyConstraint(["tenant_id", "device_id"], ["devices.tenant_id", "devices.id"],
+                             ondelete="CASCADE", name="fk_device_accounts_device"),
+        ForeignKeyConstraint(["tenant_id", "account_id"],
+                             ["accounts.tenant_id", "accounts.id"],
+                             ondelete="CASCADE", name="fk_device_accounts_account"),
+        UniqueConstraint("tenant_id", "account_id", name="uq_device_accounts_tenant_account"),
+        UniqueConstraint("tenant_id", "device_id", "platform",
+                         name="uq_device_accounts_tenant_device_platform"),
+        CheckConstraint("mode in ('entregar','automatico')", name="ck_device_accounts_mode"),
+        CheckConstraint("daily_limit >= 1 and daily_limit <= 15",
+                        name="ck_device_accounts_limite"),
+        CheckConstraint("platform in (%s)" % ",".join(f"'{p}'" for p in PLATFORMS),
+                        name="ck_device_accounts_platform"),
+        CheckConstraint("mode <> 'automatico' or consent_at is not null",
+                        name="ck_device_accounts_consentimento"),
+        Index("ix_device_accounts_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
+class DeviceScript(Base, TenantScoped):
+    """O roteiro de um app num aparelho: o que a pessoa ensinou
+    (`frota_roteiro`), a versao do app em que ensinou, e o ultimo ensaio. O
+    automatico so roda com o ensaio passando e o app na mesma versao."""
+    __tablename__ = "device_scripts"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True, default=new_id)
+    device_id: Mapped[str] = mapped_column(ID, nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    app_package: Mapped[str] = mapped_column(String(128), nullable=False)
+    app_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A tela do app que recebe o video (`pacote/classe`); nulo e o Android
+    # perguntando, e com ele o automatico nao roda.
+    component: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    steps_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    taught_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    rehearsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rehearsal_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rehearsal_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+                             name="fk_device_scripts_tenant"),
+        ForeignKeyConstraint(["tenant_id", "device_id"], ["devices.tenant_id", "devices.id"],
+                             ondelete="CASCADE", name="fk_device_scripts_device"),
+        UniqueConstraint("tenant_id", "device_id", "platform",
+                         name="uq_device_scripts_tenant_device_platform"),
+        CheckConstraint("platform in (%s)" % ",".join(f"'{p}'" for p in PLATFORMS),
+                        name="ck_device_scripts_platform"),
+        Index("ix_device_scripts_tenant_id_id", "tenant_id", "id", unique=True),
+    )
+
+
 #: Toda tabela do schema menos `tenants`, que E o tenant. O teste de estrutura
 #: compara esta lista com o metadata e falha se um modelo novo ficar de fora.
 TENANT_SCOPED_TABLES = (
@@ -1066,4 +1211,5 @@ TENANT_SCOPED_TABLES = (
     "channel_settings", "recipes", "candidates", "source_licenses", "clip_approvals",
     "series", "series_parts", "series_playlists", "series_playlist_items",
     "creation_styles", "creations",
+    "fleet_settings", "devices", "device_accounts", "device_scripts",
 )

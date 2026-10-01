@@ -2,8 +2,9 @@ Atalhos do dia a dia (Windows)
 ==============================
 
 Duplo clique no Explorer, ou digite o nome no Prompt de Comando. Todos entram
-na pasta certa sozinhos e TODOS abrem o Docker Desktop se ele nao estiver
-rodando -- nao e preciso abrir nada antes.
+na pasta certa sozinhos e todos os que usam o Docker abrem o Docker Desktop se
+ele nao estiver rodando -- nao e preciso abrir nada antes. (O celulares.bat e o
+unico que nao usa o Docker.)
 
   subir.bat           o do dia a dia. Sobe em segundos e devolve o terminal.
                       Usa a placa NVIDIA sozinho quando a maquina tem uma: a
@@ -34,6 +35,13 @@ rodando -- nao e preciso abrir nada antes.
   testar-youtube.bat  recebe uma URL e mede qual cliente do yt-dlp o YouTube
                       ainda serve daqui. Para o dia em que um link parar de
                       baixar: ele diz a linha de .env a por, se for o caso.
+
+  celulares.bat       para a pagina Frota do painel. Liga o adb do Windows (a
+                      ferramenta do Google que fala com o celular) e mostra os
+                      celulares que ele ve. Se o adb nao estiver instalado,
+                      pergunta se pode instalar pelo winget. Este nao precisa
+                      do Docker. Depois de reiniciar o computador, rode de
+                      novo: o painel no Docker so ve celular com o adb ligado.
 
   _garantir-docker.bat  nao se roda direto. E o pedaco que os outros chamam
                         para abrir o Docker Desktop e esperar o motor subir.

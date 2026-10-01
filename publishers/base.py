@@ -21,10 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Os quatro ids da secao 6, mais o do TikTok (etapa 7.3). Mesma lista de
-# `db_models.DRIVERS`, repetida aqui para que este modulo nao dependa do
-# SQLAlchemy -- um teste compara as duas.
-DRIVER_IDS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api")
+# Os quatro ids da secao 6, mais o do TikTok (etapa 7.3) e os dois da frota
+# (7.9). Mesma lista de `db_models.DRIVERS`, repetida aqui para que este modulo
+# nao dependa do SQLAlchemy -- um teste compara as duas.
+DRIVER_IDS = ("manual", "youtube-api", "aggregator", "browser", "tiktok-api",
+              "aparelho", "aparelho-auto")
 
 # O que `capability()` pode responder, da secao 6.
 CAPABILITIES = ("public", "private_only", "draft", "none")
@@ -52,6 +53,26 @@ class QuotaEsgotada(PublisherError):
 
 
 @dataclass(frozen=True)
+class AparelhoDaConta:
+    """O aparelho da frota em que a conta posta (etapa 7.9, ADR-016), na forma
+    que o driver le -- montado pela fila (`frota.aparelhos_das_contas`) antes
+    de chamar o resolvedor, porque o driver roda numa thread sem banco.
+
+    `hoje` e o dia de quem usa (o limite e contado nele), e `roteiro` e o que
+    a pessoa ensinou para o app daquela plataforma, com o resultado do ultimo
+    ensaio."""
+    device_id: str
+    serial: str
+    nome: str
+    modo: str = "entregar"
+    limite: int = 3
+    hoje: str = ""
+    frota_ligada: bool = False
+    endereco: Optional[str] = None
+    roteiro: Optional[dict] = None
+
+
+@dataclass(frozen=True)
 class Account:
     """A conta de destino: uma linha de `accounts` reduzida ao que o driver le.
 
@@ -68,6 +89,12 @@ class Account:
     # `db_models.DRIVER_PREFS`: com `manual` ali, toda conta nasceria presa na
     # fila manual e a cascata da secao 6 nunca escolheria nada.
     driver_pref: str = "auto"
+    # O aparelho da frota em que a conta mora (7.9), ou None.
+    aparelho: Optional[AparelhoDaConta] = None
+    # Os drivers de risco acima de zero que a conta CONSENTIU (7.9, ADR-016):
+    # e a unica porta para um deles entrar na cascata. Vem do banco
+    # (`device_accounts.consent_at`), nunca do corpo de uma requisicao.
+    consentimentos: frozenset = frozenset()
 
 
 @dataclass(frozen=True)

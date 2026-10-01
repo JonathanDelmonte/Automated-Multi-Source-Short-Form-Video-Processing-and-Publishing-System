@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, Link2, ListVideo, Loader2, RotateCcw, Trash2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, Link2, ListVideo, Loader2, RotateCcw, Smartphone, Trash2 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { hrefDe } from '../lib/rota';
 import { usePainel } from '../lib/painel';
@@ -7,6 +7,7 @@ import IconePlataforma from './ui/IconePlataforma';
 import AvatarDoCanal from './ui/AvatarDoCanal';
 import { PLATAFORMAS } from '../lib/plataformas';
 import { agruparNaFila, estadoDoGalho } from '../lib/publicacoes';
+import { situacaoDaExecucao } from '../lib/frota.js';
 
 // A fila de publicações, por corte (etapa 7.3): cada corte com os galhos dele,
 // um por conta. O autor, 25-set-2026: "vai virar uma ramificação, dois galhos
@@ -213,6 +214,20 @@ export default function FilaDePublicacoes({ publicacoes, ocupado, aoMudar, vazio
             )}
           </span>
         </div>
+        {p.aparelho && (
+          // A frota (7.9): em que celular este galho saiu e o que aconteceu la.
+          <p className="mt-1 pl-6 text-[12px] text-muted leading-snug flex items-start gap-1.5" data-no-aparelho>
+            <Smartphone size={12} className="shrink-0 mt-0.5" />
+            <span className="min-w-0">
+              <a href={hrefDe(`/frota/${p.aparelho.device_id}`)} className="text-ink2 hover:underline">
+                {p.aparelho.nome || 'aparelho'}
+              </a>
+              {p.aparelho.situacao ? `: ${situacaoDaExecucao(p.aparelho.situacao).texto}` : ''}
+              {p.aparelho.detalhe && p.aparelho.situacao !== 'publicado' && p.aparelho.situacao !== 'entregue'
+                ? ` — ${p.aparelho.detalhe}` : ''}
+            </span>
+          </p>
+        )}
         {aberto && (
           <FormularioDoLink
             publicacao={p}

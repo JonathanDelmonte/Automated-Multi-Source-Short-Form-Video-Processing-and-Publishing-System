@@ -29,6 +29,7 @@ db_seed = pytest.importorskip("db_seed")
 job_registry = pytest.importorskip("job_registry")
 publish_queue = pytest.importorskip("publish_queue")
 
+import adb_cliente
 import frota
 import frota_aparelho
 import frota_limite
@@ -57,6 +58,12 @@ def ambiente(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(saida))
     monkeypatch.setattr(app_module, "OUTPUT_DIR", str(saida))
     monkeypatch.setattr(app_module, "jobs", {})
+    # Nunca o adb desta maquina: sem o adb de mentira (o fixture `adb`), o
+    # motor tentaria ligar o de verdade -- e o Windows do CI tem o SDK do
+    # Android. O endereco e uma porta fechada, para nao falar com um servidor
+    # do adb que esteja de pe aqui.
+    monkeypatch.setattr(adb_cliente, "achar_adb", lambda: None)
+    monkeypatch.setenv("ADB_SERVER", "127.0.0.1:9")
     # Sem esperar segundos de verdade pela tela imitada.
     for modulo in (frota, frota_aparelho, frota_roteiro):
         monkeypatch.setattr(modulo, "_dormir", lambda s: None)

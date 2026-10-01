@@ -3178,9 +3178,13 @@ etapa 7.10, ADR-015): Douyin, Kuaishou, Bilibili e Xiaohongshu.
   as tres de sempre. Um programa de antes da 7.10 recusaria a conta ao salvar.
 - **As contas saem na ordem das plataformas** (`listar_contas`), nao na do banco:
   com sete, a lista vinha embaralhada.
-- **O video em si fica no idioma original.** Legenda queimada em chines pede uma
-  fonte com os caracteres na imagem do programa (rebuild de 40 minutos): e a
-  funcao "Idiomas" do plano, decisao do autor.
+- **O video em si fica no idioma original.** Legenda queimada em chines e a
+  funcao "Idiomas" do plano, e o autor a deixou para depois (1-out-2026). Ela
+  **nao pede rebuild**: a legenda le as fontes de `fonts/` pelo `fontsdir`, e uma
+  fonte com os caracteres entra ali -- mas o estilo tem de chama-la pelo NOME,
+  porque a fonte reserva da libass vem do fontconfig, que so conhece as da
+  imagem. (A primeira versao desta linha dizia "rebuild de 40 minutos"; estava
+  errado.)
 
 **O painel da 7.1** (`dashboard/src/pages/`, `lib/rota.js`, `lib/painel.js`):
 

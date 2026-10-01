@@ -883,9 +883,10 @@ chinês e nas regras do app; e o "já publiquei" aceita o link como o app o copi
   campo próprio também, e saem na última linha, sem `#`. O Kuaishou tem um campo
   só, como o TikTok. O LEIA-ME diz em que campo vai cada parte.
 - **O vídeo em si continua como foi feito**: a fala e a legenda no idioma
-  original. Legenda em chinês é a função "Idiomas" desta lista, e pede uma
-  fonte com os caracteres chineses dentro do programa — é reconstruir a imagem
-  (uns 40 minutos), então fica para o autor decidir.
+  original. Legenda em chinês é a função "Idiomas" desta lista, e o autor a
+  deixou para depois (1-out-2026). Ela não pede reconstruir a imagem: uma fonte
+  com os caracteres chineses na pasta `fonts/` do projeto basta, chamada pelo
+  nome no estilo da legenda (ver o ADR-015).
 - **O "já publiquei" aceita o que o app copia.** O botão "compartilhar" dos apps
   chineses copia um texto com o link no meio ("复制打开抖音... https://v.douyin.com/...");
   o programa tira o link de dentro, segue o link curto até o endereço do vídeo e
@@ -935,7 +936,7 @@ com o texto colado do pacote. O roteiro está no `COMO-EXECUTAR.md`, Passo 17.
 | Não repetir | mesma fonte ou corte, nem entre canais | 7.5 |
 | Primeiros passos | quem instala pela primeira vez: chaves, conta, primeiro canal | 7.1 |
 | Calendário | todos os canais num calendário | lugar na 7.1; completo na 7.5 |
-| Idiomas | o mesmo canal em outro idioma, com legenda traduzida ou voz | depois da 7.7; o texto do post já sai em chinês para as plataformas chinesas (7.10) |
+| Idiomas | o mesmo canal em outro idioma, com legenda traduzida ou voz | depois da 7.7; o texto do post já sai em chinês para as plataformas chinesas (7.10), e a legenda em chinês o autor deixou para depois (1-out-2026) |
 | Ideias por nicho | tendências e temas, para a busca e para a IA | 7.5 e 7.7 |
 | Música e efeitos sem direitos | biblioteca para os vídeos | 7.2 e 7.7 |
 | Modelos de canal | receitas prontas por nicho, para começar um canal rápido | 7.5 |
@@ -993,6 +994,8 @@ tem pressa: "a gente vai fazendo aos poucos".
 | Estilo do vídeo de IA? | **Configurado por quem usa e salvo no canal**; nada automático pelo nicho |
 | Prazo das auditorias? | Sem pressa; "quando eu quiser dividir o trabalho, a gente divide" |
 | Quando testar no PC dele? | **No final**, tudo junto: as etapas seguem sem esperar o teste de cada uma (26-set-2026, ao fechar a 7.3) |
+| Legenda em chinês no vídeo? | **Por enquanto, não**; o texto do post já vai em chinês (1-out-2026, ao fechar a 7.10) |
+| Mais plataformas (o Kwai e outras)? | **Por enquanto, só essas**; o autor vai fazer uma pesquisa de mercado antes de escolher outras (1-out-2026) |
 
 O "canal como centro" virou o ADR-014 em 30-set-2026, com a estrutura de pé (7.1 a
 7.8); o 013 foi para a pesquisa de mídia grátis da 7.7, e o 015 para as
@@ -1133,11 +1136,26 @@ grandes, e a 7.2 espera a lista do autor. Nenhuma decisão nova do autor nesta
 etapa; duas perguntas ficam para ele, e nenhuma trava o que foi feito:
 
 - **Legenda em chinês no vídeo** (a função "Idiomas"): pede uma fonte com os
-  caracteres chineses dentro do programa, e isso é reconstruir a imagem (uns 40
-  minutos). Sem ela, o texto do post vai em chinês e o vídeo, como foi feito.
+  caracteres chineses. Sem ela, o texto do post vai em chinês e o vídeo, como foi
+  feito. (Aqui dizia "reconstruir a imagem, uns 40 minutos", e estava errado: a
+  fonte entra pela pasta `fonts/` do projeto. Ver 1-out-2026.)
 - **O Kwai**, o Kuaishou de fora da China, é grande no Brasil e não pede
   telefone chinês. Ele não entrou (não estava no pedido), mas entraria como as
   plataformas de fora, se o autor quiser.
+
+**1-out-2026, ao fechar a 7.10:** a resposta às duas perguntas.
+- "Por enquanto, não precisa de colocar a legenda chinesa."
+- Sobre os 40 minutos: "o que eu quero saber é 40 minutos o tempo todo para o
+  usuário ou 40 minutos uma vez só para a gente". Nem um nem outro: reconstruir a
+  imagem nunca é por vídeo — quando é preciso, é uma vez por computador, pelo
+  `reconstruir.bat` (e quem usa o ajudante nem tem imagem). E, conferindo o
+  código para responder, a legenda em chinês nem pediria isso: as fontes da
+  legenda vêm da pasta `fonts/` do projeto. A frase dos 40 minutos estava errada
+  no ADR-015, aqui e no `CLAUDE.md`, e foi corrigida.
+- "Depois eu vou fazer uma pesquisa de mercado sobre quais outras plataformas a
+  gente pode implementar. Por enquanto, deixa essas." O Kwai fica de fora até lá.
+- "Pode seguir para o próximo" — a 7.9, a frota de aparelhos, a última entre as
+  grandes.
 
 ## Fontes
 

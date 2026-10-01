@@ -1010,9 +1010,17 @@ limites como regra do app, mas o que não tem número publicado fica sem limite.
    medidas, e o aviso "conecte para medir" não aparece para elas.
 
 **O que fica de fora.** O vídeo continua como foi feito: a fala e a legenda
-queimada no idioma original. Legenda em chinês é a função "Idiomas" do plano, e
-pede uma fonte com os caracteres chineses dentro da imagem do programa — mudar o
-Dockerfile é reconstruir a imagem (40 minutos), então é decisão do autor.
+queimada no idioma original. Legenda em chinês é a função "Idiomas" do plano, e o
+autor a deixou para depois (1-out-2026). Quando entrar, **não pede reconstruir a
+imagem**: a legenda lê as fontes da pasta `fonts/` do projeto (o `fontsdir` do
+`subtitles.py`), então basta pôr ali uma fonte com os caracteres chineses — com
+uma condição: o estilo da legenda chinesa tem de chamá-la **pelo nome**, porque a
+fonte reserva da libass (quando a do estilo não tem o caractere) vem do
+fontconfig, que só conhece as fontes registradas na imagem. O trabalho de verdade
+é outro: traduzir a fala com o tempo de cada trecho, e o realce palavra a palavra
+não sobrevive à tradução. A primeira versão deste ADR dizia "reconstruir a
+imagem, 40 minutos"; estava errado, e o próprio `atualizar_motor.py` já dizia o
+contrário (as `.ttf` não ficam na imagem).
 
 **Revisão se:** uma dessas plataformas abrir publicação a uma pessoa de fora da
 China; o autor tiver contas lá e quiser números (as contagens públicas do
